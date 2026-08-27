@@ -69,42 +69,14 @@ button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 }
 .village-a { left: 66%; top: 44%; }
 .village-b { left: 36%; top: 70%; }
-.burn-scar {
-  position: absolute; z-index: 1; left: 32%; top: 28%; width: 30%; height: 42%;
-  background: rgba(255,59,48,.18); border: 2px solid var(--fire-extreme);
-  clip-path: polygon(8% 34%,20% 14%,45% 7%,62% 18%,84% 12%,94% 33%,87% 48%,98% 68%,76% 83%,52% 77%,34% 95%,14% 81%,18% 58%,3% 49%);
-  filter: drop-shadow(0 0 8px rgba(255,59,48,.48));
-}
-.active-front {
-  position: absolute; z-index: 2; left: 44%; top: 28%; width: 19%; height: 26%;
-  border-right: 11px solid rgba(255,107,0,.66); border-radius: 30% 56% 46% 30%; transform: rotate(-18deg);
-  animation: front-pulse 2s ease-in-out infinite;
-}
-.front-label {
-  position: absolute; right: -95px; top: -18px; padding: 4px 7px; border-radius: 999px;
-  background: rgba(12,12,13,.78); color: #fff; white-space: nowrap;
-  font: 650 9px/1 "SF Mono", Consolas, monospace; letter-spacing: .06em;
-}
-.forecast-front {
-  position: absolute; left: 36%; top: 20%; width: 39%; height: 57%;
-  border: 2px dashed rgba(255,159,10,.8);
-  clip-path: polygon(6% 33%,21% 9%,49% 2%,72% 14%,92% 8%,99% 34%,91% 54%,96% 78%,72% 93%,43% 87%,20% 99%,3% 78%,10% 55%);
-}
-.forecast-front span {
-  position: absolute; right: 8%; top: 7%; color: var(--fire-active);
-  font: 700 9px/1 "SF Mono", Consolas, monospace; letter-spacing: .1em;
-}
 .unit-marker {
-  position: absolute; z-index: 4; width: 42px; height: 42px; display: grid; place-items: center;
+  width: 42px; height: 42px; display: grid; place-items: center; padding: 0;
   border-radius: 50%; background: rgba(10,132,255,.88); border: 2px solid rgba(255,255,255,.9);
   box-shadow: 0 0 0 10px rgba(10,132,255,.13), 0 6px 18px rgba(0,0,0,.28);
   font-family: "SF Mono", Consolas, monospace;
 }
 .unit-marker b { font-size: 9px; line-height: 1; }
 .unit-marker span { margin-top: -8px; color: rgba(255,255,255,.7); font-size: 8px; line-height: 1; }
-.marker-a { left: 57%; top: 56%; }
-.marker-b { left: 28%; top: 67%; }
-.marker-c { left: 70%; top: 27%; background: rgba(76,143,207,.9); }
 
 .topbar {
   position: absolute; z-index: 10; left: 18px; right: 18px; top: 16px; height: 66px;
@@ -249,8 +221,7 @@ button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .maplibre-host { position: absolute; inset: 0; z-index: 0; opacity: .78; }
 .maplibre-host .maplibregl-canvas { filter: saturate(.5) contrast(1.08) brightness(.82); }
 .map-shade { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(circle at 50% 45%, transparent 18%, rgba(8,11,10,.25) 85%), linear-gradient(rgba(15,27,21,.16), rgba(15,27,21,.28)); }
-.terrain-grid,.road,.village,.burn-scar,.active-front,.forecast-front { z-index: 2; pointer-events: none; }
-.unit-marker { transform: translate(-50%,-50%); }
+.terrain-grid,.road,.village { z-index: 2; pointer-events: none; }
 .unit-marker.ghost { opacity: .58; border-style: dashed; animation: ghost-breathe 1.8s ease-in-out infinite; }
 .ghost-firebreak {
   position: absolute; z-index: 3; left: 43%; top: 35%; width: 25%; border-top: 3px dashed rgba(10,132,255,.78);
@@ -267,7 +238,7 @@ button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   border: 2px dashed rgba(10,132,255,.68); border-radius: 48% 52% 44% 56%; background: rgba(10,132,255,.1);
 }
 .ghost-evac span { left: 50%; bottom: -27px; transform: translateX(-50%); }
-.view-globe .burn-scar,.view-globe .active-front,.view-globe .forecast-front,.view-globe .unit-marker,.view-globe .ghost-firebreak,.view-globe .ghost-evac,.view-globe .terrain-grid,.view-globe .road,.view-globe .village { opacity: 0; transition: opacity .25s ease; }
+.view-globe .ghost-firebreak,.view-globe .ghost-evac,.view-globe .terrain-grid,.view-globe .road,.view-globe .village { opacity: 0; transition: opacity .25s ease; }
 
 .demo-button {
   min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; cursor: pointer;

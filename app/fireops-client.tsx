@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Map as MapLibreMap } from 'maplibre-gl';
+import type { GeoJSONSource, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import {
   Bot, Check, ChevronDown, CircleHelp, Command, Flame, Globe2, Layers3,
   Map as MapIcon, Pause, Play, ShieldCheck, Sparkles, TimerReset, Undo2, Wind, X,
@@ -9,7 +9,7 @@ import {
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; gusts: number; temperature: number; humidity: number; droughtIndex: number };
-type Deployment = { id: string; type: string; count: number; sector: string; mission: string; x: number; y: number; staged?: boolean };
+type Deployment = { id: string; type: string; count: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
 type Plan = {
   id: string; name: string; intention: string; deployments: Deployment[];
@@ -45,6 +45,8 @@ const planDescriptions = [
   'Répartition mobile sur les deux flancs avec une réserve centrale.',
   'Projection de référence sans nouveau moyen engagé.',
 ];
+const ignition = { lng: -0.4540519, lat: 44.5897472 };
+const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
 const toolNames = [
   'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
   'propose_plan', 'stage_deploy_units', 'stage_assign_task', 'stage_firebreak', 'stage_evacuation_zone',
@@ -70,9 +72,12 @@ const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protect
 export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const markersRef = useRef<Marker[]>([]);
+  const engineGeoRef = useRef<{ perimeter: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
+  const [mapReady, setMapReady] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
@@ -82,13 +87,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [minutes, setMinutes] = useState(162);
   const [burnedHa, setBurnedHa] = useState<number | null>(null);
   const [frontRate, setFrontRate] = useState<number | null>(null);
+  const [perimeterGeoJSON, setPerimeterGeoJSON] = useState<unknown>(emptyGeoJSON);
+  const [forecastGeoJSON, setForecastGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(20);
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
   const [committed, setCommitted] = useState<Deployment[]>([
-    { id: 'ccf12', type: 'CCF', count: 12, sector: 'Sud-est', mission: 'Défense du village', x: 57, y: 56 },
-    { id: 'fpt04', type: 'FPT', count: 4, sector: 'Sud-ouest', mission: 'Protection des habitations', x: 28, y: 67 },
-    { id: 'hbe02', type: 'HBE', count: 2, sector: 'Nord-est', mission: 'Attaque aérienne', x: 70, y: 27 },
+    { id: 'ccf12', type: 'CCF', count: 12, sector: 'Sud-est', mission: 'Défense du village', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09 },
+    { id: 'fpt04', type: 'FPT', count: 4, sector: 'Sud-ouest', mission: 'Protection des habitations', lng: -0.465, lat: 44.579, radiusM: 700, capacity: 0.06 },
+    { id: 'hbe02', type: 'HBE', count: 2, sector: 'Nord-est', mission: 'Attaque aérienne', lng: -0.442, lat: 44.598, radiusM: 1500, capacity: 0.08 },
   ]);
   const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -169,7 +176,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       const map = new maplibre.Map({
         container: mapNode.current,
         style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        center: [-0.53, 44.48], zoom: 10.5, attributionControl: false, cooperativeGestures: true,
+        center: [ignition.lng, ignition.lat], zoom: 11.2, attributionControl: false, cooperativeGestures: true,
       });
       map.once('load', () => {
         if (!map.getSource('terrain-dem')) map.addSource('terrain-dem', {
@@ -177,10 +184,16 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
           tileSize: 256, encoding: 'terrarium', maxzoom: 15,
         });
+        map.addSource('fire', { type: 'geojson', data: engineGeoRef.current.perimeter as Parameters<GeoJSONSource['setData']>[0] });
+        map.addLayer({ id: 'fire-fill', type: 'fill', source: 'fire', paint: { 'fill-color': '#FF3B30', 'fill-opacity': 0.18 } });
+        map.addLayer({ id: 'fire-line', type: 'line', source: 'fire', paint: { 'line-color': '#FF3B30', 'line-width': 2, 'line-opacity': 1 } });
+        map.addSource('fire-forecast', { type: 'geojson', data: engineGeoRef.current.forecast as Parameters<GeoJSONSource['setData']>[0] });
+        map.addLayer({ id: 'fire-forecast-line', type: 'line', source: 'fire-forecast', paint: { 'line-color': '#FF3B30', 'line-width': 2, 'line-opacity': 0.75, 'line-dasharray': [3, 2] } });
+        setMapReady(true);
       });
       mapRef.current = map;
     }).catch(() => undefined);
-    return () => { cancelled = true; mapRef.current?.remove(); mapRef.current = null; };
+    return () => { cancelled = true; setMapReady(false); mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
   useEffect(() => {
@@ -208,28 +221,60 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     });
   }, []);
 
+  const applyEngineResult = useCallback((engine: Record<string, unknown>) => {
+    const perimeter = engine.perimeterGeoJSON || emptyGeoJSON;
+    const forecast = engine.forecastPerimeterGeoJSON || emptyGeoJSON;
+    engineGeoRef.current = { perimeter, forecast };
+    setBurnedHa(Number(engine.totalBurnedHa));
+    setFrontRate(Number(engine.rateOfSpreadMetersPerMinute));
+    setPerimeterGeoJSON(perimeter);
+    setForecastGeoJSON(forecast);
+  }, []);
+
   useEffect(() => {
-    runWorker({ type: 'simulate', minutes, fuelModel: 'TU5', moisture: 0.08, windKph: initialWeather.windSpeed, slopeDegrees: 7.4, gridMeters: 90, suppression: 0 })
-      .then((engine) => {
-        setBurnedHa(Number(engine.totalBurnedHa));
-        setFrontRate(Number(engine.rateOfSpreadMetersPerMinute));
-      })
+    const fireSource = mapRef.current?.getSource('fire') as GeoJSONSource | undefined;
+    const forecastSource = mapRef.current?.getSource('fire-forecast') as GeoJSONSource | undefined;
+    fireSource?.setData(perimeterGeoJSON as Parameters<GeoJSONSource['setData']>[0]);
+    forecastSource?.setData(forecastGeoJSON as Parameters<GeoJSONSource['setData']>[0]);
+  }, [forecastGeoJSON, perimeterGeoJSON]);
+
+  useEffect(() => {
+    runWorker({ type: 'simulate', reset: true, targetMinutes: minutes, moisture: 0.08, windKph: weather.windSpeed, windDirection: weather.windDirection, slopeDegrees: 7.4, deployments: committed, includeForecast: true })
+      .then(applyEngineResult)
       .catch(() => undefined);
-  }, [minutes, runWorker]);
+  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    import('maplibre-gl').then((maplibre) => {
+      if (cancelled || !mapRef.current) return;
+      markersRef.current.forEach((marker) => marker.remove());
+      const deployments = [...committed, ...(stagedPlan?.deployments || [])];
+      markersRef.current = deployments.map((unit) => {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.className = 'unit-marker' + (unit.staged ? ' ghost' : '');
+        element.title = unit.type + ' × ' + unit.count + ' · ' + unit.mission;
+        element.setAttribute('aria-label', element.title);
+        element.innerHTML = '<b>' + unit.type + '</b><span>' + String(unit.count).padStart(2, '0') + '</span>';
+        return new maplibre.Marker({ element }).setLngLat([unit.lng, unit.lat]).addTo(mapRef.current!);
+      });
+    }).catch(() => undefined);
+    return () => { cancelled = true; markersRef.current.forEach((marker) => marker.remove()); markersRef.current = []; };
+  }, [committed, mapReady, stagedPlan?.deployments]);
 
   const comparePlansWithWorker = useCallback(async (names: string[], horizonHours: number) => {
     if (names.length !== 3) throw new Error('compare_plans exige exactement trois stratégies.');
     const placementSets: Deployment[][] = [
-      [{ id: nextId(), type: 'CCF', count: 12, sector: 'Nord', mission: 'Tenir le flanc nord', x: 53, y: 32, staged: true }, { id: nextId(), type: 'DOZ', count: 3, sector: 'Nord-est', mission: 'Ligne d’appui', x: 64, y: 39, staged: true }],
-      [{ id: nextId(), type: 'CCF', count: 6, sector: 'Nord-ouest', mission: 'Attaque du flanc', x: 39, y: 38, staged: true }, { id: nextId(), type: 'CCF', count: 6, sector: 'Sud-est', mission: 'Attaque du flanc', x: 65, y: 61, staged: true }],
+      [{ id: nextId(), type: 'CCF', count: 12, sector: 'Sud-est', mission: 'Intercepter la tête du feu', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09, staged: true }, { id: nextId(), type: 'DOZ', count: 3, sector: 'Est', mission: 'Ligne d’appui', lng: -0.438, lat: 44.586, radiusM: 700, capacity: 0.07, staged: true }],
+      [{ id: nextId(), type: 'CCF', count: 6, sector: 'Nord', mission: 'Tenir le flanc nord', lng: -0.4541, lat: 44.597, radiusM: 900, capacity: 0.09, staged: true }, { id: nextId(), type: 'CCF', count: 6, sector: 'Sud', mission: 'Tenir le flanc sud', lng: -0.449, lat: 44.584, radiusM: 900, capacity: 0.09, staged: true }],
       [],
     ];
     const engineRuns = await Promise.all(placementSets.map((deployments) => {
-      const resources = deployments.reduce((sum, deployment) => sum + deployment.count, 0);
       return runWorker({
-        type: 'simulate', minutes: horizonHours * 60, fuelModel: 'TU5', moisture: 0.08,
-        windKph: stateRef.current.weather.windSpeed, slopeDegrees: 7.4, gridMeters: 90,
-        deployments, suppression: Math.min(0.75, resources * 0.025),
+        type: 'simulate', independent: true, targetMinutes: horizonHours * 60, moisture: 0.08,
+        windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
+        slopeDegrees: 7.4, deployments,
       });
     }));
     const results = names.map((name, index): StrategyResult => ({
@@ -250,15 +295,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     if (mode === 'globe') {
       map?.setTerrain(null);
       map?.setProjection({ type: 'globe' });
-      map?.flyTo({ center: [-0.53, 44.48], zoom: 3.2, pitch: 0, duration: 1100 });
+      map?.flyTo({ center: [ignition.lng, ignition.lat], zoom: 3.2, pitch: 0, duration: 1100 });
     } else if (mode === '3D') {
       map?.setProjection({ type: 'mercator' });
       map?.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 });
-      map?.easeTo({ center: [-0.53, 44.48], zoom: 11.2, pitch: 62, bearing: -18, duration: 900 });
+      map?.easeTo({ center: [ignition.lng, ignition.lat], zoom: 11.2, pitch: 62, bearing: -18, duration: 900 });
     } else {
       map?.setTerrain(null);
       map?.setProjection({ type: 'mercator' });
-      map?.easeTo({ center: [-0.53, 44.48], zoom: 10.5, pitch: 0, bearing: 0, duration: 700 });
+      map?.easeTo({ center: [ignition.lng, ignition.lat], zoom: 11.2, pitch: 0, bearing: 0, duration: 700 });
     }
     logTool('set_view_mode', 'Vue ' + mode + ' activée');
   }, [logTool]);
@@ -294,8 +339,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', minutes: hours * 60, fuelModel: 'TU5', moisture: 0.08, windKph: stateRef.current.weather.windSpeed, slopeDegrees: 7.4, gridMeters: 90, suppression: 0 });
-            return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute };
+            const result = await runWorker({ type: 'simulate', independent: true, targetMinutes: hours * 60, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
+            return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
         },
@@ -326,16 +371,19 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
           type: { type: 'string', enum: ['CCF', 'FPT', 'HBE', 'DOZ'] }, count: { type: 'integer', minimum: 1, maximum: 50 },
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
-        }, ['type', 'count', 'sector', 'mission']) } }, ['units']),
+          lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
+          radiusM: { type: 'number', minimum: 100, maximum: 5000 }, capacity: { type: 'number', minimum: 0, maximum: 0.35 },
+        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM', 'capacity']) } }, ['units']),
         execute: (input) => {
           if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('units doit contenir 1 à 50 groupes.');
-          const deployments = input.units.map((raw, index) => {
+          const deployments = input.units.map((raw) => {
             if (!raw || typeof raw !== 'object') throw new Error('Chaque moyen doit être un objet.');
             const item = raw as Record<string, unknown>;
             const type = textValue(item.type, 'type', 3);
             if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error('Type de moyen inconnu.');
-            return stageUnit({ type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), x: 47 + index * 6, y: 45 + (index % 2) * 12 });
+            return stageUnit({ type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: numberValue(item.capacity, 'capacity', 0, 0.35) });
           });
+          if (deployments.reduce((sum, item) => sum + item.count, 0) > 50) throw new Error('Un plan provisoire ne peut pas dépasser 50 moyens.');
           logTool('stage_deploy_units', String(deployments.reduce((sum, item) => sum + item.count, 0)) + ' moyens prépositionnés');
           return { staged: true, deployments, liveSimulationChanged: false };
         },
@@ -391,20 +439,25 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ minutes: { type: 'integer', minimum: 5, maximum: 360 } }, ['minutes']),
         execute: async (input) => {
           const delta = numberValue(input.minutes, 'minutes', 5, 360);
+          const targetMinutes = stateRef.current.minutes + delta;
           const engine = await runWorker({
-            type: 'simulate', minutes: delta, fuelModel: 'TU5', moisture: 0.08,
-            windKph: stateRef.current.weather.windSpeed, slopeDegrees: 7.4, gridMeters: 90,
-            suppression: 0,
+            type: 'simulate', reset: true, targetMinutes, moisture: 0.08,
+            windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
+            slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
           });
-          const next = Number(engine.totalBurnedHa);
-          setMinutes((value) => value + delta); setBurnedHa(next); setFrontRate(Number(engine.rateOfSpreadMetersPerMinute));
-          return { advancedMinutes: delta, burnedHa: next, worker: 'local-browser', engine };
+          applyEngineResult(engine);
+          setMinutes(targetMinutes);
+          return { advancedMinutes: delta, totalMinutes: targetMinutes, burnedHa: engine.totalBurnedHa, worker: 'local-browser', engine };
         },
       },
       {
         name: 'set_time', title: 'Positionner l’heure', description: 'Positionne le scénario entre H+0 et H+24.',
         inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']),
-        execute: (input) => { const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440); setMinutes(value); return { minutesFromIgnition: value }; },
+        execute: async (input) => {
+          const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
+          const engine = await runWorker({ type: 'simulate', reset: true, targetMinutes: value, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true });
+          applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, engine };
+        },
       },
       {
         name: 'set_weather', title: 'Modifier la météo', description: 'Modifie les paramètres météo de la simulation.',
@@ -430,9 +483,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur Landiras ou la Californie.',
-        inputSchema: schema({ region: { type: 'string', enum: ['landiras','california'] } }, ['region']),
-        execute: (input) => { const region = textValue(input.region, 'region', 20); mapRef.current?.flyTo({ center: region === 'california' ? [-121.62,39.75] : [-0.53,44.48], zoom: 9.8, duration: 1000 }); return { focused: region }; },
+        name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur le scénario Landiras.',
+        inputSchema: schema({ region: { type: 'string', enum: ['landiras'] } }, ['region']),
+        execute: (input) => { const region = textValue(input.region, 'region', 20); mapRef.current?.flyTo({ center: [ignition.lng, ignition.lat], zoom: 11.2, duration: 1000 }); return { focused: region }; },
       },
       {
         name: 'set_view_mode', title: 'Changer le mode de carte', description: 'Bascule entre 2D, relief 3D et globe.',
@@ -447,7 +500,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [changeView, comparePlansWithWorker, logTool, makePlan, revertPlan, runWorker, stageUnit]);
+  }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, revertPlan, runWorker, stageUnit]);
 
   const runAgentDemo = useCallback(async () => {
     setAgentOpen(true);
@@ -458,10 +511,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     await new Promise((resolve) => window.setTimeout(resolve, 600));
     const plan = makePlan('Bouclier village', 'Bloquer le flanc nord, renforcer le secteur B et protéger Landiras Est avant la bascule du vent.');
     const deployments: Deployment[] = [
-      { id: nextId(), type: 'CCF', count: 12, sector: 'B', mission: 'Tenir la lisière est', x: 61, y: 48, staged: true },
-      { id: nextId(), type: 'DOZ', count: 3, sector: 'Nord', mission: 'Créer la ligne d’appui', x: 52, y: 36, staged: true },
-      { id: nextId(), type: 'FPT', count: 6, sector: 'Village', mission: 'Protection des habitations', x: 67, y: 52, staged: true },
-      { id: nextId(), type: 'HBE', count: 2, sector: 'Ouest', mission: 'Freiner la tête du feu', x: 43, y: 29, staged: true },
+      { id: nextId(), type: 'CCF', count: 12, sector: 'B', mission: 'Tenir la lisière est', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09, staged: true },
+      { id: nextId(), type: 'DOZ', count: 3, sector: 'Nord', mission: 'Créer la ligne d’appui', lng: -0.449, lat: 44.596, radiusM: 700, capacity: 0.07, staged: true },
+      { id: nextId(), type: 'FPT', count: 6, sector: 'Village', mission: 'Protection des habitations', lng: -0.438, lat: 44.584, radiusM: 700, capacity: 0.06, staged: true },
+      { id: nextId(), type: 'HBE', count: 2, sector: 'Ouest', mission: 'Freiner la tête du feu', lng: -0.465, lat: 44.591, radiusM: 1500, capacity: 0.08, staged: true },
     ];
     setStagedPlan({ ...plan, deployments, firebreaks: [{ name: 'Ligne nord', sector: 'Nord', lengthKm: 4.2 }], evacuations: [{ name: 'Landiras Est', sector: 'Est', population: 186 }] });
     logTool('stage_deploy_units', '23 moyens prépositionnés en fantôme', 700);
@@ -474,9 +527,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     const type = event.dataTransfer.getData('fireops/unit');
     if (!type) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(18, Math.min(82, ((event.clientX - rect.left) / rect.width) * 100));
-    const y = Math.max(20, Math.min(78, ((event.clientY - rect.top) / rect.height) * 100));
-    stageUnit({ type, count: 1, sector: 'Point carte', mission: 'Mission à préciser', x, y });
+    const coordinate = mapRef.current?.unproject([event.clientX - rect.left, event.clientY - rect.top]);
+    if (!coordinate) return;
+    stageUnit({ type, count: 1, sector: 'Point carte', mission: 'Mission à préciser', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: type === 'CCF' ? 0.09 : type === 'HBE' ? 0.08 : 0.06 });
     notify(type + ' ajouté au plan provisoire. Aucune ressource engagée.');
   };
   const signOut = async () => {
@@ -499,9 +552,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <div ref={mapNode} className="maplibre-host" /><div className="map-shade" /><div className="terrain-grid" />
         <div className="road road-a" /><div className="road road-b" />
         <div className="village village-a"><span>LANDIRAS</span></div><div className="village village-b"><span>GUILLOS</span></div>
-        <div className="burn-scar" /><div className="active-front"><span className="front-label">FRONT ACTIF · 2,8 km/h</span></div><div className="forecast-front"><span>T+3H</span></div>
-        {committed.map((unit) => <MapUnit key={unit.id} unit={unit} />)}
-        {stagedPlan?.deployments.map((unit) => <MapUnit key={unit.id} unit={unit} ghost />)}
         {stagedPlan?.firebreaks.map((line) => <div key={line.name} className="ghost-firebreak"><span>{line.name} · {line.lengthKm} km</span></div>)}
         {stagedPlan?.evacuations.map((zone) => <div key={zone.name} className="ghost-evac"><span>ZONE PROPOSÉE · {zone.name}</span></div>)}
       </div>
@@ -523,7 +573,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       <aside className="left-rail glass-panel">
         <div className="panel-heading"><div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div><span className="resource-count">29</span></div>
         <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
-        <div className="unit-list">{units.map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui est', mission: 'Mission à préciser', x: 64, y: 51 }); notify(unit.code + ' ajouté au point d’appui est. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code + ' au point d’appui est'} key={unit.code}><span className="unit-code">{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>Prêt · autonomie {unit.autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
+        <div className="unit-list">{units.map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui est', mission: 'Mission à préciser', lng: -0.442, lat: 44.585, radiusM: 700, capacity: unit.code === 'CCF' ? 0.09 : unit.code === 'HBE' ? 0.08 : 0.06 }); notify(unit.code + ' ajouté au point d’appui est. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code + ' au point d’appui est'} key={unit.code}><span className="unit-code">{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>Prêt · autonomie {unit.autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
         <div className="rail-footer"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
       </aside>
 
@@ -554,9 +604,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   );
 }
 
-function MapUnit({ unit, ghost = false }: { unit: Deployment; ghost?: boolean }) {
-  return <div className={'unit-marker ' + (ghost ? 'ghost' : '')} style={{ left: unit.x + '%', top: unit.y + '%' }} title={unit.type + ' × ' + unit.count + ' · ' + unit.mission}><b>{unit.type}</b><span>{String(unit.count).padStart(2,'0')}</span></div>;
-}
 function Modal({ children, onClose }: { children: React.ReactNode; onClose?: () => void }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (onClose && event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => { if (onClose && event.key === 'Escape') onClose(); }}>{children}</div>;
 }
