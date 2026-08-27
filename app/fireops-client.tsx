@@ -65,6 +65,30 @@ const numberValue = (value: unknown, field: string, min: number, max: number) =>
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new Error(field + ' doit être compris entre ' + min + ' et ' + max + '.');
   return value;
 };
+const grayscaleColor = (value: string) => {
+  const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+  const rgb = value.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+  let red: number; let green: number; let blue: number; let alpha: number | undefined;
+  if (hex) {
+    const raw = hex[1].length === 3 ? hex[1].split('').map((digit) => digit + digit).join('') : hex[1];
+    red = parseInt(raw.slice(0, 2), 16); green = parseInt(raw.slice(2, 4), 16); blue = parseInt(raw.slice(4, 6), 16);
+    alpha = raw.length === 8 ? parseInt(raw.slice(6, 8), 16) / 255 : undefined;
+  } else if (rgb) {
+    red = Number(rgb[1]); green = Number(rgb[2]); blue = Number(rgb[3]); alpha = rgb[4] === undefined ? undefined : Number(rgb[4]);
+  } else return value;
+  const luminance = Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+  return alpha === undefined ? `rgb(${luminance},${luminance},${luminance})` : `rgba(${luminance},${luminance},${luminance},${alpha})`;
+};
+const grayscalePaint = (value: unknown): unknown => Array.isArray(value) ? value.map(grayscalePaint) : typeof value === 'string' ? grayscaleColor(value) : value;
+const neutralizeMapStyle = (map: MapLibreMap) => {
+  for (const layer of map.getStyle().layers || []) {
+    for (const property of ['fill-color', 'line-color', 'background-color'] as const) {
+      const value = map.getPaintProperty(layer.id, property);
+      if (value !== undefined) map.setPaintProperty(layer.id, property, grayscalePaint(value));
+    }
+    if (layer.type === 'raster') map.setPaintProperty(layer.id, 'raster-saturation', -1);
+  }
+};
 const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
@@ -179,6 +203,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         center: [ignition.lng, ignition.lat], zoom: 11.2, attributionControl: false, cooperativeGestures: true,
       });
       map.once('load', () => {
+        neutralizeMapStyle(map);
         if (!map.getSource('terrain-dem')) map.addSource('terrain-dem', {
           type: 'raster-dem',
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
