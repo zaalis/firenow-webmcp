@@ -56,22 +56,13 @@ function simulate(input) {
     gridMeters: input.gridMeters || 90,
     rateOfSpreadMetersPerMinute: Number(effectiveRos.toFixed(2)),
     lengthToBreadth: Number(lengthToBreadth.toFixed(2)),
-    addedBurnedHa: Math.round(ellipseAreaHa),
-    confidence: 0.67,
+    totalBurnedHa: Math.round(ellipseAreaHa),
   };
 }
 
 self.onmessage = (event) => {
   const message = event.data || {};
   try {
-    if (message.type === 'compare') {
-      const outputs = (message.strategies || []).map((strategy) => ({
-        name: strategy.name,
-        result: simulate({ ...message.conditions, suppression: strategy.suppression }),
-      }));
-      self.postMessage({ id: message.id, ok: true, result: outputs });
-      return;
-    }
     self.postMessage({ id: message.id, ok: true, result: simulate(message) });
   } catch (error) {
     self.postMessage({ id: message.id, ok: false, error: error instanceof Error ? error.message : 'Simulation worker error' });

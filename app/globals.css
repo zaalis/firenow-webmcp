@@ -195,13 +195,7 @@ button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .weather-details span:last-child { border: 0; }
 .weather-details small { color: var(--faint); font-size: 7px; }
 .weather-details b { font: 600 10px/1 "SF Mono", Consolas, monospace; }
-.confidence { padding-top: 12px; border-top: 1px solid var(--border); }
-.confidence > div:first-child { display: flex; justify-content: space-between; font-size: 9px; }
-.confidence span { color: var(--muted); }
-.confidence b { color: #8fc4ff; font-family: "SF Mono", Consolas, monospace; }
-.confidence-track { height: 4px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.09); }
-.confidence-track i { display: block; width: 67%; height: 100%; border-radius: inherit; background: var(--blue); }
-.confidence p { margin: 7px 0 0; color: var(--faint); font-size: 8px; }
+.model-disclaimer { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 8px; line-height: 1.45; }
 
 .map-controls { position: absolute; z-index: 9; right: 18px; bottom: 107px; display: flex; gap: 3px; padding: 4px; border-radius: 12px; }
 .map-controls button { min-width: 46px; height: 31px; cursor: pointer; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 650; }

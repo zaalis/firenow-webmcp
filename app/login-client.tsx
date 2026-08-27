@@ -51,7 +51,7 @@ export default function LoginClient() {
         </form>
         <div className="login-security"><ShieldCheck size={16} /><p><strong>Session opaque, côté serveur</strong><span>Argon2id 64 Mo · cookie HttpOnly · protection CSRF · aucun JWT localStorage</span></p></div>
       </section>
-      <footer className="login-footer"><span>OUTIL D’ENTRAÎNEMENT · NE REMPLACE PAS LE COS</span><span>Landiras 2022 · calibration Sørensen 0,67</span></footer>
+      <footer className="login-footer"><span>OUTIL D’ENTRAÎNEMENT · NE REMPLACE PAS LE COS</span><span>Landiras 2022 · modèle non calibré</span></footer>
     </main>
   );
 }
