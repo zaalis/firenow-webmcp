@@ -79,9 +79,21 @@ function createState(origin) {
       }
     }
   }
-  arrival[indexOf(cell.x, cell.y)] = 0;
+  // Un foyer initial peut couvrir un disque : l'operateur regle sa taille en glissant
+  // sur la carte, plutot que via un champ numerique.
+  const radius = Math.max(0, Number(origin && origin.radiusM) || 0);
+  const reach = Math.min(GRID_SIZE, Math.ceil(radius / CELL_METERS));
+  let seeded = 0;
+  for (let dy = -reach; dy <= reach; dy += 1) for (let dx = -reach; dx <= reach; dx += 1) {
+    const x = cell.x + dx, y = cell.y + dy;
+    if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+    if (Math.hypot(dx, dy) * CELL_METERS > radius) continue;
+    if (FUEL[fuel[indexOf(x, y)]].nonBurnable) continue;
+    arrival[indexOf(x, y)] = 0; seeded += 1;
+  }
+  if (!seeded) arrival[indexOf(cell.x, cell.y)] = 0;
   const [lng, lat] = lngLatForCell(cell.x, cell.y);
-  return { state, arrival, fuel, currentMinutes: 0, ignition: { lng, lat } };
+  return { state, arrival, fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius } };
 }
 function lngLatForCell(x, y) { return [BOUNDS.west + ((x + 0.5) / GRID_SIZE) * (BOUNDS.east - BOUNDS.west), BOUNDS.north - ((y + 0.5) / GRID_SIZE) * (BOUNDS.north - BOUNDS.south)]; }
 function cellForLngLat(lng, lat) { return { x: clamp(Math.floor(((lng - BOUNDS.west) / (BOUNDS.east - BOUNDS.west)) * GRID_SIZE), 0, GRID_SIZE - 1), y: clamp(Math.floor(((BOUNDS.north - lat) / (BOUNDS.north - BOUNDS.south)) * GRID_SIZE), 0, GRID_SIZE - 1) }; }
