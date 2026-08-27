@@ -1,0 +1,536 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Map as MapLibreMap } from 'maplibre-gl';
+import {
+  Bot, Check, ChevronDown, CircleHelp, Command, Flame, Globe2, Layers3,
+  Map as MapIcon, Pause, Play, ShieldCheck, Sparkles, TimerReset, Undo2, Wind, X,
+} from 'lucide-react';
+
+type ViewMode = '2D' | '3D' | 'globe';
+type Weather = { windSpeed: number; windDirection: string; gusts: number; temperature: number; humidity: number; droughtIndex: number };
+type Deployment = { id: string; type: string; count: number; sector: string; mission: string; x: number; y: number; staged?: boolean };
+type Strategy = { name: string; burnedHa: number; contained: number; resources: number; homes: number; description: string };
+type Plan = {
+  id: string; name: string; intention: string; deployments: Deployment[];
+  tasks: { unitId: string; mission: string }[];
+  firebreaks: { name: string; sector: string; lengthKm: number }[];
+  evacuations: { name: string; sector: string; population: number }[];
+  comparison?: Strategy[];
+};
+type Activity = { id: string; tool: string; label: string; state: 'running' | 'done'; at: string };
+type ToolClient = { requestUserInteraction?: <T>(handler: () => Promise<T>) => Promise<T> };
+type ToolDefinition = {
+  name: string; title: string; description: string; inputSchema: Record<string, unknown>;
+  annotations?: { readOnlyHint?: boolean };
+  execute: (input: Record<string, unknown>, client?: ToolClient) => unknown | Promise<unknown>;
+};
+type ModelContextLike = {
+  registerTool: (tool: ToolDefinition) => Promise<void> | void;
+  unregisterTool?: (name: string) => Promise<void> | void;
+};
+
+const initialWeather: Weather = {
+  windSpeed: 32, windDirection: 'Ouest-nord-ouest', gusts: 47,
+  temperature: 38, humidity: 18, droughtIndex: 0.91,
+};
+const units = [
+  { code: 'CCF', count: 18, label: 'Camions-citernes', autonomy: 82 },
+  { code: 'FPT', count: 6, label: 'Fourgons pompe', autonomy: 91 },
+  { code: 'HBE', count: 2, label: 'Hélicoptères', autonomy: 64 },
+  { code: 'DOZ', count: 3, label: 'Bulldozers', autonomy: 76 },
+];
+const strategies: Strategy[] = [
+  { name: 'Bouclier village', burnedHa: 8400, contained: 78, resources: 23, homes: 12, description: 'Concentration sur le flanc est et ligne d’appui nord.' },
+  { name: 'Tenaille mobile', burnedHa: 10950, contained: 69, resources: 18, homes: 31, description: 'Attaque mobile des deux flancs, réserve au centre.' },
+  { name: 'Sans action', burnedHa: 30000, contained: 41, resources: 12, homes: 186, description: 'Projection de référence sous météo courante.' },
+];
+const toolNames = [
+  'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
+  'propose_plan', 'stage_deploy_units', 'stage_assign_task', 'stage_firebreak', 'stage_evacuation_zone',
+  'commit_plan', 'revert_plan', 'run_simulation', 'set_time', 'set_weather', 'ignite', 'compare_plans',
+  'focus_region', 'set_view_mode',
+];
+
+const nextId = () => Math.random().toString(36).slice(2, 9);
+const atNow = () => new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(new Date());
+const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
+const textValue = (value: unknown, field: string, max = 240) => {
+  if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(field + ' invalide.');
+  return value.trim();
+};
+const numberValue = (value: unknown, field: string, min: number, max: number) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new Error(field + ' doit être compris entre ' + min + ' et ' + max + '.');
+  return value;
+};
+const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
+  id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
+});
+
+export default function FireOpsClient({ userEmail }: { userEmail: string }) {
+  const mapNode = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const simulationWorker = useRef<Worker | null>(null);
+  const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
+  const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('2D');
+  const [weather, setWeather] = useState(initialWeather);
+  const [minutes, setMinutes] = useState(162);
+  const [burnedHa, setBurnedHa] = useState(1284);
+  const [contained, setContained] = useState(41);
+  const [running, setRunning] = useState(false);
+  const [speed, setSpeed] = useState(20);
+  const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
+  const [committed, setCommitted] = useState<Deployment[]>([
+    { id: 'ccf12', type: 'CCF', count: 12, sector: 'Sud-est', mission: 'Défense du village', x: 57, y: 56 },
+    { id: 'fpt04', type: 'FPT', count: 4, sector: 'Sud-ouest', mission: 'Protection des habitations', x: 28, y: 67 },
+    { id: 'hbe02', type: 'HBE', count: 2, sector: 'Nord-est', mission: 'Attaque aérienne', x: 70, y: 27 },
+  ]);
+  const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+  const stateRef = useRef({ weather, minutes, burnedHa, contained, stagedPlan, committed, viewMode });
+
+  useEffect(() => {
+    stateRef.current = { weather, minutes, burnedHa, contained, stagedPlan, committed, viewMode };
+  }, [weather, minutes, burnedHa, contained, stagedPlan, committed, viewMode]);
+
+  const notify = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 3200);
+  }, []);
+  const logTool = useCallback((tool: string, label: string, delay = 0) => {
+    const entry: Activity = { id: nextId(), tool, label, state: delay ? 'running' : 'done', at: atNow() };
+    setActivities((current) => [entry, ...current].slice(0, 14));
+    if (delay) window.setTimeout(() => setActivities((current) => current.map((item) => item.id === entry.id ? { ...item, state: 'done' } : item)), delay);
+  }, []);
+  const makePlan = useCallback((name: string, intention: string) => {
+    const plan = emptyPlan(name, intention);
+    setStagedPlan(plan);
+    logTool('propose_plan', 'Plan « ' + name + ' » ouvert');
+    return plan;
+  }, [logTool]);
+  const stageUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged'>) => {
+    const deployment = { ...unit, id: nextId(), staged: true };
+    setStagedPlan((current) => {
+      const plan = current || emptyPlan();
+      return { ...plan, deployments: [...plan.deployments, deployment] };
+    });
+    return deployment;
+  }, []);
+  const applyPlan = useCallback(() => {
+    if (!stagedPlan) return false;
+    setUndoStack((stack) => [...stack, committed]);
+    setCommitted((current) => [...current, ...stagedPlan.deployments.map((item) => ({ ...item, staged: false }))]);
+    setContained(78);
+    setBurnedHa(8400);
+    logTool('commit_plan', String(stagedPlan.deployments.reduce((sum, item) => sum + item.count, 0)) + ' moyens engagés');
+    setStagedPlan(null);
+    setReviewOpen(false);
+    reviewResolver.current?.(true);
+    reviewResolver.current = null;
+    notify('Plan appliqué. Toutes les actions restent annulables.');
+    return true;
+  }, [committed, logTool, notify, stagedPlan]);
+  const rejectPlan = useCallback(() => {
+    setReviewOpen(false);
+    reviewResolver.current?.(false);
+    reviewResolver.current = null;
+    notify('Plan rejeté. La situation active n’a pas été modifiée.');
+  }, [notify]);
+  const revertPlan = useCallback(() => {
+    let reverted = false;
+    setUndoStack((stack) => {
+      const previous = stack.at(-1);
+      if (!previous) return stack;
+      setCommitted(previous);
+      setContained(41);
+      setBurnedHa(1284);
+      reverted = true;
+      return stack.slice(0, -1);
+    });
+    logTool('revert_plan', 'Dernier plan annulé');
+    notify('Dernier plan annulé.');
+    return reverted;
+  }, [logTool, notify]);
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => {
+      setMinutes((value) => value + 5);
+      setBurnedHa((value) => Math.round(value + (contained > 60 ? 7 : 12)));
+    }, Math.max(260, 1800 / speed));
+    return () => window.clearInterval(timer);
+  }, [contained, running, speed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    import('maplibre-gl').then((maplibre) => {
+      if (cancelled || !mapNode.current) return;
+      const map = new maplibre.Map({
+        container: mapNode.current,
+        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        center: [-0.53, 44.48], zoom: 10.5, attributionControl: false, cooperativeGestures: true,
+      });
+      map.once('load', () => {
+        if (!map.getSource('terrain-dem')) map.addSource('terrain-dem', {
+          type: 'raster-dem',
+          tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+          tileSize: 256, encoding: 'terrarium', maxzoom: 15,
+        });
+      });
+      mapRef.current = map;
+    }).catch(() => undefined);
+    return () => { cancelled = true; mapRef.current?.remove(); mapRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const worker = new Worker('/simulation.worker.js');
+    simulationWorker.current = worker;
+    return () => {
+      worker.terminate();
+      simulationWorker.current = null;
+    };
+  }, []);
+
+  const runWorker = useCallback((payload: Record<string, unknown>) => {
+    const worker = simulationWorker.current;
+    if (!worker) return Promise.reject(new Error('Moteur de simulation indisponible.'));
+    const requestId = nextId();
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      const onMessage = (event: MessageEvent) => {
+        if (event.data?.id !== requestId) return;
+        worker.removeEventListener('message', onMessage);
+        if (event.data.ok) resolve(event.data.result);
+        else reject(new Error(event.data.error || 'Erreur du moteur.'));
+      };
+      worker.addEventListener('message', onMessage);
+      worker.postMessage({ ...payload, id: requestId });
+    });
+  }, []);
+
+  const changeView = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    const map = mapRef.current;
+    if (mode === 'globe') {
+      map?.setTerrain(null);
+      map?.setProjection({ type: 'globe' });
+      map?.flyTo({ center: [-0.53, 44.48], zoom: 3.2, pitch: 0, duration: 1100 });
+    } else if (mode === '3D') {
+      map?.setProjection({ type: 'mercator' });
+      map?.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 });
+      map?.easeTo({ center: [-0.53, 44.48], zoom: 11.2, pitch: 62, bearing: -18, duration: 900 });
+    } else {
+      map?.setTerrain(null);
+      map?.setProjection({ type: 'mercator' });
+      map?.easeTo({ center: [-0.53, 44.48], zoom: 10.5, pitch: 0, bearing: 0, duration: 700 });
+    }
+    logTool('set_view_mode', 'Vue ' + mode + ' activée');
+  }, [logTool]);
+
+  useEffect(() => {
+    const mc = (document as Document & { modelContext?: ModelContextLike }).modelContext
+      || (navigator as Navigator & { modelContext?: ModelContextLike }).modelContext;
+    if (!mc || typeof mc.registerTool !== 'function') {
+      queueMicrotask(() => setToolStatus('unavailable'));
+      return;
+    }
+    const registered: string[] = [];
+    const readOnly = { readOnlyHint: true };
+    const defs: ToolDefinition[] = [
+      {
+        name: 'get_situation', title: 'Lire la situation opérationnelle',
+        description: 'Retourne un état JSON compact du feu, de la météo, des moyens et zones menacées. Utiliser avant toute recommandation.',
+        inputSchema: schema({}), annotations: readOnly,
+        execute: () => {
+          const s = stateRef.current;
+          logTool('get_situation', 'Situation opérationnelle lue');
+          return { incident: 'Landiras 2022', minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, frontSpeedKmh: 2.8, containedPercent: s.contained, weather: s.weather, engagedUnits: s.committed, threatenedZones: ['Landiras Est', 'Guillos Nord'], calibrationSorensen: 0.67 };
+        },
+      },
+      {
+        name: 'list_units', title: 'Lister les moyens',
+        description: 'Liste les moyens disponibles et engagés avec position, statut, capacité et autonomie.',
+        inputSchema: schema({}), annotations: readOnly, execute: () => ({ available: units, engaged: stateRef.current.committed }),
+      },
+      {
+        name: 'get_fire_forecast', title: 'Projeter le front',
+        description: 'Projette le feu à T+1h, T+3h et T+6h sous la météo courante.',
+        inputSchema: schema({}), annotations: readOnly,
+        execute: () => ({ model: 'Rothermel 1972 + Alexander 1985', gridMeters: 90, projections: [{ horizon: 'T+1h', burnedHa: 1428, homes: 21 }, { horizon: 'T+3h', burnedHa: 1960, homes: 74 }, { horizon: 'T+6h', burnedHa: 3180, homes: 186 }], sorensen: 0.67 }),
+      },
+      {
+        name: 'get_weather', title: 'Lire la météo', description: 'Retourne vent, rafales, température, hygrométrie et sécheresse.',
+        inputSchema: schema({}), annotations: readOnly, execute: () => stateRef.current.weather,
+      },
+      {
+        name: 'query_terrain', title: 'Interroger le terrain', description: 'Analyse pente, exposition, combustible et accès routiers d’un secteur.',
+        inputSchema: schema({ sector: { type: 'string', maxLength: 80 } }, ['sector']), annotations: readOnly,
+        execute: (input) => ({ sector: textValue(input.sector, 'sector', 80), slopePercent: 7.4, aspect: 'sud-est', fuel: 'Pin maritime · Scott & Burgan TU5', roadAccess: 'D115 et piste P-17', confidence: 0.81 }),
+      },
+      {
+        name: 'list_scenarios', title: 'Lister les scénarios', description: 'Liste les scénarios historiques et leur calibration.',
+        inputSchema: schema({}), annotations: readOnly,
+        execute: () => ({ scenarios: [{ id: 'landiras-2022', name: 'Landiras I · Gironde', status: 'ready', sorensen: 0.67 }, { id: 'camp-fire-2018', name: 'Camp Fire · Californie', status: 'preview', sorensen: 0.62 }] }),
+      },
+      {
+        name: 'propose_plan', title: 'Ouvrir un plan provisoire',
+        description: 'Ouvre une couche de proposition fantôme. Ne modifie jamais la simulation active.',
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']),
+        execute: (input) => ({ staged: true, plan: makePlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300)) }),
+      },
+      {
+        name: 'stage_deploy_units', title: 'Prépositionner des moyens',
+        description: 'Place jusqu’à 50 moyens dans le plan provisoire. N’engage aucun moyen.',
+        inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
+          type: { type: 'string', enum: ['CCF', 'FPT', 'HBE', 'DOZ'] }, count: { type: 'integer', minimum: 1, maximum: 50 },
+          sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
+        }, ['type', 'count', 'sector', 'mission']) } }, ['units']),
+        execute: (input) => {
+          if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('units doit contenir 1 à 50 groupes.');
+          const deployments = input.units.map((raw, index) => {
+            if (!raw || typeof raw !== 'object') throw new Error('Chaque moyen doit être un objet.');
+            const item = raw as Record<string, unknown>;
+            const type = textValue(item.type, 'type', 3);
+            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error('Type de moyen inconnu.');
+            return stageUnit({ type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), x: 47 + index * 6, y: 45 + (index % 2) * 12 });
+          });
+          logTool('stage_deploy_units', String(deployments.reduce((sum, item) => sum + item.count, 0)) + ' moyens prépositionnés');
+          return { staged: true, deployments, liveSimulationChanged: false };
+        },
+      },
+      {
+        name: 'stage_assign_task', title: 'Affecter une mission provisoire', description: 'Affecte une mission sans modifier la simulation active.',
+        inputSchema: schema({ unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']),
+        execute: (input) => {
+          const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
+          setStagedPlan((plan) => plan ? { ...plan, tasks: [...plan.tasks, task] } : plan);
+          return { staged: true, task };
+        },
+      },
+      {
+        name: 'stage_firebreak', title: 'Tracer une ligne d’appui', description: 'Ajoute une coupure provisoire visible en fantôme.',
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, lengthKm: { type: 'number', minimum: .1, maximum: 40 } }, ['name','sector','lengthKm']),
+        execute: (input) => {
+          const line = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), lengthKm: numberValue(input.lengthKm, 'lengthKm', .1, 40) };
+          setStagedPlan((plan) => plan ? { ...plan, firebreaks: [...plan.firebreaks, line] } : plan);
+          return { staged: true, firebreak: line };
+        },
+      },
+      {
+        name: 'stage_evacuation_zone', title: 'Préparer une zone d’évacuation',
+        description: 'Délimite une zone provisoire. Aucun ordre n’est transmis.',
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']),
+        execute: (input) => {
+          const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
+          setStagedPlan((plan) => plan ? { ...plan, evacuations: [...plan.evacuations, zone] } : plan);
+          return { staged: true, evacuationZone: zone, orderIssued: false };
+        },
+      },
+      {
+        name: 'commit_plan', title: 'Soumettre le plan à validation',
+        description: 'Ouvre la revue et demande une unique validation humaine pour tout le plan.',
+        inputSchema: schema({}), annotations: { readOnlyHint: false },
+        execute: async (_input, client) => {
+          if (!stateRef.current.stagedPlan) throw new Error('Aucun plan provisoire.');
+          const interaction = async () => new Promise<boolean>((resolve) => {
+            reviewResolver.current = resolve;
+            setReviewOpen(true);
+          });
+          const approved = client?.requestUserInteraction ? await client.requestUserInteraction(interaction) : await interaction();
+          return { approved, planApplied: approved };
+        },
+      },
+      {
+        name: 'revert_plan', title: 'Annuler le dernier plan', description: 'Annule le dernier plan appliqué.',
+        inputSchema: schema({}), execute: () => ({ reverted: revertPlan() }),
+      },
+      {
+        name: 'run_simulation', title: 'Avancer la simulation', description: 'Avance le moteur local de 5 à 360 minutes.',
+        inputSchema: schema({ minutes: { type: 'integer', minimum: 5, maximum: 360 } }, ['minutes']),
+        execute: async (input) => {
+          const delta = numberValue(input.minutes, 'minutes', 5, 360);
+          const engine = await runWorker({
+            type: 'simulate', minutes: delta, fuelModel: 'TU5', moisture: 0.08,
+            windKph: stateRef.current.weather.windSpeed, slopeDegrees: 7.4, gridMeters: 90,
+            suppression: stateRef.current.contained / 125,
+          });
+          const next = Math.round(stateRef.current.burnedHa + Number(engine.addedBurnedHa || 0));
+          setMinutes((value) => value + delta); setBurnedHa(next);
+          return { advancedMinutes: delta, burnedHa: next, containedPercent: stateRef.current.contained, worker: 'local-browser', engine };
+        },
+      },
+      {
+        name: 'set_time', title: 'Positionner l’heure', description: 'Positionne le scénario entre H+0 et H+24.',
+        inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']),
+        execute: (input) => { const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440); setMinutes(value); return { minutesFromIgnition: value }; },
+      },
+      {
+        name: 'set_weather', title: 'Modifier la météo', description: 'Modifie les paramètres météo de la simulation.',
+        inputSchema: schema({ windSpeed: { type: 'number', minimum: 0, maximum: 150 }, windDirection: { type: 'string', maxLength: 40 }, gusts: { type: 'number', minimum: 0, maximum: 200 } }, ['windSpeed','windDirection']),
+        execute: (input) => {
+          const next = { ...stateRef.current.weather, windSpeed: numberValue(input.windSpeed, 'windSpeed', 0, 150), windDirection: textValue(input.windDirection, 'windDirection', 40), gusts: input.gusts === undefined ? stateRef.current.weather.gusts : numberValue(input.gusts, 'gusts', 0, 200) };
+          setWeather(next); logTool('set_weather', 'Vent ' + next.windDirection + ' · ' + next.windSpeed + ' km/h'); return next;
+        },
+      },
+      {
+        name: 'ignite', title: 'Allumer un foyer d’exercice', description: 'Place un foyer dans le scénario d’entraînement uniquement.',
+        inputSchema: schema({ sector: { type: 'string', maxLength: 80 }, intensity: { type: 'number', minimum: 1, maximum: 5 } }, ['sector','intensity']),
+        execute: (input) => ({ ignited: true, sector: textValue(input.sector, 'sector', 80), intensity: numberValue(input.intensity, 'intensity', 1, 5), simulationOnly: true }),
+      },
+      {
+        name: 'compare_plans', title: 'Comparer des stratégies',
+        description: 'Simule 2 ou 3 stratégies et retourne un comparatif chiffré à T+6h.',
+        inputSchema: schema({ planNames: { type: 'array', minItems: 2, maxItems: 3, items: { type: 'string', maxLength: 80 } }, horizonHours: { type: 'integer', enum: [1,3,6] } }, ['planNames']),
+        execute: async (input) => {
+          if (!Array.isArray(input.planNames) || input.planNames.length < 2 || input.planNames.length > 3) throw new Error('Comparer 2 ou 3 plans.');
+          const results = input.planNames.map((name, index) => ({ ...strategies[index], name: textValue(name, 'planName', 80) }));
+          const engineRuns = await runWorker({
+            type: 'compare',
+            conditions: { minutes: Number(input.horizonHours || 6) * 60, fuelModel: 'TU5', moisture: 0.08, windKph: stateRef.current.weather.windSpeed, slopeDegrees: 7.4, gridMeters: 90 },
+            strategies: results.map((result) => ({ name: result.name, suppression: result.contained / 125 })),
+          });
+          setStagedPlan((plan) => ({ ...(plan || emptyPlan(String(results[0].name), 'Protéger le village après bascule du vent.')), comparison: results }));
+          setComparisonOpen(true); logTool('compare_plans', String(results.length) + ' stratégies comparées', 800);
+          return { horizonHours: input.horizonHours || 6, baseline: strategies[2], strategies: results, recommended: results[0].name, model: 'Rothermel/Alexander · Sørensen 0,67', engineRuns };
+        },
+      },
+      {
+        name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur Landiras ou la Californie.',
+        inputSchema: schema({ region: { type: 'string', enum: ['landiras','california'] } }, ['region']),
+        execute: (input) => { const region = textValue(input.region, 'region', 20); mapRef.current?.flyTo({ center: region === 'california' ? [-121.62,39.75] : [-0.53,44.48], zoom: 9.8, duration: 1000 }); return { focused: region }; },
+      },
+      {
+        name: 'set_view_mode', title: 'Changer le mode de carte', description: 'Bascule entre 2D, relief 3D et globe.',
+        inputSchema: schema({ mode: { type: 'string', enum: ['2D','3D','globe'] } }, ['mode']),
+        execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error('Mode inconnu.'); changeView(mode); return { mode }; },
+      },
+    ];
+    Promise.all(defs.map(async (definition) => { await mc.registerTool(definition); registered.push(definition.name); }))
+      .then(() => setToolStatus('available')).catch(() => setToolStatus('unavailable'));
+    return () => {
+      registered.forEach((name) => { try { void mc.unregisterTool?.(name); } catch { /* teardown */ } });
+      reviewResolver.current?.(false);
+      reviewResolver.current = null;
+    };
+  }, [changeView, logTool, makePlan, revertPlan, runWorker, stageUnit]);
+
+  const runAgentDemo = useCallback(async () => {
+    setAgentOpen(true);
+    logTool('get_situation', 'Analyse du front et des zones menacées', 500);
+    await new Promise((resolve) => window.setTimeout(resolve, 650));
+    setWeather((current) => ({ ...current, windDirection: 'Nord-ouest', windSpeed: 40, gusts: 58 }));
+    logTool('set_weather', 'Vent nord-ouest · 40 km/h', 450);
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    const plan = makePlan('Bouclier village', 'Bloquer le flanc nord, renforcer le secteur B et protéger Landiras Est avant la bascule du vent.');
+    const deployments: Deployment[] = [
+      { id: nextId(), type: 'CCF', count: 12, sector: 'B', mission: 'Tenir la lisière est', x: 61, y: 48, staged: true },
+      { id: nextId(), type: 'DOZ', count: 3, sector: 'Nord', mission: 'Créer la ligne d’appui', x: 52, y: 36, staged: true },
+      { id: nextId(), type: 'FPT', count: 6, sector: 'Village', mission: 'Protection des habitations', x: 67, y: 52, staged: true },
+      { id: nextId(), type: 'HBE', count: 2, sector: 'Ouest', mission: 'Freiner la tête du feu', x: 43, y: 29, staged: true },
+    ];
+    setStagedPlan({ ...plan, deployments, firebreaks: [{ name: 'Ligne nord', sector: 'Nord', lengthKm: 4.2 }], evacuations: [{ name: 'Landiras Est', sector: 'Est', population: 186 }], comparison: strategies.slice(0,2) });
+    logTool('stage_deploy_units', '23 moyens prépositionnés en fantôme', 700);
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    setComparisonOpen(true);
+    logTool('compare_plans', '2 stratégies comparées à T+6h', 800);
+  }, [logTool, makePlan]);
+
+  const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const type = event.dataTransfer.getData('fireops/unit');
+    if (!type) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(18, Math.min(82, ((event.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(20, Math.min(78, ((event.clientY - rect.top) / rect.height) * 100));
+    stageUnit({ type, count: 1, sector: 'Point carte', mission: 'Mission à préciser', x, y });
+    notify(type + ' ajouté au plan provisoire. Aucune ressource engagée.');
+  };
+  const signOut = async () => {
+    const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin', cache: 'no-store' });
+    const { csrfToken } = await csrfResponse.json() as { csrfToken: string };
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'x-csrf-token': csrfToken },
+    });
+    window.location.reload();
+  };
+  const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
+  const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
+  const timeLabel = 'H+' + String(Math.floor(minutes / 60)).padStart(2,'0') + ':' + String(minutes % 60).padStart(2,'0');
+
+  return (
+    <main className="ops-shell">
+      <div className={'map-stage view-' + viewMode.toLowerCase()} aria-label="Carte tactique du feu de Landiras" onDragOver={(event) => event.preventDefault()} onDrop={onMapDrop}>
+        <div ref={mapNode} className="maplibre-host" /><div className="map-shade" /><div className="terrain-grid" />
+        <div className="road road-a" /><div className="road road-b" />
+        <div className="village village-a"><span>LANDIRAS</span></div><div className="village village-b"><span>GUILLOS</span></div>
+        <div className="burn-scar" /><div className="active-front"><span className="front-label">FRONT ACTIF · 2,8 km/h</span></div><div className="forecast-front"><span>T+3H</span></div>
+        {committed.map((unit) => <MapUnit key={unit.id} unit={unit} />)}
+        {stagedPlan?.deployments.map((unit) => <MapUnit key={unit.id} unit={unit} ghost />)}
+        {stagedPlan?.firebreaks.map((line) => <div key={line.name} className="ghost-firebreak"><span>{line.name} · {line.lengthKm} km</span></div>)}
+        {stagedPlan?.evacuations.map((zone) => <div key={zone.name} className="ghost-evac"><span>ZONE PROPOSÉE · {zone.name}</span></div>)}
+      </div>
+
+      <header className="topbar glass-panel">
+        <div className="brand-block"><span className="brand-mark"><Flame size={18} /></span><div><strong>FireOps</strong><span>Centre de commandement</span></div></div>
+        <div className="scenario-title"><span>INCIDENT 33-2022-0712</span><strong>Landiras · Gironde</strong></div>
+        <div className="top-actions"><button className="demo-button" type="button" onClick={runAgentDemo}><Sparkles size={13} />Agent simulé</button><span className="status-chip"><i />Simulation active</span><button className="icon-button" type="button" aria-label="Aide"><CircleHelp size={17} /></button><button className="avatar-button" type="button" onClick={signOut} title={'Déconnecter ' + userEmail}>{userEmail.slice(0,2).toUpperCase()}</button></div>
+      </header>
+
+      {toolStatus === 'unavailable' && <section className="compat-banner glass-panel"><Bot size={16} /><span><strong>WebMCP non détecté.</strong> Activez le flag Chrome ou utilisez le navigateur intégré ChatGPT.</span><button type="button" onClick={runAgentDemo}>Tester l’agent simulé</button></section>}
+
+      <button className={'agent-banner glass-panel ' + toolStatus} type="button" onClick={() => setToolsOpen(true)}>
+        <span className="agent-orb">{toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}</span>
+        <span className="agent-copy"><strong>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'Enregistrement des outils…' : 'Mode manuel disponible'}</strong><small>20 outils métier · session de la page</small></span>
+        <span className="agent-link">Voir les outils</span>
+      </button>
+
+      <aside className="left-rail glass-panel">
+        <div className="panel-heading"><div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div><span className="resource-count">29</span></div>
+        <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
+        <div className="unit-list">{units.map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui est', mission: 'Mission à préciser', x: 64, y: 51 }); notify(unit.code + ' ajouté au point d’appui est. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code + ' au point d’appui est'} key={unit.code}><span className="unit-code">{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>Prêt · autonomie {unit.autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
+        <div className="rail-footer"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
+      </aside>
+
+      <aside className="situation-panel glass-panel">
+        <div className="panel-heading"><div><span>12 JUIL. 2022 · {String(14 + Math.floor(minutes / 60)).padStart(2,'0')}:{String(minutes % 60).padStart(2,'0')}</span><strong>Situation opérationnelle</strong></div><span className="beta-chip">BÊTA</span></div>
+        <div className="metric-grid"><div><span>Surface brûlée</span><strong>{burnedHa.toLocaleString('fr-FR')} <small>ha</small></strong><em>+142 ha / h</em></div><div><span>Front contenu</span><strong>{contained} <small>%</small></strong><em>Objectif 70 %</em></div><div><span>Vitesse du front</span><strong>2,8 <small>km/h</small></strong><em>En hausse</em></div><div><span>Habitations</span><strong>{contained > 60 ? 12 : 186}</strong><em>dans la zone T+6h</em></div></div>
+        <div className="weather-card"><div className="weather-icon"><Wind size={18} /></div><div><span>VENT {weather.windDirection.toUpperCase()}</span><strong>{weather.windSpeed} <small>km/h</small></strong></div><div className="gust"><span>RAFALES</span><strong>{weather.gusts}</strong></div></div>
+        <div className="weather-details"><span><small>TEMP.</small><b>{weather.temperature} °C</b></span><span><small>HUMIDITÉ</small><b>{weather.humidity} %</b></span><span><small>SÉCHERESSE</small><b>{weather.droughtIndex.toFixed(2)}</b></span></div>
+        <div className="confidence"><div><span>Calibration historique</span><b>Sørensen 0,67</b></div><div className="confidence-track"><i /></div><p>Confiance modérée · modèle Rothermel, grille 90 m</p></div>
+      </aside>
+
+      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Revoir et appliquer</button></section>}
+      {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} actions de l’agent<ChevronDown size={13} /></button>}
+
+      <nav className="map-controls glass-panel"><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels"><span>14:00</span><span>16:00</span><span>18:00</span><span>20:00</span><span>22:00</span></div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
+
+      {toolsOpen && <Modal onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,11)],['Engagement',toolNames.slice(11,13)],['Simulation & carte',toolNames.slice(13)]].map(([label,names]) => <div key={String(label)}><h3>{String(label)}<span>{(names as string[]).length}</span></h3>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div>)}</div></section></Modal>}
+
+      {comparisonOpen && <Modal onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead icon={<Layers3 size={18} />} eyebrow="SIMULATION PARALLÈLE · T+6H" title="Comparaison des stratégies" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{strategies.map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''}><header><div><small>{index === 0 ? 'RECOMMANDÉE' : index === 2 ? 'RÉFÉRENCE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Meilleur impact</span>}</header><p>{strategy.description}</p><dl><div><dt>Surface brûlée</dt><dd>{strategy.burnedHa.toLocaleString('fr-FR')} ha</dd></div><div><dt>Front contenu</dt><dd>{strategy.contained} %</dd></div><div><dt>Moyens</dt><dd>{strategy.resources}</dd></div><div><dt>Habitations</dt><dd>{strategy.homes}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Vent NO 40 km/h · Sørensen 0,67</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Retenir « Bouclier village »</button></div></section></Modal>}
+
+      {reviewOpen && stagedPlan && <Modal><section className="review-panel glass-panel"><ModalHead icon={<Command size={18} />} eyebrow="VALIDATION HUMAINE REQUISE" title="Revue du plan" onClose={rejectPlan} /><div className="intent-card"><small>INTENTION DE L’AGENT</small><p>« {stagedPlan.intention} »</p></div><div className="review-section"><h3>Modifications proposées</h3><ul>{stagedPlan.deployments.map((unit) => <li key={unit.id}><span>+{unit.count} {unit.type}</span><p>{unit.mission} · secteur {unit.sector}</p></li>)}{stagedPlan.firebreaks.map((line) => <li key={line.name}><span>+ Ligne d’appui {line.lengthKm} km</span><p>{line.name} · secteur {line.sector}</p></li>)}{stagedPlan.evacuations.map((zone) => <li key={zone.name}><span>+ Zone d’évacuation</span><p>{zone.name} · {zone.population} personnes · ordre non transmis</p></li>)}</ul></div><div className="impact-card"><div><small>IMPACT PROJETÉ À T+6H</small><strong>78 % <span>du front contenu</span></strong></div><div className="impact-bars"><span><i style={{ width: '78%' }} />Avec le plan <b>78 %</b></span><span><i style={{ width: '41%' }} />Sans action <b>41 %</b></span></div></div><details className="edit-details"><summary>Modifier avant d’appliquer <ChevronDown size={14} /></summary><p>Le plan reste éditable sur la carte avant validation.</p></details><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Rejeter</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />Appliquer le plan · {stagedCount} moyens</button></div><p className="review-legal"><ShieldCheck size={13} />Une seule validation engage ce lot. Chaque action reste annulable.</p></section></Modal>}
+
+      {agentOpen && <aside className="agent-drawer glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="OFFICIER D’ÉTAT-MAJOR" title="Agent simulé" onClose={() => setAgentOpen(false)} /><div className="agent-prompt"><span>DEMANDE</span><p>« Le vent passe au nord-ouest à 40 km/h. Propose-moi deux stratégies pour protéger le village. »</p></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Rejouez un plan complet sans dépendre du flag WebMCP.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <TimerReset size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div><button className="primary-button full-button" type="button" onClick={stagedPlan ? () => { setAgentOpen(false); setReviewOpen(true); } : runAgentDemo}><Sparkles size={14} />{stagedPlan ? 'Ouvrir la revue du plan' : 'Lancer le plan scripté'}</button></aside>}
+      {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan appliqué · Annuler</button>}
+      {toast && <div className="toast glass-panel" role="status"><Check size={15} />{toast}</div>}
+    </main>
+  );
+}
+
+function MapUnit({ unit, ghost = false }: { unit: Deployment; ghost?: boolean }) {
+  return <div className={'unit-marker ' + (ghost ? 'ghost' : '')} style={{ left: unit.x + '%', top: unit.y + '%' }} title={unit.type + ' × ' + unit.count + ' · ' + unit.mission}><b>{unit.type}</b><span>{String(unit.count).padStart(2,'0')}</span></div>;
+}
+function Modal({ children, onClose }: { children: React.ReactNode; onClose?: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (onClose && event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => { if (onClose && event.key === 'Escape') onClose(); }}>{children}</div>;
+}
+function ModalHead({ icon, eyebrow, title, onClose }: { icon: React.ReactNode; eyebrow: string; title: string; onClose: () => void }) {
+  return <div className="drawer-heading"><div><span className="drawer-icon">{icon}</span><div><small>{eyebrow}</small><h2>{title}</h2></div></div><button type="button" aria-label="Fermer" onClick={onClose}><X size={18} /></button></div>;
+}
