@@ -21,6 +21,12 @@ type Plan = {
 };
 type Activity = { id: string; tool: string; label: string; state: 'running' | 'done'; at: string };
 type Ignition = { lng: number; lat: number; radiusM: number };
+type Suppression = {
+  firelineIntensityKwM: number; activePerimeterM: number; requiredFlowLpm: number;
+  deployedFlowLpm: number; containmentRatio: number; containmentMinutes: number | null;
+  litresPerHour: number; attackViable: boolean; status: 'eteint' | 'maitrise' | 'contenu' | 'libre';
+  attackMode: 'directe' | 'moyens-lourds' | 'indirect'; appliances: number; lineMetresPerHour: number;
+};
 type Scenario = {
   id: string; name: string; createdAt: number; preset: 'landiras' | 'blank';
   ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[];
@@ -172,6 +178,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [scenarioOpen, setScenarioOpen] = useState(false);
   const [burnedHa, setBurnedHa] = useState<number | null>(null);
   const [frontRate, setFrontRate] = useState<number | null>(null);
+  const [suppression, setSuppression] = useState<Suppression | null>(null);
   const [perimeterGeoJSON, setPerimeterGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [forecastGeoJSON, setForecastGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [running, setRunning] = useState(false);
@@ -340,6 +347,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     engineGeoRef.current = { perimeter, forecast };
     setBurnedHa(Number(engine.totalBurnedHa));
     setFrontRate(Number(engine.rateOfSpreadMetersPerMinute));
+    setSuppression((engine.suppression as Suppression) ?? null);
     setPerimeterGeoJSON(perimeter);
     setForecastGeoJSON(forecast);
   }, []);
@@ -755,6 +763,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const simState: 'active' | 'pause' | 'vierge' = !ignition ? 'vierge' : running ? 'active' : 'pause';
   const shownBurnedHa = ignition ? burnedHa : null;
   const shownFrontRate = ignition ? frontRate : null;
+  const shownSuppression = ignition ? suppression : null;
+  const STATUS_LABEL: Record<string, string> = { eteint: 'Feu éteint', maitrise: 'Maîtrisé', contenu: 'Contenu', libre: 'Libre de progresser' };
+  const ATTACK_LABEL: Record<string, string> = { directe: 'Attaque directe possible', 'moyens-lourds': 'Moyens lourds requis', indirect: 'Attaque directe inopérante' };
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
   const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
   const timeLabel = 'H+' + String(Math.floor(minutes / 60)).padStart(2,'0') + ':' + String(minutes % 60).padStart(2,'0');
@@ -885,6 +896,30 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { setWeather((current) => ({ ...current, ...preset.values })); logTool('set_weather', preset.label); }}>{preset.label}</button>)}</div>
           </div>
           <p className="weather-note">Seuls le vent, sa direction et l’humidité entrent dans le calcul de propagation. Température et sécheresse sont contextuelles.</p>
+        </div>}
+        {shownSuppression && <div className={'suppression-card ' + shownSuppression.status}>
+          <div className="supp-head">
+            <span className={'supp-dot ' + shownSuppression.status} />
+            <strong>{STATUS_LABEL[shownSuppression.status]}</strong>
+            <span className={'supp-mode ' + shownSuppression.attackMode}>{ATTACK_LABEL[shownSuppression.attackMode]}</span>
+          </div>
+          <div className="supp-gauge" aria-label="Couverture hydraulique">
+            <i style={{ width: Math.min(100, shownSuppression.containmentRatio * 100) + '%' }} />
+          </div>
+          <div className="supp-grid">
+            <div><span>Débit déployé</span><b className="water">{shownSuppression.deployedFlowLpm.toLocaleString('fr-FR')} <small>L/min</small></b></div>
+            <div><span>Débit nécessaire</span><b>{shownSuppression.requiredFlowLpm.toLocaleString('fr-FR')} <small>L/min</small></b></div>
+            <div><span>Front actif</span><b>{shownSuppression.activePerimeterM.toLocaleString('fr-FR')} <small>m</small></b></div>
+            <div><span>Intensité de front</span><b className={shownSuppression.attackViable ? '' : 'danger'}>{shownSuppression.firelineIntensityKwM.toLocaleString('fr-FR')} <small>kW/m</small></b></div>
+          </div>
+          <p className="supp-verdict">
+            {shownSuppression.status === 'eteint' ? 'Le front ne progresse plus.'
+              : shownSuppression.containmentMinutes !== null
+                ? <>Maîtrise estimée en <b>{shownSuppression.containmentMinutes} min</b> · {shownSuppression.litresPerHour.toLocaleString('fr-FR')} L consommés par heure</>
+                : shownSuppression.attackViable
+                  ? <>Il manque <b>{Math.max(0, shownSuppression.requiredFlowLpm - shownSuppression.deployedFlowLpm).toLocaleString('fr-FR')} L/min</b> pour tenir le front</>
+                  : <>Au-delà de 4 000 kW/m aucun débit ne suffit : ligne d’appui ou attaque indirecte</>}
+          </p>
         </div>}
         <p className="model-disclaimer">Modèle Rothermel 1972 · outil d’entraînement · non calibré sur données historiques</p>
       </aside>

@@ -97,22 +97,94 @@ function createState(origin) {
 }
 function lngLatForCell(x, y) { return [BOUNDS.west + ((x + 0.5) / GRID_SIZE) * (BOUNDS.east - BOUNDS.west), BOUNDS.north - ((y + 0.5) / GRID_SIZE) * (BOUNDS.north - BOUNDS.south)]; }
 function cellForLngLat(lng, lat) { return { x: clamp(Math.floor(((lng - BOUNDS.west) / (BOUNDS.east - BOUNDS.west)) * GRID_SIZE), 0, GRID_SIZE - 1), y: clamp(Math.floor(((BOUNDS.north - lat) / (BOUNDS.north - BOUNDS.south)) * GRID_SIZE), 0, GRID_SIZE - 1) }; }
-function buildSuppressionMask(deployments) {
+
+/* ---------------------------------------------------------------------------
+ * Extinction : debit d'eau reel contre intensite de front (Byram 1959).
+ *
+ * L'ancien modele appliquait un coefficient abstrait par engin. Ici chaque
+ * engin porte ses caracteristiques reelles, et l'efficacite depend de
+ * l'intensite locale du feu -- au-dela d'un seuil, aucune quantite d'eau ne
+ * suffit en attaque directe, ce qui est le comportement operationnel reel.
+ * ------------------------------------------------------------------------- */
+const HEAT_YIELD_KJ_KG = 18600;      // chaleur de combustion, valeur standard
+const LB_FT2_TO_KG_M2 = 4.882;
+const DIRECT_ATTACK_LIMIT_KW_M = 4000;  // au-dela : attaque directe inoperante
+const HAND_ATTACK_LIMIT_KW_M = 2000;    // au-dela : moyens lourds seulement
+const FLOW_PER_METRE_DIVISOR = 400;     // L/min par metre de front, par kW/m
+
+// tankL : capacite ; flowLpm : debit pompe en attaque ; refillMin : aller-retour
+// remplissage. Le debit soutenu tient compte du temps de reapprovisionnement.
+const APPLIANCES = {
+  CCF: { label: 'Camion-citerne feux de forêts', tankL: 4000, flowLpm: 1000, refillMin: 20, offRoad: true,  heavy: false },
+  FPT: { label: 'Fourgon pompe-tonne',           tankL: 3000, flowLpm: 2000, refillMin: 25, offRoad: false, heavy: false },
+  HBE: { label: 'Hélicoptère bombardier d’eau',  tankL: 1500, flowLpm: 1500, refillMin: 11, offRoad: true,  heavy: true },
+  DOZ: { label: 'Bulldozer',                     tankL: 0,    flowLpm: 0,    refillMin: 0,  offRoad: true,  heavy: true, lineMetresPerHour: 320 },
+};
+function sustainedFlowLpm(code) {
+  const a = APPLIANCES[code]; if (!a || !a.tankL) return 0;
+  const attackMin = a.tankL / a.flowLpm;
+  return a.tankL / (attackMin + a.refillMin);
+}
+// Byram : I = H . w . R  (kW/m), avec R en m/s et w en kg/m2.
+function firelineIntensity(fuelCode, rosMetresPerMinute) {
+  const fuel = FUEL[fuelCode] || FUEL[0];
+  if (fuel.nonBurnable) return 0;
+  const consumedKgM2 = fuel.load * LB_FT2_TO_KG_M2;
+  return HEAT_YIELD_KJ_KG * consumedKgM2 * (rosMetresPerMinute / 60);
+}
+// Debit necessaire pour tenir un metre de front a cette intensite.
+function requiredFlowPerMetre(intensityKwM) { return intensityKwM / FLOW_PER_METRE_DIVISOR; }
+
+function buildSuppressionMask(deployments, input) {
   const mask = new Float32Array(GRID_SIZE * GRID_SIZE);
+  const totals = { deployedFlowLpm: 0, lineMetresPerHour: 0, appliances: 0, byType: {} };
   for (const unit of deployments || []) {
     if (!Number.isFinite(unit.lng) || !Number.isFinite(unit.lat)) continue;
+    const spec = APPLIANCES[unit.type] || APPLIANCES.CCF;
+    const count = clamp(unit.count || 1, 1, 50);
+    const flow = sustainedFlowLpm(unit.type) * count;
+    const line = (spec.lineMetresPerHour || 0) * count;
+    totals.deployedFlowLpm += flow; totals.lineMetresPerHour += line; totals.appliances += count;
+    totals.byType[unit.type] = (totals.byType[unit.type] || 0) + count;
+
+    const radius = unit.radiusM || 600;
+    const radiusCells = Math.max(1, Math.ceil(radius / CELL_METERS));
     const center = cellForLngLat(unit.lng, unit.lat);
-    const radius = unit.radiusM || 600; const radiusCells = Math.max(1, Math.ceil(radius / CELL_METERS));
-    const perUnit = clamp(unit.capacity || 0.045, 0, 0.35); const combined = 1 - Math.pow(1 - perUnit, clamp(unit.count || 1, 1, 50));
+    // Le front couvert par cet engin, en metres : on repartit son debit dessus.
+    const coveredMetres = Math.max(CELL_METERS, 2 * radius);
+    const flowPerMetre = flow / coveredMetres;
+    const linePerMetre = line / 60 / coveredMetres; // metres de ligne par minute et par metre de front
+
     for (let dy = -radiusCells; dy <= radiusCells; dy += 1) for (let dx = -radiusCells; dx <= radiusCells; dx += 1) {
-      const x = center.x + dx; const y = center.y + dy; if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
-      const distance = Math.hypot(dx, dy) * CELL_METERS; if (distance > radius) continue;
-      const index = indexOf(x, y); const falloff = 1 - distance / radius;
-      mask[index] = Math.max(mask[index], clamp(combined * (0.45 + 0.55 * falloff), 0, 0.92));
+      const x = center.x + dx, y = center.y + dy;
+      if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+      const distance = Math.hypot(dx, dy) * CELL_METERS;
+      if (distance > radius) continue;
+      const index = indexOf(x, y);
+
+      const headRos = rothermelRateOfSpread(input, sim_fuelAt(index));
+      const intensity = firelineIntensity(sim_fuelAt(index), headRos);
+      if (intensity <= 0) continue;
+
+      // Au-dela du seuil d'attaque directe, l'eau ne fait plus que ralentir.
+      const ceiling = intensity > DIRECT_ATTACK_LIMIT_KW_M ? (spec.heavy ? 0.25 : 0.10)
+        : intensity > HAND_ATTACK_LIMIT_KW_M ? (spec.heavy ? 0.92 : 0.70)
+        : 0.98;
+
+      const needed = requiredFlowPerMetre(intensity);
+      const falloff = 1 - 0.45 * (distance / radius);
+      const waterRatio = needed > 0 ? (flowPerMetre * falloff) / needed : 0;
+      const lineRatio = intensity <= HAND_ATTACK_LIMIT_KW_M ? linePerMetre * falloff * 6 : 0;
+
+      const effect = clamp((waterRatio + lineRatio) * ceiling, 0, ceiling);
+      mask[index] = clamp(mask[index] + effect * (1 - mask[index]), 0, 0.985);
     }
   }
-  return mask;
+  return { mask, totals };
 }
+let SIM_FUEL = null;
+function sim_fuelAt(index) { return SIM_FUEL ? SIM_FUEL[index] : 0; }
+
 class MinHeap {
   constructor() { this.items = []; }
   push(item) { this.items.push(item); let i = this.items.length - 1; while (i > 0) { const p = Math.floor((i - 1) / 2); if (this.items[p].time <= item.time) break; this.items[i] = this.items[p]; i = p; } this.items[i] = item; }
@@ -135,7 +207,8 @@ function directionalFactor(dx, dy, bearing, lengthToBreadth) {
   return (1 - eccentricity) / (1 - eccentricity * Math.cos(theta));
 }
 function propagate(sim, input, targetMinutes) {
-  const suppression = buildSuppressionMask(input.deployments); const bearing = spreadBearing(input);
+  SIM_FUEL = sim.fuel;
+  const built = buildSuppressionMask(input.deployments, input); const suppression = built.mask; const bearing = spreadBearing(input);
   // Alexander doit recevoir le meme vent que Rothermel (mi-flamme, facteur 0,25).
   // Avec le vent brut on obtenait L/B ~ 6 : une ellipse plus fine qu'une cellule de 195 m,
   // que la grille ne peut pas representer -- la surface s'effondrait.
@@ -154,7 +227,7 @@ function propagate(sim, input, targetMinutes) {
   }
   sim.currentMinutes = targetMinutes; let affectedCells = 0; let burningCells = 0;
   for (let i = 0; i < sim.state.length; i += 1) { if (sim.arrival[i] <= targetMinutes) { sim.state[i] = targetMinutes - sim.arrival[i] < 12 ? 1 : 2; affectedCells += 1; if (sim.state[i] === 1) burningCells += 1; } else sim.state[i] = 0; }
-  return { affectedCells, burningCells, lengthToBreadth };
+  return { affectedCells, burningCells, lengthToBreadth, suppressionTotals: built.totals, suppression };
 }
 function perimeterGeoJSON(sim) {
   const spanLng = (BOUNDS.east - BOUNDS.west) / GRID_SIZE;
@@ -178,7 +251,63 @@ function perimeterGeoJSON(sim) {
   return { type: 'Feature', properties: { source: 'FireOps cellular simulation' }, geometry: { type: 'MultiPolygon', coordinates: polygons } };
 }
 function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition};}
-function resultFor(sim,input,spread){const headRos=rothermelRateOfSpread(input,0);return{model:'Rothermel 1972 cellular grid',shape:'Alexander 1985 directional ellipse',gridSize:GRID_SIZE,gridMeters:Number(CELL_METERS.toFixed(2)),ignition:sim.ignition||IGNITION,bounds:BOUNDS,simulationMinutes:sim.currentMinutes,rateOfSpreadMetersPerMinute:Number(headRos.toFixed(2)),lengthToBreadth:Number(spread.lengthToBreadth.toFixed(2)),totalBurnedHa:Number((spread.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2)),affectedCells:spread.affectedCells,burningCells:spread.burningCells,perimeterGeoJSON:perimeterGeoJSON(sim)};}
+function activePerimeterMetres(sim) {
+  // Longueur du front encore actif : cellules en feu bordant du combustible intact.
+  let edges = 0;
+  for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
+    const i = indexOf(x, y);
+    if (!sim.state[i]) continue;
+    for (const [dx, dy] of NEIGHBORS) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
+      if (!sim.state[indexOf(nx, ny)] && !FUEL[sim.fuel[indexOf(nx, ny)]].nonBurnable) { edges += 1; break; }
+    }
+  }
+  return edges * CELL_METERS;
+}
+function resultFor(sim, input, spread) {
+  const headRos = rothermelRateOfSpread(input, 0);
+  const intensity = firelineIntensity(0, headRos);
+  const totals = spread.suppressionTotals || { deployedFlowLpm: 0, lineMetresPerHour: 0, appliances: 0, byType: {} };
+  const perimetreM = activePerimeterMetres(sim);
+  const requiredFlowLpm = perimetreM * requiredFlowPerMetre(intensity);
+  const attackViable = intensity <= DIRECT_ATTACK_LIMIT_KW_M;
+  const containmentRatio = requiredFlowLpm > 0 ? totals.deployedFlowLpm / requiredFlowLpm : (perimetreM === 0 ? 1 : 0);
+  // Temps de maitrise : si le debit excede le besoin, le surplus consomme le front
+  // restant ; sinon le feu n'est pas maitrisable avec les moyens en place.
+  const surplus = totals.deployedFlowLpm - requiredFlowLpm;
+  // Front nul = plus rien a contenir : le feu ne progresse plus.
+  const containmentMinutes = perimetreM === 0 ? 0
+    : (attackViable && surplus > 0
+      ? Math.max(4, Math.round(perimetreM / (surplus / Math.max(1, requiredFlowPerMetre(intensity))) * 1.6))
+      : null);
+  const litresUsedPerHour = Math.round(Math.min(totals.deployedFlowLpm, Math.max(requiredFlowLpm, 0)) * 60);
+  return {
+    model: 'Rothermel 1972 cellular grid', shape: 'Alexander 1985 directional ellipse',
+    gridSize: GRID_SIZE, gridMeters: Number(CELL_METERS.toFixed(2)),
+    ignition: sim.ignition || IGNITION, bounds: BOUNDS, simulationMinutes: sim.currentMinutes,
+    rateOfSpreadMetersPerMinute: Number(headRos.toFixed(2)),
+    lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
+    totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
+    affectedCells: spread.affectedCells, burningCells: spread.burningCells,
+    suppression: {
+      firelineIntensityKwM: Math.round(intensity),
+      activePerimeterM: Math.round(perimetreM),
+      requiredFlowLpm: Math.round(requiredFlowLpm),
+      deployedFlowLpm: Math.round(totals.deployedFlowLpm),
+      containmentRatio: Number(containmentRatio.toFixed(2)),
+      containmentMinutes,
+      litresPerHour: litresUsedPerHour,
+      attackViable,
+      status: perimetreM === 0 ? 'eteint' : containmentMinutes !== null ? 'maitrise' : containmentRatio >= 0.6 ? 'contenu' : 'libre',
+      attackMode: intensity > DIRECT_ATTACK_LIMIT_KW_M ? 'indirect'
+        : intensity > HAND_ATTACK_LIMIT_KW_M ? 'moyens-lourds' : 'directe',
+      appliances: totals.appliances, byType: totals.byType,
+      lineMetresPerHour: Math.round(totals.lineMetresPerHour),
+    },
+    perimeterGeoJSON: perimeterGeoJSON(sim),
+  };
+}
 let scenario=null;
 function simulate(input){const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState(input.ignitionLngLat):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);const spread=propagate(sim,input,target);if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
 self.__fireopsTest={simulate,rothermelRateOfSpread,IGNITION,GRID_SIZE,CELL_METERS};
