@@ -14,6 +14,7 @@ const FUEL = {
   4: { name: 'urbain', nonBurnable: true },
   5: { name: 'eau', nonBurnable: true },
 };
+const MIDFLAME_FACTOR = 0.25; // vent a mi-flamme sous couvert de pin maritime
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 const indexOf = (x, y) => y * GRID_SIZE + x;
 
@@ -33,7 +34,7 @@ function rothermelRateOfSpread(input, fuelCode = 0) {
   const netFuelLoad = fuel.load * (1 - 0.0555);
   const reactionIntensity = gamma * netFuelLoad * 8000 * moistureDamping * mineralDamping;
   const windMph = input.windKph * 0.621371;
-  const midflameFpm = windMph * 88 * 0.25;
+  const midflameFpm = windMph * 88 * MIDFLAME_FACTOR;
   const windC = 7.47 * Math.exp(-0.133 * Math.pow(sigma, 0.55));
   const windB = 0.02526 * Math.pow(sigma, 0.54);
   const windE = 0.715 * Math.exp(-3.59e-4 * sigma);
@@ -60,11 +61,27 @@ function generateFuelMask() {
   }
   return mask;
 }
-function createState() {
+function createState(origin) {
   const state = new Uint8Array(GRID_SIZE * GRID_SIZE);
   const arrival = new Float32Array(GRID_SIZE * GRID_SIZE); arrival.fill(Infinity);
-  arrival[indexOf(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2))] = 0;
-  return { state, arrival, fuel: generateFuelMask(), currentMinutes: 0 };
+  const fuel = generateFuelMask();
+  const point = origin && Number.isFinite(origin.lng) && Number.isFinite(origin.lat)
+    ? cellForLngLat(origin.lng, origin.lat)
+    : { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2) };
+  // Un allumage sur une cellule non combustible ne partirait jamais : on glisse vers la plus proche cellule qui brule.
+  let cell = point;
+  if (FUEL[fuel[indexOf(cell.x, cell.y)]].nonBurnable) {
+    search: for (let radius = 1; radius < GRID_SIZE; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) {
+        const x = point.x + dx, y = point.y + dy;
+        if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+        if (!FUEL[fuel[indexOf(x, y)]].nonBurnable) { cell = { x, y }; break search; }
+      }
+    }
+  }
+  arrival[indexOf(cell.x, cell.y)] = 0;
+  const [lng, lat] = lngLatForCell(cell.x, cell.y);
+  return { state, arrival, fuel, currentMinutes: 0, ignition: { lng, lat } };
 }
 function lngLatForCell(x, y) { return [BOUNDS.west + ((x + 0.5) / GRID_SIZE) * (BOUNDS.east - BOUNDS.west), BOUNDS.north - ((y + 0.5) / GRID_SIZE) * (BOUNDS.north - BOUNDS.south)]; }
 function cellForLngLat(lng, lat) { return { x: clamp(Math.floor(((lng - BOUNDS.west) / (BOUNDS.east - BOUNDS.west)) * GRID_SIZE), 0, GRID_SIZE - 1), y: clamp(Math.floor(((BOUNDS.north - lat) / (BOUNDS.north - BOUNDS.south)) * GRID_SIZE), 0, GRID_SIZE - 1) }; }
@@ -99,12 +116,18 @@ function spreadBearing(input) {
 function directionalFactor(dx, dy, bearing, lengthToBreadth) {
   const direction = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
   const theta = ((direction - bearing + 540) % 360 - 180) * Math.PI / 180;
-  const eccentricity = Math.sqrt(Math.max(0, 1 - 1 / (lengthToBreadth * lengthToBreadth)));
-  return (1 - eccentricity) / Math.max(0.04, 1 - eccentricity * Math.cos(theta));
+  // Huygens : le facteur doit valoir exactement 1 dans l'axe du vent. Un plancher sur le
+  // denominateur ecraserait la tete de feu (0,35 au lieu de 1) et arrondirait l'ellipse ;
+  // on borne donc l'excentricite elle-meme, jamais le denominateur.
+  const eccentricity = Math.min(0.995, Math.sqrt(Math.max(0, 1 - 1 / (lengthToBreadth * lengthToBreadth))));
+  return (1 - eccentricity) / (1 - eccentricity * Math.cos(theta));
 }
 function propagate(sim, input, targetMinutes) {
   const suppression = buildSuppressionMask(input.deployments); const bearing = spreadBearing(input);
-  const lengthToBreadth = clamp(1 + 0.25 * input.windKph * 0.621371, 1, 8); const heap = new MinHeap();
+  // Alexander doit recevoir le meme vent que Rothermel (mi-flamme, facteur 0,25).
+  // Avec le vent brut on obtenait L/B ~ 6 : une ellipse plus fine qu'une cellule de 195 m,
+  // que la grille ne peut pas representer -- la surface s'effondrait.
+  const lengthToBreadth = clamp(1 + 0.25 * input.windKph * 0.621371 * MIDFLAME_FACTOR, 1, 8); const heap = new MinHeap();
   for (let i = 0; i < sim.arrival.length; i += 1) if (sim.arrival[i] <= sim.currentMinutes) heap.push({ index: i, time: sim.arrival[i] });
   while (heap.items.length) {
     const current = heap.pop(); if (!current || current.time > targetMinutes) break; if (Math.abs(current.time - sim.arrival[current.index]) > 0.001) continue;
@@ -121,18 +144,30 @@ function propagate(sim, input, targetMinutes) {
   for (let i = 0; i < sim.state.length; i += 1) { if (sim.arrival[i] <= targetMinutes) { sim.state[i] = targetMinutes - sim.arrival[i] < 12 ? 1 : 2; affectedCells += 1; if (sim.state[i] === 1) burningCells += 1; } else sim.state[i] = 0; }
   return { affectedCells, burningCells, lengthToBreadth };
 }
-function convexHull(points) {
-  if (points.length < 4) return points; points.sort((a,b) => a[0]-b[0] || a[1]-b[1]); const cross=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
-  const lower=[]; for(const p of points){while(lower.length>=2&&cross(lower.at(-2),lower.at(-1),p)<=0)lower.pop();lower.push(p);} const upper=[]; for(let i=points.length-1;i>=0;i-=1){const p=points[i];while(upper.length>=2&&cross(upper.at(-2),upper.at(-1),p)<=0)upper.pop();upper.push(p);} lower.pop();upper.pop();return lower.concat(upper);
-}
 function perimeterGeoJSON(sim) {
-  const points=[]; const halfLng=(BOUNDS.east-BOUNDS.west)/GRID_SIZE/2; const halfLat=(BOUNDS.north-BOUNDS.south)/GRID_SIZE/2;
-  for(let y=0;y<GRID_SIZE;y+=1)for(let x=0;x<GRID_SIZE;x+=1){const i=indexOf(x,y);if(!sim.state[i])continue;const edge=NEIGHBORS.some(([dx,dy])=>{const nx=x+dx,ny=y+dy;return nx<0||ny<0||nx>=GRID_SIZE||ny>=GRID_SIZE||!sim.state[indexOf(nx,ny)];});if(!edge)continue;const [lng,lat]=lngLatForCell(x,y);points.push([lng-halfLng,lat-halfLat],[lng+halfLng,lat-halfLat],[lng+halfLng,lat+halfLat],[lng-halfLng,lat+halfLat]);}
-  const hull=convexHull(points);if(hull.length)hull.push([...hull[0]]);return{type:'Feature',properties:{source:'FireOps cellular simulation'},geometry:{type:'Polygon',coordinates:[hull]}};
+  const spanLng = (BOUNDS.east - BOUNDS.west) / GRID_SIZE;
+  const spanLat = (BOUNDS.north - BOUNDS.south) / GRID_SIZE;
+  const polygons = [];
+  for (let y = 0; y < GRID_SIZE; y += 1) {
+    let runStart = -1;
+    for (let x = 0; x <= GRID_SIZE; x += 1) {
+      const burnt = x < GRID_SIZE && sim.state[indexOf(x, y)] > 0;
+      if (burnt && runStart < 0) runStart = x;
+      if (!burnt && runStart >= 0) {
+        const west = BOUNDS.west + runStart * spanLng;
+        const east = BOUNDS.west + x * spanLng;
+        const north = BOUNDS.north - y * spanLat;
+        const south = BOUNDS.north - (y + 1) * spanLat;
+        polygons.push([[[west, north], [east, north], [east, south], [west, south], [west, north]]]);
+        runStart = -1;
+      }
+    }
+  }
+  return { type: 'Feature', properties: { source: 'FireOps cellular simulation' }, geometry: { type: 'MultiPolygon', coordinates: polygons } };
 }
-function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes};}
-function resultFor(sim,input,spread){const headRos=rothermelRateOfSpread(input,0);return{model:'Rothermel 1972 cellular grid',shape:'Alexander 1985 directional ellipse',gridSize:GRID_SIZE,gridMeters:Number(CELL_METERS.toFixed(2)),ignition:IGNITION,bounds:BOUNDS,simulationMinutes:sim.currentMinutes,rateOfSpreadMetersPerMinute:Number(headRos.toFixed(2)),lengthToBreadth:Number(spread.lengthToBreadth.toFixed(2)),totalBurnedHa:Number((spread.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2)),affectedCells:spread.affectedCells,burningCells:spread.burningCells,perimeterGeoJSON:perimeterGeoJSON(sim)};}
+function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition};}
+function resultFor(sim,input,spread){const headRos=rothermelRateOfSpread(input,0);return{model:'Rothermel 1972 cellular grid',shape:'Alexander 1985 directional ellipse',gridSize:GRID_SIZE,gridMeters:Number(CELL_METERS.toFixed(2)),ignition:sim.ignition||IGNITION,bounds:BOUNDS,simulationMinutes:sim.currentMinutes,rateOfSpreadMetersPerMinute:Number(headRos.toFixed(2)),lengthToBreadth:Number(spread.lengthToBreadth.toFixed(2)),totalBurnedHa:Number((spread.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2)),affectedCells:spread.affectedCells,burningCells:spread.burningCells,perimeterGeoJSON:perimeterGeoJSON(sim)};}
 let scenario=null;
-function simulate(input){const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState():scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);const spread=propagate(sim,input,target);if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
+function simulate(input){const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState(input.ignitionLngLat):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);const spread=propagate(sim,input,target);if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
 self.__fireopsTest={simulate,rothermelRateOfSpread,IGNITION,GRID_SIZE,CELL_METERS};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};

@@ -45,7 +45,7 @@ const planDescriptions = [
   'Répartition mobile sur les deux flancs avec une réserve centrale.',
   'Projection de référence sans nouveau moyen engagé.',
 ];
-const ignition = { lng: -0.4540519, lat: 44.5897472 };
+const defaultIgnition = { lng: -0.4540519, lat: 44.5897472 };
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
 const toolNames = [
   'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
@@ -80,13 +80,26 @@ const grayscaleColor = (value: string) => {
   return alpha === undefined ? `rgb(${luminance},${luminance},${luminance})` : `rgba(${luminance},${luminance},${luminance},${alpha})`;
 };
 const grayscalePaint = (value: unknown): unknown => Array.isArray(value) ? value.map(grayscalePaint) : typeof value === 'string' ? grayscaleColor(value) : value;
+// getPaintProperty LEVE une exception quand la propriete n'existe pas pour ce type de couche
+// (par ex. 'fill-color' sur une couche 'background') -- il ne renvoie pas undefined. Interroger
+// les trois proprietes sur toutes les couches faisait donc echouer la toute premiere iteration,
+// ce qui interrompait le handler 'load' avant l'ajout des couches de feu et du relief.
+const COLOR_PROPERTY: Record<string, string> = {
+  background: 'background-color', fill: 'fill-color', line: 'line-color',
+  'fill-extrusion': 'fill-extrusion-color',
+};
 const neutralizeMapStyle = (map: MapLibreMap) => {
   for (const layer of map.getStyle().layers || []) {
-    for (const property of ['fill-color', 'line-color', 'background-color'] as const) {
-      const value = map.getPaintProperty(layer.id, property);
-      if (value !== undefined) map.setPaintProperty(layer.id, property, grayscalePaint(value));
+    const property = COLOR_PROPERTY[layer.type];
+    if (property) {
+      try {
+        const value = map.getPaintProperty(layer.id, property as 'fill-color');
+        if (value !== undefined) map.setPaintProperty(layer.id, property as 'fill-color', grayscalePaint(value));
+      } catch { /* couche sans couleur explicite : on la laisse telle quelle */ }
     }
-    if (layer.type === 'raster') map.setPaintProperty(layer.id, 'raster-saturation', -1);
+    if (layer.type === 'raster') {
+      try { map.setPaintProperty(layer.id, 'raster-saturation', -1); } catch { /* idem */ }
+    }
   }
 };
 const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
@@ -102,6 +115,12 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
   const [mapReady, setMapReady] = useState(false);
+  const [ignition, setIgnition] = useState(defaultIgnition);
+  const [pickingIgnition, setPickingIgnition] = useState(false);
+  const ignitionRef = useRef(defaultIgnition);
+  const pickingRef = useRef(false);
+  useEffect(() => { pickingRef.current = pickingIgnition; }, [pickingIgnition]);
+  useEffect(() => { ignitionRef.current = ignition; }, [ignition]);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
@@ -200,10 +219,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       const map = new maplibre.Map({
         container: mapNode.current,
         style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        center: [ignition.lng, ignition.lat], zoom: 11.2, attributionControl: false, cooperativeGestures: true,
+        center: [defaultIgnition.lng, defaultIgnition.lat], zoom: 11.2, attributionControl: false, cooperativeGestures: false,
       });
       map.once('load', () => {
-        neutralizeMapStyle(map);
+        try { neutralizeMapStyle(map); } catch { /* le fond reste colore, le feu prime */ }
         if (!map.getSource('terrain-dem')) map.addSource('terrain-dem', {
           type: 'raster-dem',
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
@@ -215,6 +234,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         map.addSource('fire-forecast', { type: 'geojson', data: engineGeoRef.current.forecast as Parameters<GeoJSONSource['setData']>[0] });
         map.addLayer({ id: 'fire-forecast-line', type: 'line', source: 'fire-forecast', paint: { 'line-color': '#FF3B30', 'line-width': 2, 'line-opacity': 0.75, 'line-dasharray': [3, 2] } });
         setMapReady(true);
+      });
+      map.on('click', (event) => {
+        if (!pickingRef.current) return;
+        setIgnition({ lng: event.lngLat.lng, lat: event.lngLat.lat });
+        setPickingIgnition(false);
       });
       mapRef.current = map;
     }).catch(() => undefined);
@@ -257,6 +281,21 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, []);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    let marker: Marker | null = null;
+    let cancelled = false;
+    import('maplibre-gl').then((maplibre) => {
+      if (cancelled || !mapRef.current) return;
+      const node = document.createElement('div');
+      node.className = 'ignition-marker';
+      node.title = 'Point d’allumage';
+      marker = new maplibre.Marker({ element: node }).setLngLat([ignition.lng, ignition.lat]).addTo(mapRef.current);
+    }).catch(() => undefined);
+    return () => { cancelled = true; marker?.remove(); };
+  }, [ignition, mapReady]);
+
+  useEffect(() => {
     const fireSource = mapRef.current?.getSource('fire') as GeoJSONSource | undefined;
     const forecastSource = mapRef.current?.getSource('fire-forecast') as GeoJSONSource | undefined;
     fireSource?.setData(perimeterGeoJSON as Parameters<GeoJSONSource['setData']>[0]);
@@ -264,10 +303,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, [forecastGeoJSON, perimeterGeoJSON]);
 
   useEffect(() => {
-    runWorker({ type: 'simulate', reset: true, targetMinutes: minutes, moisture: 0.08, windKph: weather.windSpeed, windDirection: weather.windDirection, slopeDegrees: 7.4, deployments: committed, includeForecast: true })
+    runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: minutes, moisture: 0.08, windKph: weather.windSpeed, windDirection: weather.windDirection, slopeDegrees: 7.4, deployments: committed, includeForecast: true })
       .then(applyEngineResult)
       .catch(() => undefined);
-  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed]);
+  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, ignition]);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,7 +336,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     ];
     const engineRuns = await Promise.all(placementSets.map((deployments) => {
       return runWorker({
-        type: 'simulate', independent: true, targetMinutes: horizonHours * 60, moisture: 0.08,
+        type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: horizonHours * 60, moisture: 0.08,
         windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
         slopeDegrees: 7.4, deployments,
       });
@@ -320,15 +359,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     if (mode === 'globe') {
       map?.setTerrain(null);
       map?.setProjection({ type: 'globe' });
-      map?.flyTo({ center: [ignition.lng, ignition.lat], zoom: 3.2, pitch: 0, duration: 1100 });
+      map?.flyTo({ center: [ignitionRef.current.lng, ignitionRef.current.lat], zoom: 3.2, pitch: 0, duration: 1100 });
     } else if (mode === '3D') {
       map?.setProjection({ type: 'mercator' });
       map?.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 });
-      map?.easeTo({ center: [ignition.lng, ignition.lat], zoom: 11.2, pitch: 62, bearing: -18, duration: 900 });
+      map?.easeTo({ center: [ignitionRef.current.lng, ignitionRef.current.lat], zoom: 11.2, pitch: 62, bearing: -18, duration: 900 });
     } else {
       map?.setTerrain(null);
       map?.setProjection({ type: 'mercator' });
-      map?.easeTo({ center: [ignition.lng, ignition.lat], zoom: 11.2, pitch: 0, bearing: 0, duration: 700 });
+      map?.easeTo({ center: [ignitionRef.current.lng, ignitionRef.current.lat], zoom: 11.2, pitch: 0, bearing: 0, duration: 700 });
     }
     logTool('set_view_mode', 'Vue ' + mode + ' activée');
   }, [logTool]);
@@ -364,7 +403,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', independent: true, targetMinutes: hours * 60, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
+            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
             return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
@@ -466,7 +505,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           const delta = numberValue(input.minutes, 'minutes', 5, 360);
           const targetMinutes = stateRef.current.minutes + delta;
           const engine = await runWorker({
-            type: 'simulate', reset: true, targetMinutes, moisture: 0.08,
+            type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes, moisture: 0.08,
             windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
             slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
           });
@@ -480,7 +519,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']),
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
-          const engine = await runWorker({ type: 'simulate', reset: true, targetMinutes: value, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true });
+          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true });
           applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, engine };
         },
       },
@@ -493,9 +532,23 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'ignite', title: 'Allumer un foyer d’exercice', description: 'Place un foyer dans le scénario d’entraînement uniquement.',
-        inputSchema: schema({ sector: { type: 'string', maxLength: 80 }, intensity: { type: 'number', minimum: 1, maximum: 5 } }, ['sector','intensity']),
-        execute: (input) => ({ ignited: true, sector: textValue(input.sector, 'sector', 80), intensity: numberValue(input.intensity, 'intensity', 1, 5), simulationOnly: true }),
+        name: 'ignite', title: 'Placer le foyer d’exercice',
+        description: 'Deplace le point d’allumage du scenario d’entrainement et relance la simulation depuis ce point.',
+        inputSchema: schema({ lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 }, sector: { type: 'string', maxLength: 80 } }, ['lng','lat']),
+        execute: async (input) => {
+          const lng = numberValue(input.lng, 'lng', -180, 180);
+          const lat = numberValue(input.lat, 'lat', -90, 90);
+          setIgnition({ lng, lat });
+          ignitionRef.current = { lng, lat };
+          const engine = await runWorker({
+            type: 'simulate', ignitionLngLat: { lng, lat }, reset: true, targetMinutes: stateRef.current.minutes,
+            moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
+            slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
+          });
+          applyEngineResult(engine);
+          logTool('ignite', 'Foyer place');
+          return { ignited: true, ignition: engine.ignition, simulationOnly: true };
+        },
       },
       {
         name: 'compare_plans', title: 'Comparer des stratégies',
@@ -510,7 +563,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {
         name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur le scénario Landiras.',
         inputSchema: schema({ region: { type: 'string', enum: ['landiras'] } }, ['region']),
-        execute: (input) => { const region = textValue(input.region, 'region', 20); mapRef.current?.flyTo({ center: [ignition.lng, ignition.lat], zoom: 11.2, duration: 1000 }); return { focused: region }; },
+        execute: (input) => { const region = textValue(input.region, 'region', 20); mapRef.current?.flyTo({ center: [ignitionRef.current.lng, ignitionRef.current.lat], zoom: 11.2, duration: 1000 }); return { focused: region }; },
       },
       {
         name: 'set_view_mode', title: 'Changer le mode de carte', description: 'Bascule entre 2D, relief 3D et globe.',
@@ -573,13 +626,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
   return (
     <main className="ops-shell">
-      <div className={'map-stage view-' + viewMode.toLowerCase()} aria-label="Carte tactique du feu de Landiras" onDragOver={(event) => event.preventDefault()} onDrop={onMapDrop}>
-        <div ref={mapNode} className="maplibre-host" /><div className="map-shade" /><div className="terrain-grid" />
-        <div className="road road-a" /><div className="road road-b" />
-        <div className="village village-a"><span>LANDIRAS</span></div><div className="village village-b"><span>GUILLOS</span></div>
+      <div className={'map-stage view-' + viewMode.toLowerCase() + (pickingIgnition ? ' picking' : '')} aria-label="Carte tactique du feu de Landiras" onDragOver={(event) => event.preventDefault()} onDrop={onMapDrop}>
+        <div ref={mapNode} className="maplibre-host" /><div className="map-shade" />
         {stagedPlan?.firebreaks.map((line) => <div key={line.name} className="ghost-firebreak"><span>{line.name} · {line.lengthKm} km</span></div>)}
         {stagedPlan?.evacuations.map((zone) => <div key={zone.name} className="ghost-evac"><span>ZONE PROPOSÉE · {zone.name}</span></div>)}
       </div>
+
+      {pickingIgnition && <div className="pick-hint glass-panel"><Flame size={13} />Cliquez sur la carte pour placer le point de depart du feu<button type="button" onClick={() => setPickingIgnition(false)}>Annuler</button></div>}
 
       <header className="topbar glass-panel">
         <div className="brand-block"><span className="brand-mark"><Flame size={18} /></span><div><strong>FireOps</strong><span>Centre de commandement</span></div></div>
@@ -613,7 +666,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Revoir et appliquer</button></section>}
       {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} actions de l’agent<ChevronDown size={13} /></button>}
 
-      <nav className="map-controls glass-panel"><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels"><span>14:00</span><span>16:00</span><span>18:00</span><span>20:00</span><span>22:00</span></div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
 
       {toolsOpen && <Modal onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,11)],['Engagement',toolNames.slice(11,13)],['Simulation & carte',toolNames.slice(13)]].map(([label,names]) => <div key={String(label)}><h3>{String(label)}<span>{(names as string[]).length}</span></h3>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div>)}</div></section></Modal>}

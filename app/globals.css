@@ -39,46 +39,7 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
-.map-stage {
-  position: absolute; inset: 0; overflow: hidden;
-  background:
-    linear-gradient(145deg, rgba(42,42,44,.72), rgba(24,24,26,.35)),
-    repeating-radial-gradient(ellipse at 38% 42%, transparent 0 25px, rgba(205,205,207,.11) 26px 27px, transparent 28px 42px),
-    linear-gradient(112deg, #353638 0%, #252628 35%, #2E2F31 56%, #1C1D1F 100%);
-}
-.map-stage::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(circle at 50% 50%, transparent 20%, rgba(0,0,0,.26) 100%),
-    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
-  background-size: auto, 48px 48px, 48px 48px;
-}
-.terrain-grid {
-  position: absolute; width: 55%; height: 42%; left: 12%; top: 18%; opacity: .26;
-  border-radius: 44%; transform: rotate(-12deg);
-  background: repeating-radial-gradient(ellipse at 40% 50%, transparent 0 11px, rgba(198,198,200,.22) 12px 13px, transparent 14px 25px);
-}
-.road {
-  position: absolute; height: 3px; border-radius: 999px; transform-origin: left center;
-  background: rgba(215,215,215,.52); box-shadow: 0 0 0 1px rgba(30,30,30,.65);
-}
-.road::after { content: ''; position: absolute; inset: 1px 0 auto; border-top: 1px dashed rgba(255,255,255,.25); }
-.road-a { width: 72%; left: 8%; top: 56%; transform: rotate(-9deg); }
-.road-b { width: 45%; left: 44%; top: 25%; transform: rotate(68deg); }
-.water {
-  position: absolute; right: 7%; top: -8%; width: 20%; height: 68%; transform: rotate(-10deg);
-  border-radius: 45% 55% 56% 40%; background: linear-gradient(90deg, rgba(62,62,64,.86), rgba(78,78,80,.65));
-}
-.village {
-  position: absolute; z-index: 2; width: 7px; height: 7px; transform: rotate(45deg);
-  border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.3);
-}
-.village span {
-  position: absolute; left: 12px; top: -3px; transform: rotate(-45deg); white-space: nowrap;
-  color: rgba(255,255,255,.76); font: 600 9px/1.2 "SF Mono", Consolas, monospace; letter-spacing: .12em;
-}
-.village-a { left: 66%; top: 44%; }
-.village-b { left: 36%; top: 70%; }
+.map-stage { position: absolute; inset: 0; overflow: hidden; background: var(--bg-1); }
 .unit-marker {
   width: 42px; height: 42px; display: grid; place-items: center; padding: 0;
   border-radius: 50%; background: var(--accent); color: var(--accent-ink); border: 2px solid rgba(255,255,255,.9);
@@ -228,10 +189,9 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   .time-readout strong { font-size: 13px; }
 }
 
-.maplibre-host { position: absolute; inset: 0; z-index: 0; opacity: .78; }
-.maplibre-host .maplibregl-canvas { filter: grayscale(1) saturate(0) contrast(1.08) brightness(.82); }
-.map-shade { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(circle at 50% 45%, transparent 18%, rgba(8,9,10,.25) 85%), linear-gradient(rgba(15,16,17,.16), rgba(15,16,17,.28)); }
-.terrain-grid,.road,.village { z-index: 2; pointer-events: none; }
+.maplibre-host { position: absolute; inset: 0; z-index: 0; }
+.maplibre-host canvas { outline: none; }
+.map-shade { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(circle at 50% 45%, transparent 62%, rgba(8,9,10,.30) 100%); }
 .unit-marker.ghost { opacity: .58; border-style: dashed; animation: ghost-breathe 1.8s ease-in-out infinite; }
 .ghost-firebreak {
   position: absolute; z-index: 3; left: 43%; top: 35%; width: 25%; border-top: 3px dashed var(--ghost);
@@ -248,7 +208,7 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   border: 2px dashed var(--ghost); border-radius: 48% 52% 44% 56%; background: rgba(255,255,255,.06);
 }
 .ghost-evac span { left: 50%; bottom: -27px; transform: translateX(-50%); }
-.view-globe .ghost-firebreak,.view-globe .ghost-evac,.view-globe .terrain-grid,.view-globe .road,.view-globe .village { opacity: 0; transition: opacity .25s var(--ease); }
+.view-globe .ghost-firebreak,.view-globe .ghost-evac { opacity: 0; transition: opacity .25s var(--ease); }
 
 .demo-button {
   min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; cursor: pointer;
@@ -511,3 +471,20 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   .login-card { padding: 17px; }
   .login-footer { display: none; }
 }
+
+.ignition-marker {
+  width: 13px; height: 13px; border-radius: 50%; cursor: pointer;
+  background: var(--fire-extreme); border: 2px solid #fff;
+  box-shadow: 0 0 0 4px rgba(255,59,48,.28), 0 0 12px rgba(255,59,48,.6);
+}
+.pick-hint {
+  position: absolute; z-index: 20; left: 50%; top: 96px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 9px; padding: 9px 12px; border-radius: 999px;
+  color: var(--text); font: 650 10px/1 "SF Mono", Consolas, monospace; letter-spacing: .04em;
+}
+.pick-hint svg { color: var(--fire-extreme); }
+.pick-hint button {
+  padding: 5px 9px; border-radius: 999px; cursor: pointer; color: var(--text);
+  border: 1px solid var(--border-strong); background: rgba(255,255,255,.08);
+}
+.map-stage.picking .maplibregl-canvas-container { cursor: crosshair; }
