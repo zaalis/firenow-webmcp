@@ -292,10 +292,134 @@ function applyTerrain(mask, terrain) {
     mask[indexOf(x, y)] = code;
   }
 }
+/* ---------------------------------------------------------------------------
+ * Anthropisation du massif : pistes DFCI, routes, bati, habitants.
+ *
+ * Le massif landais n'est pas une nappe de pin continue : il est quadrille par
+ * un maillage de pistes DFCI, coupe de routes, et parseme de fermes et de
+ * hameaux. C'est cette structure, et non la puissance des moyens, qui
+ * compartimente reellement les feux de la region.
+ *
+ * Le reseau est engendre depuis les coordonnees absolues, comme la vegetation :
+ * il existe independamment de tout incendie et ne connait aucun scenario. Une
+ * coupure n'arrete pas le feu par decret -- elle le tient tant que la flamme
+ * est plus courte que la coupure n'est large, et cede quand l'intensite monte.
+ * ------------------------------------------------------------------------- */
+const INFRA_TRACK = 1;  // piste DFCI
+const INFRA_ROAD = 2;   // route ouverte a la circulation
+const INFRA_BUILT = 4;  // bati, avec son debroussaillement reglementaire
+
+const NETWORKS = {
+  landes: {
+    label: 'Landes de Gascogne',
+    trackSpacingM: 1100,   // maille DFCI du massif
+    trackWidthM: 14,       // piste et accotements entretenus
+    roadSpacingM: 7500,    // departementales
+    roadWidthM: 26,
+    hamletSpacingM: 3800,  // airials, fermes et hameaux disperses
+    hamletPresence: 0.62,  // tous les noeuds du maillage ne sont pas batis
+    // Debroussaillement reglementaire de 50 m : partiellement efficace.
+    builtBreakM: 34,
+    peoplePerHectareBuilt: 6,
+  },
+};
+
+/* Distance au fil du maillage le plus proche, le long d'un axe. */
+function latticeDistance(value, spacing) {
+  const modulo = ((value % spacing) + spacing) % spacing;
+  return Math.min(modulo, spacing - modulo);
+}
+
+function buildInfrastructure(networkKey, terrain) {
+  const spec = NETWORKS[networkKey];
+  if (!spec) return null;
+  const infra = new Uint8Array(GRID_SIZE * GRID_SIZE);
+  const people = new Float32Array(GRID_SIZE * GRID_SIZE);
+  const cellHa = (CELL_METERS * CELL_METERS) / 10000;
+  const half = CELL_METERS / 2;
+  for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
+    const index = indexOf(x, y);
+    const [lng, lat] = lngLatForCell(x, y);
+    const metresX = lng * 111320 * Math.cos(lat * Math.PI / 180);
+    const metresY = lat * 111320;
+    let flags = 0;
+
+    // Un maillage parfaitement regulier se verrait ; on le laisse respirer.
+    const wobbleX = (fractalNoise(metresX / 5200, metresY / 5200, 4211) - 0.5) * spec.trackSpacingM * 0.4;
+    const wobbleY = (fractalNoise(metresX / 5200, metresY / 5200, 8123) - 0.5) * spec.trackSpacingM * 0.4;
+    if (latticeDistance(metresX + wobbleX, spec.trackSpacingM) < half
+      || latticeDistance(metresY + wobbleY, spec.trackSpacingM) < half) flags |= INFRA_TRACK;
+
+    const roadWobbleX = (fractalNoise(metresX / 21000, metresY / 21000, 3307) - 0.5) * spec.roadSpacingM * 0.5;
+    const roadWobbleY = (fractalNoise(metresX / 21000, metresY / 21000, 5501) - 0.5) * spec.roadSpacingM * 0.5;
+    if (latticeDistance(metresX + roadWobbleX, spec.roadSpacingM) < half
+      || latticeDistance(metresY + roadWobbleY, spec.roadSpacingM) < half) flags |= INFRA_ROAD;
+
+    // Hameaux : un noeud sur deux environ porte du bati, decale et de taille
+    // variable, ce qui donne la dispersion caracteristique des airials.
+    const nodeX = Math.round(metresX / spec.hamletSpacingM);
+    const nodeY = Math.round(metresY / spec.hamletSpacingM);
+    if (hashLattice(nodeX, nodeY, 9137) < spec.hamletPresence) {
+      const offsetX = (hashLattice(nodeX, nodeY, 2711) - 0.5) * spec.hamletSpacingM * 0.55;
+      const offsetY = (hashLattice(nodeX, nodeY, 6053) - 0.5) * spec.hamletSpacingM * 0.55;
+      const radius = 140 + hashLattice(nodeX, nodeY, 4441) * 320;
+      const distance = Math.hypot(metresX - (nodeX * spec.hamletSpacingM + offsetX),
+        metresY - (nodeY * spec.hamletSpacingM + offsetY));
+      if (distance < radius) flags |= INFRA_BUILT;
+    }
+
+    // Les agglomerations nommees par le scenario priment sur le procedural.
+    for (const town of (terrain && terrain.urban) || []) {
+      const townX = town.lng * 111320 * Math.cos(town.lat * Math.PI / 180);
+      const townY = town.lat * 111320;
+      if (Math.hypot(metresX - townX, metresY - townY) < town.radiusM) {
+        flags |= INFRA_BUILT;
+        people[index] = ((town.population || 0) / Math.max(1, Math.PI * (town.radiusM / 100) ** 2)) * cellHa;
+      }
+    }
+    if ((flags & INFRA_BUILT) && !people[index]) people[index] = spec.peoplePerHectareBuilt * cellHa;
+    infra[index] = flags;
+  }
+  return { infra, people, spec };
+}
+
+/* Largeur de la coupure a franchir sur une cellule. */
+function breakWidthAt(sim, index) {
+  if (!sim.infra) return 0;
+  const flags = sim.infra[index];
+  if (!flags) return 0;
+  const spec = sim.network;
+  let width = 0;
+  if (flags & INFRA_ROAD) width = Math.max(width, spec.roadWidthM);
+  if (flags & INFRA_TRACK) width = Math.max(width, spec.trackWidthM);
+  if (flags & INFRA_BUILT) width = Math.max(width, spec.builtBreakM);
+  return width;
+}
+
+/* Une coupure tient tant qu'elle est plus large que ~2,5 longueurs de flamme.
+ * Au-dela, elle ne fait plus que retarder le front -- et les brandons la
+ * franchissent de toute facon. */
+function crossingDelayMinutes(width, intensityKwM, rosMetresPerMinute, windKph) {
+  if (width <= 0) return 0;
+  const flameLength = 0.0775 * Math.pow(Math.max(1, intensityKwM), 0.46);
+  // Une flamme couchee par le vent porte bien au-dela de sa hauteur.
+  const crossable = 2.5 * flameLength * (1 + 0.02 * Math.max(0, windKph || 0));
+  const direct = width / Math.max(0.1, rosMetresPerMinute);
+  if (width <= crossable) return direct;
+  // Le front bute, s'accumule, et ne passe qu'a la faveur d'une rafale ou
+  // d'un brandon : des heures de retard, jamais un blocage definitif.
+  return direct * Math.pow(width / crossable, 4) * 60;
+}
+
 function createState(origin) {
   const state = new Uint8Array(GRID_SIZE * GRID_SIZE);
   const arrival = new Float32Array(GRID_SIZE * GRID_SIZE); arrival.fill(Infinity);
-  const fuel = generateFuelMask(origin && origin.terrain);
+  const terrain = (origin && origin.terrain) || null;
+  const fuel = generateFuelMask(terrain);
+  // Le reseau n'existe que la ou il est decrit : pour l'instant le massif landais.
+  // Un 'network' explicitement fourni prime, y compris null pour desactiver.
+  const networkKey = terrain && (terrain.network !== undefined ? terrain.network : (terrain.region === 'gironde' ? 'landes' : null));
+  const anthropic = networkKey ? buildInfrastructure(networkKey, terrain) : null;
   const point = origin && Number.isFinite(origin.lng) && Number.isFinite(origin.lat)
     ? cellForLngLat(origin.lng, origin.lat)
     : { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2) };
@@ -324,7 +448,11 @@ function createState(origin) {
   }
   if (!seeded) arrival[indexOf(cell.x, cell.y)] = 0;
   const [lng, lat] = lngLatForCell(cell.x, cell.y);
-  return { state, arrival, fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius } };
+  return {
+    state, arrival, fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
+    infra: anthropic && anthropic.infra, people: anthropic && anthropic.people,
+    network: anthropic && anthropic.spec,
+  };
 }
 function lngLatForCell(x, y) { return [BOUNDS.west + ((x + 0.5) / GRID_SIZE) * (BOUNDS.east - BOUNDS.west), BOUNDS.north - ((y + 0.5) / GRID_SIZE) * (BOUNDS.north - BOUNDS.south)]; }
 function cellForLngLat(lng, lat) { return { x: clamp(Math.floor(((lng - BOUNDS.west) / (BOUNDS.east - BOUNDS.west)) * GRID_SIZE), 0, GRID_SIZE - 1), y: clamp(Math.floor(((BOUNDS.north - lat) / (BOUNDS.north - BOUNDS.south)) * GRID_SIZE), 0, GRID_SIZE - 1) }; }
@@ -574,7 +702,13 @@ function propagate(sim, input, targetMinutes) {
       const nx = x + dx; const ny = y + dy; if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
       const next = indexOf(nx, ny); const headRos = rothermelRateOfSpread(input, sim.fuel[next]); if (headRos <= 0) continue;
       const effectiveRos = headRos * directionalFactor(dx, dy, bearing, lengthToBreadth) * (1 - suppression[next]); if (effectiveRos <= 0) continue;
-      const arrivalTime = current.time + CELL_METERS * Math.hypot(dx, dy) / effectiveRos;
+      // Piste, route ou debroussaillement : le front doit franchir la coupure.
+      const width = breakWidthAt(sim, next);
+      let crossing = 0;
+      if (width > 0) {
+        crossing = crossingDelayMinutes(width, firelineIntensity(sim.fuel[next], effectiveRos), effectiveRos, input.windKph);
+      }
+      const arrivalTime = current.time + CELL_METERS * Math.hypot(dx, dy) / effectiveRos + crossing;
       if (arrivalTime < sim.arrival[next]) { sim.arrival[next] = arrivalTime; heap.push({ index: next, time: arrivalTime }); }
     }
   }
@@ -733,7 +867,7 @@ function activeFrontGeoJSON(sim) {
   feature.properties = { source: 'FireOps cellular simulation', layer: 'front-actif' };
   return feature;
 }
-function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition};}
+function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network};}
 /* ---------------------------------------------------------------------------
  * Analyse du front.
  *
@@ -795,6 +929,43 @@ function fuelComposition(mask) {
     }))
     .sort((a, b) => b.part - a.part);
 }
+/* Enjeux atteints et menaces : ce que le feu a deja pris, et ce qui est
+ * encore devant lui. Sans cela l'operateur ne voit qu'une surface. */
+function humanExposure(sim) {
+  if (!sim.infra) return null;
+  const cellHa = (CELL_METERS * CELL_METERS) / 10000;
+  let burntPeople = 0, threatenedPeople = 0, builtCellsBurnt = 0, trackKm = 0, roadKm = 0;
+  const reachM = 1500; // distance sous laquelle un enjeu est directement menace
+  const reachCells = Math.max(1, Math.round(reachM / CELL_METERS));
+  for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
+    const index = indexOf(x, y);
+    const flags = sim.infra[index];
+    if (!flags) continue;
+    const burnt = sim.state[index] > 0;
+    if (burnt) {
+      if (flags & INFRA_BUILT) { builtCellsBurnt += 1; burntPeople += sim.people[index]; }
+      if (flags & INFRA_TRACK) trackKm += CELL_METERS / 1000;
+      if (flags & INFRA_ROAD) roadKm += CELL_METERS / 1000;
+      continue;
+    }
+    if (!(flags & INFRA_BUILT) || !sim.people[index]) continue;
+    // Menace : du feu actif dans le voisinage immediat.
+    let near = false;
+    for (let dy = -reachCells; dy <= reachCells && !near; dy += 1) for (let dx = -reachCells; dx <= reachCells; dx += 1) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
+      if (sim.state[indexOf(nx, ny)] > 0) { near = true; break; }
+    }
+    if (near) threatenedPeople += sim.people[index];
+  }
+  return {
+    populationAtteinte: Math.round(burntPeople),
+    populationMenacee: Math.round(threatenedPeople),
+    surfaceBatieHa: Number((builtCellsBurnt * cellHa).toFixed(1)),
+    pistesCoupeesKm: Number(trackKm.toFixed(1)),
+    routesCoupeesKm: Number(roadKm.toFixed(1)),
+  };
+}
 function resultFor(sim, input, spread) {
   const headRos = rothermelRateOfSpread(input, 0);
   const front = analyseFront(sim, input, spread.lengthToBreadth, spread.bearing);
@@ -826,6 +997,8 @@ function resultFor(sim, input, spread) {
     rateOfSpreadMetersPerMinute: Number(headRos.toFixed(2)),
     fuelMoisture: Number(input.moisture.toFixed(3)),
     region: (input.terrain && input.terrain.region) || 'gironde',
+    exposure: humanExposure(sim),
+    network: sim.network ? sim.network.label : null,
     fuelComposition: fuelComposition(sim.fuel),
     lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
     totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
@@ -858,5 +1031,5 @@ const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOM
 const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread;{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);spread=propagate(sim,input,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
+self.__fireopsTest={buildInfrastructure,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};

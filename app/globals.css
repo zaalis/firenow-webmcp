@@ -833,3 +833,70 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .cover-row i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: rgba(48,209,88,.14); z-index: 0; }
 .cover-row span { position: relative; z-index: 1; flex: 1; color: var(--muted); font-size: 10px; }
 .cover-row b { position: relative; z-index: 1; color: var(--text); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* Le sélecteur ne doit jamais déborder, quelle que soit la largeur d'écran. */
+.scenario-pop { width: min(330px, calc(100vw - 36px)); }
+.preset-row { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
+.preset-row > span { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .13em; }
+.preset-row > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.preset-row button {
+  flex: 1 1 auto; min-width: 88px; padding: 6px 9px; cursor: pointer;
+  border: 1px solid rgba(255,159,10,.38); border-radius: 999px; color: var(--fire-active);
+  background: rgba(255,159,10,.10); font: 650 9px/1 "SF Mono", Consolas, monospace; letter-spacing: .05em;
+  transition: background .2s var(--ease), border-color .2s var(--ease);
+}
+.preset-row button:hover { border-color: rgba(255,159,10,.62); background: rgba(255,159,10,.18); }
+
+/* Panneaux repliables : le chevron pivote, le corps disparaît. */
+.panel-toggle {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; margin-left: 2px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 7px; color: var(--muted);
+  background: rgba(255,255,255,.04);
+  transition: background .2s var(--ease), color .2s var(--ease), transform .25s var(--ease);
+}
+.panel-toggle:hover { background: rgba(255,255,255,.12); color: var(--text); }
+.left-rail.collapsed .panel-toggle, .situation-panel.collapsed .panel-toggle { transform: rotate(180deg); }
+.left-rail.collapsed > :not(.panel-heading), .situation-panel.collapsed > :not(.panel-heading) { display: none; }
+.left-rail.collapsed, .situation-panel.collapsed { padding-bottom: 13px; }
+.left-rail.collapsed .panel-heading, .situation-panel.collapsed .panel-heading { margin-bottom: 0; border-bottom: 0; padding-bottom: 0; }
+
+/* Enjeux humains : ce que le feu a pris et ce qu'il menace. */
+.exposure-card { display: flex; flex-direction: column; gap: 7px; padding: 11px 13px;
+  border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.02); }
+.exposure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.exposure-grid div { display: flex; flex-direction: column; gap: 2px; }
+.exposure-grid span { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
+.exposure-grid b { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.exposure-grid b.danger { color: var(--fire-extreme); }
+.exposure-card small { color: var(--faint); font-size: 9.5px; line-height: 1.45; }
+
+/* Annulation d'un plan provisoire : contour rouge, jamais plein. */
+.danger-button {
+  padding: 8px 14px; cursor: pointer; white-space: nowrap;
+  border: 1px solid rgba(255,59,48,.55); border-radius: 999px; color: var(--fire-extreme);
+  background: transparent; font: 650 10px/1 "SF Mono", Consolas, monospace; letter-spacing: .05em;
+  transition: background .2s var(--ease), border-color .2s var(--ease);
+}
+.danger-button:hover { border-color: var(--fire-extreme); background: rgba(255,59,48,.12); }
+
+/* Appel à l'agent quand aucun plan n'est en cours. */
+.ask-agent {
+  position: absolute; z-index: 9; left: 50%; bottom: 107px; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; cursor: pointer;
+  border-radius: 999px; color: var(--agent); white-space: nowrap;
+  font: 650 10px/1 "SF Mono", Consolas, monospace; letter-spacing: .05em;
+  transition: color .2s var(--ease);
+}
+.ask-agent:hover { color: var(--text); }
+@media (max-width: 900px) { .ask-agent { display: none; } }
+
+/* Sur ecran etroit l en-tete se resserre et l ancrage du popover sortait du
+   cadre : on l accroche alors a la fenetre plutot qu au bouton. */
+@media (max-width: 620px) {
+  .scenario-pop {
+    position: fixed; top: 84px; left: 12px; right: 12px; width: auto;
+    animation: pop-in-flat .18s var(--ease) both;
+  }
+  @keyframes pop-in-flat { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+}

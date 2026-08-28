@@ -4,12 +4,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GeoJSONSource, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import {
   Bot, Check, ChevronDown, CircleHelp, Command, Flame, Globe2, Layers3,
-  LogOut, Map as MapIcon, Pause, Play, Plus, RotateCcw, ShieldCheck, Sparkles, TimerReset, Undo2, Wind, X,
+  LogOut, Map as MapIcon, Pause, Play, Plus, RotateCcw, ShieldCheck, Sparkles,
+  TimerReset, Undo2, Wind, X, ChevronUp,
 } from 'lucide-react';
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
 type Domain = { lng: number; lat: number; boxMetres: number };
+type Exposure = {
+  populationAtteinte: number; populationMenacee: number;
+  surfaceBatieHa: number; pistesCoupeesKm: number; routesCoupeesKm: number;
+};
 type Region = 'gironde' | 'marseille' | 'california-basin' | 'california-chaparral' | 'california-sierra';
 type Terrain = { region?: Region; oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
 type Deployment = { id: string; type: string; count: number; autonomy?: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
@@ -297,12 +302,17 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [speed, setSpeed] = useState(20);
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
   const [committed, setCommitted] = useState<Deployment[]>(landirasUnits);
-  const [domain, setDomain] = useState<Domain>(LANDIRAS_DOMAIN);
-  const [terrain, setTerrain] = useState<Terrain | undefined>(undefined);
-  const [incident, setIncident] = useState<Incident>(LANDIRAS_INCIDENT);
+  // La simulation ouverte au demarrage ne passe pas par la bascule : sans cela
+  // son domaine et sa geographie ne parvenaient jamais au moteur.
+  const [domain, setDomain] = useState<Domain>(initialScenarios[0].domain);
+  const [terrain, setTerrain] = useState<Terrain | undefined>(initialScenarios[0].terrain);
+  const [incident, setIncident] = useState<Incident>(initialScenarios[0].incident);
   // Autonomie appliquee aux moyens prepositionnes : elle borne le debit
   // qu'ils peuvent reellement tenir dans la duree.
   const [autonomy, setAutonomy] = useState(85);
+  const [railOpen, setRailOpen] = useState(true);
+  const [situationOpen, setSituationOpen] = useState(true);
+  const [exposure, setExposure] = useState<Exposure | null>(null);
   const [composition, setComposition] = useState<{ nom: string; strate: string; part: number }[]>([]);
   const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -477,6 +487,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setForecastGeoJSON(forecast);
     setActiveGeoJSON(active);
     setComposition(Array.isArray(engine.fuelComposition) ? engine.fuelComposition.slice(0, 4) : []);
+    setExposure((engine.exposure as Exposure) || null);
   }, []);
 
   useEffect(() => {
@@ -953,7 +964,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           {scenarioOpen && <>
             <div className="popover-shield" role="presentation" onMouseDown={() => setScenarioOpen(false)} />
             <div className="popover scenario-pop glass-panel">
-              <div className="popover-head"><span>SIMULATIONS</span><button type="button" className="preset-new" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Gironde — feu de Saumos, 22 juillet 2026">Gironde</button><button type="button" className="preset-new" onClick={() => { createScenario('etoile'); setScenarioOpen(false); }} title="Provence — massif de l’Étoile, exercice mistral">Marseille</button><button type="button" className="preset-new" onClick={() => { createScenario('bug'); setScenarioOpen(false); }} title="Californie — Bug Fire, 8 août 2026">Californie</button><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
+              <div className="popover-head"><span>SIMULATIONS</span><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
+              <div className="preset-row">
+                <span>RECONSTITUTIONS</span>
+                <div>
+                  <button type="button" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Gironde — feu de Saumos, 22 juillet 2026">Gironde</button>
+                  <button type="button" onClick={() => { createScenario('etoile'); setScenarioOpen(false); }} title="Provence — massif de l’Étoile, exercice mistral">Marseille</button>
+                  <button type="button" onClick={() => { createScenario('bug'); setScenarioOpen(false); }} title="Californie — Bug Fire, 8 août 2026">Californie</button>
+                </div>
+              </div>
               <div className="scenario-list">{scenarioList.map((item) => {
                 const isActive = item.id === activeScenario;
                 const state = !item.ignition ? 'vierge' : (isActive && running) ? 'active' : 'pause';
@@ -1014,8 +1033,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span className="agent-link">Voir les outils</span>
       </button>
 
-      <aside className="left-rail glass-panel">
-        <div className="panel-heading"><div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div><span className="resource-count">{PARC_TOTAL}</span></div>
+      <aside className={'left-rail glass-panel' + (railOpen ? '' : ' collapsed')}>
+        <div className="panel-heading">
+          <div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div>
+          <span className="resource-count">{PARC_TOTAL}</span>
+          <button className="panel-toggle" type="button" aria-expanded={railOpen}
+            aria-label={railOpen ? 'Replier les moyens' : 'Déplier les moyens'}
+            onClick={() => setRailOpen((value) => !value)}><ChevronUp size={13} /></button>
+        </div>
         <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
         <div className="autonomy-control">
           <label htmlFor="autonomy">AUTONOMIE À L’ENGAGEMENT</label>
@@ -1031,8 +1056,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <div className="rail-footer"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
       </aside>
 
-      <aside className="situation-panel glass-panel">
-        <div className="panel-heading"><div><span>{incidentClock}</span><strong>Situation opérationnelle</strong></div><span className="beta-chip">BÊTA</span></div>
+      <aside className={'situation-panel glass-panel' + (situationOpen ? '' : ' collapsed')}>
+        <div className="panel-heading">
+          <div><span>{incidentClock}</span><strong>Situation opérationnelle</strong></div>
+          <span className="beta-chip">BÊTA</span>
+          <button className="panel-toggle" type="button" aria-expanded={situationOpen}
+            aria-label={situationOpen ? 'Replier la situation' : 'Déplier la situation'}
+            onClick={() => setSituationOpen((value) => !value)}><ChevronUp size={13} /></button>
+        </div>
         <div className="metric-grid"><div><span>Surface simulée</span><strong>{shownBurnedHa === null ? '—' : shownBurnedHa.toLocaleString('fr-FR')} <small>ha</small></strong><em>calcul worker</em></div><div><span>Vitesse de tête</span><strong>{shownFrontRate === null ? '—' : shownFrontRate.toLocaleString('fr-FR')} <small>m/min</small></strong><em>calcul Rothermel</em></div><div><span>Temps simulé</span><strong>{minutes} <small>min</small></strong><em>depuis l’allumage</em></div><div><span>Calibration</span><strong>—</strong><em>non réalisée</em></div></div>
         <button className={'weather-card' + (weatherOpen ? ' open' : '')} type="button" onClick={() => setWeatherOpen((value) => !value)} aria-expanded={weatherOpen}>
           <span className="weather-icon"><Wind size={18} /></span>
@@ -1069,6 +1100,16 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <i style={{ width: Math.max(4, entry.part * 100) + '%' }} />
             <span>{entry.nom}</span><b>{(entry.part * 100).toFixed(0)} %</b>
           </div>)}
+        </div>}
+        {exposure && <div className="exposure-card">
+          <span className="cover-head">ENJEUX · {exposure.populationMenacee > 0 ? 'POPULATION MENACÉE' : 'AUCUNE POPULATION EXPOSÉE'}</span>
+          <div className="exposure-grid">
+            <div><span>Habitants menacés</span><b className={exposure.populationMenacee > 0 ? 'danger' : ''}>{exposure.populationMenacee.toLocaleString('fr-FR')}</b></div>
+            <div><span>Habitants atteints</span><b className={exposure.populationAtteinte > 0 ? 'danger' : ''}>{exposure.populationAtteinte.toLocaleString('fr-FR')}</b></div>
+            <div><span>Bâti parcouru</span><b>{exposure.surfaceBatieHa.toLocaleString('fr-FR')} <small>ha</small></b></div>
+            <div><span>Voies coupées</span><b>{(exposure.pistesCoupeesKm + exposure.routesCoupeesKm).toLocaleString('fr-FR')} <small>km</small></b></div>
+          </div>
+          <small>Dont {exposure.routesCoupeesKm.toLocaleString('fr-FR')} km de routes ouvertes à la circulation — le reste est du maillage DFCI.</small>
         </div>}
         {shownSuppression && <div className={'suppression-card ' + shownSuppression.status}>
           <div className="supp-head">
@@ -1110,7 +1151,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <p className="model-disclaimer">Modèle Rothermel 1972 · outil d’entraînement · non calibré sur données historiques</p>
       </aside>
 
-      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Revoir et appliquer</button></section>}
+      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setStagedPlan(null); notify('Plan provisoire annulé. Aucune ressource n’a été engagée.'); }}>Annuler</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Appliquer</button></section>}
+      {!stagedPlan && ignition && <button className="ask-agent glass-panel" type="button" onClick={runAgentDemo}>
+        <Sparkles size={14} />Demander un plan à l’agent
+      </button>}
       {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} actions de l’agent<ChevronDown size={13} /></button>}
 
       <aside className="map-legend glass-panel" aria-label="Légende de la carte">

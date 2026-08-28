@@ -148,6 +148,46 @@ const front = reference.suppression;
 assert.equal(front.headM + front.flankM + front.rearM, front.activePerimeterM, 'Tête + flancs + arrière doit égaler le front.');
 assert.ok(front.meanIntensityKwM <= front.firelineIntensityKwM, 'La moyenne du périmètre doit rester sous l’intensité de tête.');
 
+/* --- Anthropisation du massif landais -------------------------------------
+ * Pistes DFCI, routes et bâti compartimentent le massif. Le réseau doit tenir
+ * les feux modérés et perdre prise sur les feux violents — jamais devenir un
+ * mur, ce qui transformerait la simulation en couloirs scriptés. */
+const landes = (windKph, droughtIndex, network) => run({
+  targetMinutes: 360, temperature: 36, humidity: 22, windKph, droughtIndex, windBearingDegrees: 135,
+  domain: { lng: IGNITION.lng, lat: IGNITION.lat, boxMetres: 25000 },
+  terrain: { region: 'gironde', network },
+});
+const modereSans = landes(22, 0.8, null).totalBurnedHa;
+const modereAvec = landes(22, 0.8, 'landes').totalBurnedHa;
+const extremeSans = landes(60, 0.97, null).totalBurnedHa;
+const extremeAvec = landes(60, 0.97, 'landes').totalBurnedHa;
+assert.ok(modereAvec < modereSans * 0.85,
+  `Le maillage DFCI doit contenir un feu modéré: ${modereSans} -> ${modereAvec}`);
+assert.ok(extremeAvec > extremeSans * 0.2,
+  `Une coupure ne doit jamais être un mur absolu: ${extremeSans} -> ${extremeAvec}`);
+const priseModere = 1 - modereAvec / modereSans;
+const priseExtreme = 1 - extremeAvec / extremeSans;
+assert.ok(priseExtreme < priseModere,
+  `Le réseau doit perdre prise quand l’intensité monte: ${(priseModere * 100).toFixed(0)}% -> ${(priseExtreme * 100).toFixed(0)}%`);
+
+/* Enjeux humains : cohérents, et jamais inventés hors du massif décrit. */
+const expose = landes(32, 0.9, 'landes');
+assert.ok(expose.network, 'Le réseau doit être nommé dans le résultat.');
+assert.ok(expose.exposure && expose.exposure.populationMenacee >= 0 && expose.exposure.pistesCoupeesKm >= 0,
+  'Bilan des enjeux incohérent.');
+assert.equal(landes(32, 0.9, null).exposure, null,
+  'Sans réseau décrit, aucun enjeu ne doit être inventé.');
+
+/* Le réseau tient au lieu, comme la végétation. */
+const reseauA = engine(); reseauA.configureDomain({ lng: IGNITION.lng, lat: IGNITION.lat, boxMetres: 25000 });
+const reseauB = engine(); reseauB.configureDomain({ lng: IGNITION.lng + 0.06, lat: IGNITION.lat - 0.04, boxMetres: 25000 });
+const infraA = reseauA.buildInfrastructure('landes', { region: 'gironde' });
+const infraB = reseauB.buildInfrastructure('landes', { region: 'gironde' });
+const partA = [...infraA.infra].filter((flags) => flags & reseauA.INFRA_TRACK).length / infraA.infra.length;
+const partB = [...infraB.infra].filter((flags) => flags & reseauB.INFRA_TRACK).length / infraB.infra.length;
+assert.ok(Math.abs(partA - partB) < 0.06,
+  `La densité de pistes doit être stable d’une fenêtre à l’autre: ${(partA * 100).toFixed(1)}% vs ${(partB * 100).toFixed(1)}%`);
+
 /* --- Catalogue des moyens ------------------------------------------------- */
 assert.ok(Object.keys(e.APPLIANCES).length >= 12, 'Le parc doit couvrir terrestre, aérien et génie.');
 for (const [code, spec] of Object.entries(e.APPLIANCES)) {
@@ -164,4 +204,6 @@ console.log(JSON.stringify({
   ecartContourPct: Number((100 * (contourHa - reference.totalBurnedHa) / reference.totalBurnedHa).toFixed(1)),
   libre, avec20, avec40, tete, arriere,
   debitPlein: pleine.suppression.deployedFlowLpm, debitDemi: demi.suppression.deployedFlowLpm,
+  priseReseauModere: (priseModere*100).toFixed(0)+"%", priseReseauExtreme: (priseExtreme*100).toFixed(0)+"%",
+  pistesPart: (partA*100).toFixed(1)+"%", habitantsMenaces: expose.exposure.populationMenacee,
 }, null, 1));
