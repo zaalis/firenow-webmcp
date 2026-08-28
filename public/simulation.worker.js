@@ -408,7 +408,11 @@ function crossingDelayMinutes(width, intensityKwM, rosMetresPerMinute, windKph) 
   if (width <= crossable) return direct;
   // Le front bute, s'accumule, et ne passe qu'a la faveur d'une rafale ou
   // d'un brandon : des heures de retard, jamais un blocage definitif.
-  return direct * Math.pow(width / crossable, 4) * 60;
+  // Une coupure laissee sans personnel ne tient pas des heures : braises
+  // courtes et rayonnement la franchissent. Elle retarde le front de quelques
+  // dizaines de minutes, le temps que les moyens s en saisissent -- c est la
+  // suppression, pas la coupure seule, qui arrete un feu.
+  return Math.min(direct * Math.pow(width / crossable, 3) * 12, 90);
 }
 
 function createState(origin) {
