@@ -187,21 +187,33 @@ const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | '
   return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: BLANK_INCIDENT };
 };
 // Fond raster : charge par le fil principal, contrairement aux tuiles
-// vectorielles qui transitent par le worker MapLibre.
+// vectorielles qui transitent par le worker MapLibre, lequel ne les recoit
+// jamais sur l'hebergement de production. Esri sert la base et les etiquettes
+// en deux couches distinctes, sans cle d'API -- CARTO filigrane desormais ses
+// tuiles raster avec « API KEY REQUIRED ».
+const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas';
 const BASEMAP_STYLE = {
   version: 8 as const,
   sources: {
-    carto: {
+    fondEsri: {
       type: 'raster' as const,
-      tiles: ['a', 'b', 'c', 'd'].map((sub) => `https://${sub}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png`),
+      tiles: [ESRI + '/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256,
-      attribution: '© CARTO © OpenStreetMap',
+      attribution: 'Esri, HERE, Garmin, © OpenStreetMap',
+    },
+    etiquettesEsri: {
+      type: 'raster' as const,
+      tiles: [ESRI + '/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
     },
   },
   layers: [
     { id: 'fond', type: 'background' as const, paint: { 'background-color': '#08090A' } },
-    // Desaturation legere : le fond doit rester en retrait, le feu prime.
-    { id: 'basemap', type: 'raster' as const, source: 'carto', paint: { 'raster-saturation': -0.55, 'raster-opacity': 0.92 } },
+    // Le fond doit rester en retrait : le feu prime sur la carte.
+    { id: 'basemap', type: 'raster' as const, source: 'fondEsri',
+      paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.62, 'raster-opacity': 0.95 } },
+    { id: 'basemap-labels', type: 'raster' as const, source: 'etiquettesEsri',
+      paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.9, 'raster-opacity': 0.8 } },
   ],
 };
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
