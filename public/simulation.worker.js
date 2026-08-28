@@ -443,11 +443,9 @@ function buildInfrastructure(networkKey, terrain) {
 
 /* Largeur de la coupure a franchir sur une cellule. */
 function breakWidthAt(sim, index) {
-  if (!sim.infra) return 0;
-  const flags = sim.infra[index];
-  if (!flags) return 0;
+  let width = sim.constructedBreak ? sim.constructedBreak[index] : 0;
+  const flags = sim.infra ? sim.infra[index] : 0;
   const spec = sim.network;
-  let width = 0;
   if (flags & INFRA_ROAD) width = Math.max(width, spec.roadWidthM);
   if (flags & INFRA_TRACK) width = Math.max(width, spec.trackWidthM);
   if (flags & INFRA_BUILT) width = Math.max(width, spec.builtBreakM);
@@ -457,7 +455,7 @@ function breakWidthAt(sim, index) {
 /* Une coupure tient tant qu'elle est plus large que ~2,5 longueurs de flamme.
  * Au-dela, elle ne fait plus que retarder le front -- et les brandons la
  * franchissent de toute facon. */
-function crossingDelayMinutes(width, intensityKwM, rosMetresPerMinute, windKph) {
+function crossingDelayMinutes(width, intensityKwM, rosMetresPerMinute, windKph, held = false) {
   if (width <= 0) return 0;
   const flameLength = 0.0775 * Math.pow(Math.max(1, intensityKwM), 0.46);
   // Une flamme couchee par le vent porte bien au-dela de sa hauteur.
@@ -470,13 +468,18 @@ function crossingDelayMinutes(width, intensityKwM, rosMetresPerMinute, windKph) 
   // courtes et rayonnement la franchissent. Elle retarde le front de quelques
   // dizaines de minutes, le temps que les moyens s en saisissent -- c est la
   // suppression, pas la coupure seule, qui arrete un feu.
-  return Math.min(direct * Math.pow(width / crossable, 3) * 12, 90);
+  // Gannon et al. 2023 (Fire 6:104) identifient la suppression comme le
+  // premier determinant de succes des coupures. Une ligne tenue multiplie le
+  // temps de franchissement, mais garde une borne : aucune barriere absolue.
+  return Math.min(direct * Math.pow(width / crossable, 3) * 12 * (held ? 4 : 1), held ? 360 : 90);
 }
 
 function createState(origin) {
   const state = new Uint8Array(GRID_SIZE * GRID_SIZE);
   const arrival = new Float32Array(GRID_SIZE * GRID_SIZE); arrival.fill(Infinity);
   const lowIntensitySince = new Float32Array(GRID_SIZE * GRID_SIZE); lowIntensitySince.fill(Infinity);
+  const constructedBreak = new Float32Array(GRID_SIZE * GRID_SIZE);
+  const heldBreak = new Uint8Array(GRID_SIZE * GRID_SIZE);
   const terrain = (origin && origin.terrain) || null;
   const fuel = generateFuelMask(terrain);
   // Le reseau n'existe que la ou il est decrit : pour l'instant le massif landais.
@@ -512,7 +515,9 @@ function createState(origin) {
   if (!seeded) arrival[indexOf(cell.x, cell.y)] = 0;
   const [lng, lat] = lngLatForCell(cell.x, cell.y);
   return {
-    state, arrival, lowIntensitySince, fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
+    state, arrival, lowIntensitySince, constructedBreak, heldBreak, lineProgressM: {}, lineCellsBuilt: {},
+    explicitLinesReady: false, tacticalBurnsReady: false,
+    fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
     infra: anthropic && anthropic.infra, people: anthropic && anthropic.people,
     network: anthropic && anthropic.spec,
   };
@@ -602,6 +607,87 @@ function frontCells(sim) {
     }
   }
   return cells;
+}
+function lineCells(coordinates) {
+  const cells = [];
+  if (!Array.isArray(coordinates) || coordinates.length < 2) return cells;
+  for (let p = 1; p < coordinates.length; p += 1) {
+    const a = cellForLngLat(Number(coordinates[p - 1][0]), Number(coordinates[p - 1][1]));
+    const b = cellForLngLat(Number(coordinates[p][0]), Number(coordinates[p][1]));
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) * 2));
+    for (let step = 0; step <= steps; step += 1) {
+      const x = clamp(Math.round(a.x + (b.x - a.x) * step / steps), 0, GRID_SIZE - 1);
+      const y = clamp(Math.round(a.y + (b.y - a.y) * step / steps), 0, GRID_SIZE - 1);
+      const index = indexOf(x, y);
+      if (cells.at(-1) !== index) cells.push(index);
+    }
+  }
+  return cells;
+}
+function installExplicitLines(sim, input) {
+  if (sim.explicitLinesReady) return;
+  for (const line of input.firebreaks || []) {
+    const width = clamp(Number(line.widthM) || 12, 2, 80);
+    for (const index of lineCells(line.coordinates)) {
+      sim.constructedBreak[index] = Math.max(sim.constructedBreak[index], width);
+      if (line.staffed !== false) sim.heldBreak[index] = 1;
+    }
+  }
+  sim.explicitLinesReady = true;
+}
+function igniteTacticalBurns(sim, input, bearing) {
+  if (sim.tacticalBurnsReady) return;
+  const backDx = Math.round(-Math.sin(bearing * Math.PI / 180));
+  const backDy = Math.round(Math.cos(bearing * Math.PI / 180));
+  for (const line of input.firebreaks || []) {
+    if (!line.tacticalBurn) continue;
+    for (const barrier of lineCells(line.coordinates)) {
+      const x = barrier % GRID_SIZE, y = Math.floor(barrier / GRID_SIZE);
+      // Le brulage est place du cote feu de la ligne ; la cellule de coupure
+      // reste intacte et continue de produire un delai de franchissement.
+      const tx = x + backDx, ty = y + backDy;
+      if (tx < 0 || ty < 0 || tx >= GRID_SIZE || ty >= GRID_SIZE) continue;
+      const target = indexOf(tx, ty);
+      if (!FUEL[sim.fuel[target]].nonBurnable && !Number.isFinite(sim.arrival[target])) sim.arrival[target] = sim.currentMinutes;
+    }
+  }
+  sim.tacticalBurnsReady = true;
+}
+function constructPersistentLines(sim, deployments, bearing, elapsedMinutes) {
+  if (!(elapsedMinutes > 0)) return;
+  const front = frontCells(sim);
+  if (!front.length) return;
+  for (const unit of deployments || []) {
+    const spec = APPLIANCES[unit.type];
+    if (!spec || !spec.lineMetresPerHour || !Number.isFinite(unit.lng) || !Number.isFinite(unit.lat)) continue;
+    const count = clamp(unit.count || 1, 1, 50);
+    const autonomy = clamp(Number.isFinite(unit.autonomy) ? unit.autonomy / 100 : 1, 0.1, 1);
+    const key = String(unit.id || `${unit.type}:${unit.lng}:${unit.lat}`);
+    sim.lineProgressM[key] = (sim.lineProgressM[key] || 0) + spec.lineMetresPerHour * count * autonomy * elapsedMinutes / 60;
+    const wanted = Math.floor(sim.lineProgressM[key] / CELL_METERS);
+    const built = sim.lineCellsBuilt[key] || 0;
+    if (wanted <= built) continue;
+    const posted = cellForLngLat(unit.lng, unit.lat);
+    let center = front[0], best = Infinity;
+    for (const candidate of front) {
+      const distance = Math.hypot(candidate[0] - posted.x, candidate[1] - posted.y);
+      if (distance < best) { best = distance; center = candidate; }
+    }
+    // Ligne tangente a l'axe de propagation, construite alternativement de
+    // chaque cote du point d'appui. Sa production est cumulative et durable.
+    const tangentX = Math.cos(bearing * Math.PI / 180);
+    const tangentY = Math.sin(bearing * Math.PI / 180);
+    for (let ordinal = built; ordinal < wanted; ordinal += 1) {
+      const signed = ordinal === 0 ? 0 : (ordinal % 2 ? 1 : -1) * Math.ceil(ordinal / 2);
+      const x = Math.round(center[0] + tangentX * signed);
+      const y = Math.round(center[1] + tangentY * signed);
+      if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+      const index = indexOf(x, y);
+      sim.constructedBreak[index] = Math.max(sim.constructedBreak[index], spec.heavy ? 14 : 4);
+      sim.heldBreak[index] = 1;
+    }
+    sim.lineCellsBuilt[key] = wanted;
+  }
 }
 function buildSuppressionMask(deployments, input, sim) {
   const mask = new Float32Array(GRID_SIZE * GRID_SIZE);
@@ -743,7 +829,12 @@ function directionalFactor(dx, dy, bearing, lengthToBreadth) {
 }
 function propagate(sim, input, targetMinutes) {
   SIM_FUEL = sim.fuel;
-  const built = buildSuppressionMask(input.deployments, input, sim); const suppression = built.mask; const bearing = spreadBearing(input);
+  const bearing = spreadBearing(input);
+  installExplicitLines(sim, input);
+  igniteTacticalBurns(sim, input, bearing);
+  constructPersistentLines(sim, input.deployments, bearing, targetMinutes - sim.currentMinutes);
+  const built = buildSuppressionMask(input.deployments, input, sim); const suppression = built.mask;
+  built.totals.constructedLineM = [...sim.constructedBreak].filter((width) => width > 0).length * CELL_METERS;
   // Alexander doit recevoir le meme vent que Rothermel (mi-flamme, facteur 0,25).
   // Avec le vent brut on obtenait L/B ~ 6 : une ellipse plus fine qu'une cellule de 195 m,
   // que la grille ne peut pas representer -- la surface s'effondrait.
@@ -775,7 +866,7 @@ function propagate(sim, input, targetMinutes) {
       const width = breakWidthAt(sim, next);
       let crossing = 0;
       if (width > 0) {
-        crossing = crossingDelayMinutes(width, firelineIntensity(sim.fuel[next], effectiveRos), effectiveRos, input.windKph);
+        crossing = crossingDelayMinutes(width, firelineIntensity(sim.fuel[next], effectiveRos), effectiveRos, input.windKph, Boolean(sim.heldBreak[next]));
       }
       const arrivalTime = current.time + CELL_METERS * Math.hypot(dx, dy) / effectiveRos + crossing;
       if (arrivalTime < sim.arrival[next]) { sim.arrival[next] = arrivalTime; heap.push({ index: next, time: arrivalTime }); }
@@ -975,7 +1066,7 @@ function extinguishedEdgeGeoJSON(sim) {
   feature.properties = { source: 'FireOps cellular simulation', layer: 'lisiere-eteinte' };
   return feature;
 }
-function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network};}
+function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),constructedBreak:sim.constructedBreak.slice(),heldBreak:sim.heldBreak.slice(),lineProgressM:{...sim.lineProgressM},lineCellsBuilt:{...sim.lineCellsBuilt},explicitLinesReady:sim.explicitLinesReady,tacticalBurnsReady:sim.tacticalBurnsReady,fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network};}
 /* ---------------------------------------------------------------------------
  * Analyse du front.
  *
@@ -1127,6 +1218,7 @@ function resultFor(sim, input, spread) {
         : headIntensity > HAND_ATTACK_LIMIT_KW_M ? 'moyens-lourds' : 'directe',
       appliances: totals.appliances, byType: totals.byType,
       lineMetresPerHour: Math.round(totals.lineMetresPerHour),
+      constructedLineM: Math.round(totals.constructedLineM || 0),
     },
     perimeterGeoJSON: perimeterGeoJSON(sim),
     activeFrontGeoJSON: activeFrontGeoJSON(sim),
@@ -1140,5 +1232,5 @@ const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOM
 const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread,lastEnvironment=environmentAt(input,sim.currentMinutes);{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);lastEnvironment=environmentAt(input,cursor);spread=propagate(sim,lastEnvironment,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,lastEnvironment,spread);result.diurnal={hourOfDay:Number(lastEnvironment.hourOfDay.toFixed(2)),daylightFactor:Number(lastEnvironment.daylightFactor.toFixed(3)),wafScale:Number(lastEnvironment.wafScale.toFixed(3)),activeFraction:Number(lastEnvironment.activeFraction.toFixed(3))};if(input.includeForecast){const forecast=cloneState(sim);let projected=spread,forecastCursor=target,forecastEnvironment=lastEnvironment;while(forecastCursor<target+180){forecastCursor=Math.min(target+180,forecastCursor+STEP);forecastEnvironment=environmentAt(input,forecastCursor);projected=propagate(forecast,forecastEnvironment,forecastCursor);}result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={buildInfrastructure,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
+self.__fireopsTest={buildInfrastructure,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,crossingDelayMinutes,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};

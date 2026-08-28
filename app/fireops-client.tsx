@@ -18,11 +18,12 @@ type Exposure = {
 type Region = 'gironde' | 'marseille' | 'california-basin' | 'california-chaparral' | 'california-sierra';
 type Terrain = { region?: Region; oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
 type Deployment = { id: string; type: string; count: number; autonomy?: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
+type Firebreak = { name: string; sector: string; lengthKm: number; coordinates: [number, number][]; widthM?: number; staffed?: boolean; tacticalBurn?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
 type Plan = {
   id: string; name: string; intention: string; deployments: Deployment[];
   tasks: { unitId: string; mission: string }[];
-  firebreaks: { name: string; sector: string; lengthKm: number }[];
+  firebreaks: Firebreak[];
   evacuations: { name: string; sector: string; population: number }[];
   movedFrom?: string[];
   comparison?: StrategyResult[];
@@ -38,7 +39,7 @@ type Suppression = {
 };
 type Scenario = {
   id: string; name: string; createdAt: number; preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank';
-  ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[];
+  ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[]; firebreaks: Firebreak[];
   domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
 // L en-tete affichait la date de Landiras quel que soit le scenario ouvert.
@@ -177,16 +178,16 @@ const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22
 const BLANK_INCIDENT: Incident = { ref: 'SIMULATION LIBRE', dateLabel: 'T0', startHour: 12, startMinute: 0 };
 const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank'): Scenario => {
   const base = { id: nextId(), name, createdAt: Date.now(), preset, burnedHa: null };
-  if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: LANDIRAS_INCIDENT };
-  if (preset === 'etoile') return { ...base, ignition: { ...ETOILE_IGNITION }, minutes: 240, weather: etoileWeather(), committed: etoileUnits(), domain: ETOILE_DOMAIN, terrain: ETOILE_TERRAIN, incident: ETOILE_INCIDENT };
-  if (preset === 'bug') return { ...base, ignition: { ...BUG_IGNITION }, minutes: 480, weather: bugWeather(), committed: bugUnits(), domain: BUG_DOMAIN, terrain: BUG_TERRAIN, incident: BUG_INCIDENT };
-  if (preset === 'saumos') return { ...base, ignition: { ...SAUMOS_IGNITION }, minutes: 450, weather: saumosWeather(), committed: saumosUnits(), domain: SAUMOS_DOMAIN, terrain: SAUMOS_TERRAIN, incident: SAUMOS_INCIDENT };
-  return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: BLANK_INCIDENT };
+  if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: LANDIRAS_INCIDENT };
+  if (preset === 'etoile') return { ...base, ignition: { ...ETOILE_IGNITION }, minutes: 240, weather: etoileWeather(), committed: etoileUnits(), firebreaks: [], domain: ETOILE_DOMAIN, terrain: ETOILE_TERRAIN, incident: ETOILE_INCIDENT };
+  if (preset === 'bug') return { ...base, ignition: { ...BUG_IGNITION }, minutes: 480, weather: bugWeather(), committed: bugUnits(), firebreaks: [], domain: BUG_DOMAIN, terrain: BUG_TERRAIN, incident: BUG_INCIDENT };
+  if (preset === 'saumos') return { ...base, ignition: { ...SAUMOS_IGNITION }, minutes: 450, weather: saumosWeather(), committed: saumosUnits(), firebreaks: [], domain: SAUMOS_DOMAIN, terrain: SAUMOS_TERRAIN, incident: SAUMOS_INCIDENT };
+  return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: BLANK_INCIDENT };
 };
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
 const toolNames = [
   'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
-  'propose_plan', 'stage_deploy_units', 'stage_assign_task', 'stage_firebreak', 'stage_evacuation_zone',
+  'propose_plan', 'stage_deploy_units', 'stage_assign_task', 'stage_firebreak', 'stage_tactical_burn', 'stage_evacuation_zone',
   'commit_plan', 'revert_plan', 'run_simulation', 'set_time', 'set_weather', 'ignite', 'compare_plans',
   'focus_region', 'set_view_mode',
 ];
@@ -303,6 +304,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [speed, setSpeed] = useState(20);
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
   const [committed, setCommitted] = useState<Deployment[]>(landirasUnits);
+  const [committedFirebreaks, setCommittedFirebreaks] = useState<Firebreak[]>([]);
   // La simulation ouverte au demarrage ne passe pas par la bascule : sans cela
   // son domaine et sa geographie ne parvenaient jamais au moteur.
   const [domain, setDomain] = useState<Domain>(initialScenarios[0].domain);
@@ -315,14 +317,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [situationOpen, setSituationOpen] = useState(true);
   const [exposure, setExposure] = useState<Exposure | null>(null);
   const [composition, setComposition] = useState<{ nom: string; strate: string; part: number }[]>([]);
-  const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
+  const [undoStack, setUndoStack] = useState<{ deployments: Deployment[]; firebreaks: Firebreak[] }[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain, incident });
+  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident });
 
   useEffect(() => {
-    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain, incident };
-  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain, incident]);
+    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident };
+  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident]);
 
   const patchWeather = useCallback((patch: Partial<Weather>) => {
     setWeather((current) => ({ ...current, ...patch }));
@@ -352,12 +354,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, []);
   const applyPlan = useCallback(() => {
     if (!stagedPlan) return false;
-    setUndoStack((stack) => [...stack, committed]);
+    setUndoStack((stack) => [...stack, { deployments: committed, firebreaks: committedFirebreaks }]);
     const moved = new Set(stagedPlan.movedFrom || []);
     setCommitted((current) => [
       ...current.filter((item) => !moved.has(item.id)),
       ...stagedPlan.deployments.map((item) => ({ ...item, staged: false })),
     ]);
+    setCommittedFirebreaks((current) => [...current, ...stagedPlan.firebreaks]);
     logTool('commit_plan', String(stagedPlan.deployments.reduce((sum, item) => sum + item.count, 0)) + ' moyens engagés');
     setStagedPlan(null);
     setReviewOpen(false);
@@ -365,7 +368,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     reviewResolver.current = null;
     notify('Plan appliqué. Toutes les actions restent annulables.');
     return true;
-  }, [committed, logTool, notify, stagedPlan]);
+  }, [committed, committedFirebreaks, logTool, notify, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
     reviewResolver.current?.(false);
@@ -377,7 +380,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setUndoStack((stack) => {
       const previous = stack.at(-1);
       if (!previous) return stack;
-      setCommitted(previous);
+      setCommitted(previous.deployments);
+      setCommittedFirebreaks(previous.firebreaks);
       reverted = true;
       return stack.slice(0, -1);
     });
@@ -422,6 +426,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         map.addLayer({ id: 'fire-extinguished-line', type: 'line', source: 'fire-extinguished', paint: { 'line-color': '#B8B8B8', 'line-width': 1.5, 'line-opacity': 0.85, 'line-dasharray': [2, 2] } });
         map.addSource('fire-forecast', { type: 'geojson', data: engineGeoRef.current.forecast as Parameters<GeoJSONSource['setData']>[0] });
         map.addLayer({ id: 'fire-forecast-line', type: 'line', source: 'fire-forecast', paint: { 'line-color': '#FF3B30', 'line-width': 1.8, 'line-opacity': 0.8, 'line-dasharray': [3, 2] } });
+        map.addSource('operational-lines', { type: 'geojson', data: emptyGeoJSON });
+        map.addLayer({ id: 'operational-lines-held', type: 'line', source: 'operational-lines', filter: ['==', ['get', 'tacticalBurn'], false], paint: { 'line-color': '#E2E2E2', 'line-width': 2.4, 'line-opacity': ['case', ['get', 'staged'], 0.45, 0.95], 'line-dasharray': [4, 2] } });
+        map.addLayer({ id: 'operational-lines-burn', type: 'line', source: 'operational-lines', filter: ['==', ['get', 'tacticalBurn'], true], paint: { 'line-color': '#FF7A18', 'line-width': 3, 'line-opacity': ['case', ['get', 'staged'], 0.45, 0.95], 'line-dasharray': [2, 1] } });
         setMapReady(true);
       });
       let anchor: { lng: number; lat: number } | null = null;
@@ -531,6 +538,20 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, [forecastGeoJSON, perimeterGeoJSON, activeGeoJSON, extinguishedGeoJSON, ignition]);
 
   useEffect(() => {
+    const source = mapRef.current?.getSource('operational-lines') as GeoJSONSource | undefined;
+    if (!source) return;
+    const staged = stagedPlan?.firebreaks || [];
+    source.setData({
+      type: 'FeatureCollection',
+      features: [...committedFirebreaks.map((line) => ({ line, staged: false })), ...staged.map((line) => ({ line, staged: true }))].map(({ line, staged: isStaged }) => ({
+        type: 'Feature',
+        properties: { name: line.name, staged: isStaged, tacticalBurn: Boolean(line.tacticalBurn) },
+        geometry: { type: 'LineString', coordinates: line.coordinates },
+      })),
+    } as Parameters<GeoJSONSource['setData']>[0]);
+  }, [committedFirebreaks, mapReady, stagedPlan?.firebreaks]);
+
+  useEffect(() => {
     // Carte vierge : on vide la ref (lue par le handler 'load') sans toucher a l'etat,
     // les valeurs affichees etant derivees plus bas.
     if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
@@ -540,25 +561,25 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       plumeDriven: weather.plumeDriven === true, domain, terrain,
       windKph: weather.windSpeed, windDirection: weather.windDirection, windBearingDegrees: weather.windBearing,
       startHour: incident.startHour + incident.startMinute / 60,
-      slopeDegrees: 7.4, deployments: committed, includeForecast: true,
+      slopeDegrees: 7.4, deployments: committed, firebreaks: committedFirebreaks, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident]);
+  }, [applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
     setRunning(false);
     setScenarios((list) => list.map((item) => item.id === activeScenario
-      ? { ...item, ignition, minutes, weather, committed, domain, terrain, burnedHa }
+      ? { ...item, ignition, minutes, weather, committed, firebreaks: committedFirebreaks, domain, terrain, burnedHa }
       : item));
     const target = scenarios.find((item) => item.id === id);
     if (!target) return;
     setActiveScenario(id);
     setIgnition(target.ignition); ignitionRef.current = target.ignition;
-    setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed);
+    setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed); setCommittedFirebreaks(target.firebreaks);
     setDomain(target.domain); setTerrain(target.terrain); setIncident(target.incident);
     mapRef.current?.jumpTo({ center: [target.domain.lng, target.domain.lat], zoom: target.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(false);
-  }, [activeScenario, burnedHa, committed, domain, terrain, ignition, minutes, scenarios, weather]);
+  }, [activeScenario, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, weather]);
 
   const createScenario = useCallback((preset: 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
     setRunning(false);
@@ -569,11 +590,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       ? makeScenario('Simulation ' + String(scenarios.length + 1), 'blank')
       : makeScenario(NAMES[preset], preset);
     setScenarios((list) => list.map((item) => item.id === activeScenario
-      ? { ...item, ignition, minutes, weather, committed, domain, terrain, burnedHa }
+      ? { ...item, ignition, minutes, weather, committed, firebreaks: committedFirebreaks, domain, terrain, burnedHa }
       : item).concat(created));
     setActiveScenario(created.id);
     setIgnition(created.ignition); ignitionRef.current = created.ignition;
-    setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed);
+    setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed); setCommittedFirebreaks(created.firebreaks);
     setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
@@ -584,11 +605,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       blank: 'Nouvelle simulation. Placez le point de départ du feu.',
     };
     notify(NOTES[preset]);
-  }, [activeScenario, burnedHa, committed, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
+  }, [activeScenario, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
 
   // La liste affichee derive de l'etat vivant pour la simulation ouverte.
   const scenarioList = scenarios.map((item) => item.id === activeScenario
-    ? { ...item, ignition, minutes, weather, committed, burnedHa }
+    ? { ...item, ignition, minutes, weather, committed, firebreaks: committedFirebreaks, burnedHa }
     : item);
 
   useEffect(() => {
@@ -645,7 +666,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain,
         windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
         startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60,
-        slopeDegrees: 7.4, deployments,
+        slopeDegrees: 7.4, deployments, firebreaks: stateRef.current.committedFirebreaks,
       });
     }));
     const results = names.map((name, index): StrategyResult => ({
@@ -710,7 +731,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed });
+            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks });
             return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
@@ -769,12 +790,41 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_firebreak', title: 'Tracer une ligne d’appui', description: 'Ajoute une coupure provisoire visible en fantôme.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, lengthKm: { type: 'number', minimum: .1, maximum: 40 } }, ['name','sector','lengthKm']),
+        name: 'stage_firebreak', title: 'Tracer une ligne d’appui', description: 'Ajoute une polyligne géographique provisoire. Après validation, elle devient une coupure persistante du moteur.',
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']),
         execute: (input) => {
-          const line = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), lengthKm: numberValue(input.lengthKm, 'lengthKm', .1, 40) };
+          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('coordinates doit contenir 2 à 64 points.');
+          const coordinates = input.coordinates.map((raw) => {
+            if (!Array.isArray(raw) || raw.length !== 2) throw new Error('Chaque point doit être [longitude, latitude].');
+            return [numberValue(raw[0], 'longitude', -180, 180), numberValue(raw[1], 'latitude', -90, 90)] as [number, number];
+          });
+          const lengthKm = coordinates.slice(1).reduce((sum, point, index) => {
+            const previous = coordinates[index];
+            const lat = (point[1] + previous[1]) * Math.PI / 360;
+            return sum + Math.hypot((point[0] - previous[0]) * 111.32 * Math.cos(lat), (point[1] - previous[1]) * 111.32);
+          }, 0);
+          const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: input.staffed !== false };
           setStagedPlan((plan) => plan ? { ...plan, firebreaks: [...plan.firebreaks, line] } : plan);
           return { staged: true, firebreak: line };
+        },
+      },
+      {
+        name: 'stage_tactical_burn', title: 'Préparer un brûlage tactique', description: 'Trace une ligne tenue et prépare l’allumage volontaire côté feu. Aucun allumage avant validation humaine.',
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']),
+        execute: (input) => {
+          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('coordinates doit contenir 2 à 64 points.');
+          const coordinates = input.coordinates.map((raw) => {
+            if (!Array.isArray(raw) || raw.length !== 2) throw new Error('Chaque point doit être [longitude, latitude].');
+            return [numberValue(raw[0], 'longitude', -180, 180), numberValue(raw[1], 'latitude', -90, 90)] as [number, number];
+          });
+          const lengthKm = coordinates.slice(1).reduce((sum, point, index) => {
+            const previous = coordinates[index];
+            const lat = (point[1] + previous[1]) * Math.PI / 360;
+            return sum + Math.hypot((point[0] - previous[0]) * 111.32 * Math.cos(lat), (point[1] - previous[1]) * 111.32);
+          }, 0);
+          const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: true, tacticalBurn: true };
+          setStagedPlan((plan) => plan ? { ...plan, firebreaks: [...plan.firebreaks, line] } : plan);
+          return { staged: true, tacticalBurn: line, ignitionCommitted: false };
         },
       },
       {
@@ -818,7 +868,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
             domain: stateRef.current.domain, terrain: stateRef.current.terrain,
             startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60,
-            slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
+            slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true,
           });
           applyEngineResult(engine);
           setMinutes(targetMinutes);
@@ -830,7 +880,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']),
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
-          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true });
+          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true });
           applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, engine };
         },
       },
@@ -858,7 +908,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing,
             domain: stateRef.current.domain, terrain: stateRef.current.terrain,
             startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60,
-            slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
+            slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true,
           });
           applyEngineResult(engine);
           logTool('ignite', 'Foyer place');
@@ -909,7 +959,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       { id: nextId(), type: 'FPT', count: 6, sector: 'Village', mission: 'Protection des habitations', lng: -0.438, lat: 44.584, radiusM: 700, capacity: 0.06, staged: true },
       { id: nextId(), type: 'HBE', count: 2, sector: 'Ouest', mission: 'Freiner la tête du feu', lng: -0.465, lat: 44.591, radiusM: 1500, capacity: 0.08, staged: true },
     ];
-    setStagedPlan({ ...plan, deployments, firebreaks: [{ name: 'Ligne nord', sector: 'Nord', lengthKm: 4.2 }], evacuations: [{ name: 'Landiras Est', sector: 'Est', population: 186 }] });
+    setStagedPlan({ ...plan, deployments, firebreaks: [{ name: 'Ligne nord', sector: 'Nord', lengthKm: 4.2, coordinates: [[-0.474, 44.608], [-0.444, 44.612], [-0.421, 44.605]], widthM: 14, staffed: true }], evacuations: [{ name: 'Landiras Est', sector: 'Est', population: 186 }] });
     logTool('stage_deploy_units', '23 moyens prépositionnés en fantôme', 700);
     await new Promise((resolve) => window.setTimeout(resolve, 800));
     await comparePlansWithWorker(['Bouclier village', 'Tenaille mobile', 'Sans renfort'], 6);
@@ -1179,7 +1229,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Front en flammes</span>
         <span><i className="lg-forecast" />Position projetée à +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels">{timelineMarks.map((mark) => <span key={mark}>{mark}</span>)}</div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
 
       {toolsOpen && <Modal onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>

@@ -200,6 +200,33 @@ const priseExtreme = 1 - extremeAvec / extremeSans;
 assert.ok(priseExtreme < priseModere,
   `Le réseau doit perdre prise quand l’intensité monte: ${(priseModere * 100).toFixed(0)}% -> ${(priseExtreme * 100).toFixed(0)}%`);
 
+/* --- Lignes persistantes et attaque indirecte ----------------------------- */
+const lineCase = { targetMinutes: 720, temperature: 30, humidity: 55, droughtIndex: 0.6,
+  windKph: 8, windBearingDegrees: 135, startHour: 8 };
+const withDozers = run({ ...lineCase, deployments: [{ id: 'dozer-persistent', type: 'DOZ', count: 4,
+  ...IGNITION, radiusM: 1500 }] });
+const withoutDozers = run(lineCase);
+assert.ok(withDozers.suppression.constructedLineM > 0 && withDozers.totalBurnedHa < withoutDozers.totalBurnedHa * 0.95,
+  `La ligne cumulative doit changer le resultat: ${withoutDozers.totalBurnedHa} -> ${withDozers.totalBurnedHa}`);
+const lineEngine = engine();
+const lineDeployment = [{ id: 'dozer-progress', type: 'DOZ', count: 1, ...IGNITION, radiusM: 1500 }];
+const lineAt3h = lineEngine.simulate({ ...lineCase, independent: false, reset: true, targetMinutes: 180,
+  ignitionLngLat: IGNITION, deployments: lineDeployment });
+const lineAt6h = lineEngine.simulate({ ...lineCase, independent: false, reset: false, targetMinutes: 360,
+  ignitionLngLat: IGNITION, deployments: lineDeployment });
+assert.ok(lineAt6h.suppression.constructedLineM > lineAt3h.suppression.constructedLineM,
+  'La production de ligne doit se cumuler entre deux sous-runs persistants.');
+const unattendedDelay = e.crossingDelayMinutes(14, 500, 2, 10, false);
+const heldDelay = e.crossingDelayMinutes(14, 500, 2, 10, true);
+assert.ok(heldDelay > unattendedDelay && Number.isFinite(heldDelay),
+  'Une ligne tenue doit etre plus efficace sans devenir une barriere absolue.');
+const explicitLine = { name: 'Appui test', sector: 'Tete', widthM: 14, staffed: true,
+  coordinates: [[IGNITION.lng - 0.01, IGNITION.lat - 0.006], [IGNITION.lng + 0.012, IGNITION.lat + 0.005]] };
+const lineOnly = run({ ...lineCase, targetMinutes: 180, firebreaks: [explicitLine] });
+const tactical = run({ ...lineCase, targetMinutes: 180, firebreaks: [{ ...explicitLine, tacticalBurn: true }] });
+assert.ok(lineOnly.suppression.constructedLineM > 0 && tactical.totalBurnedHa > lineOnly.totalBurnedHa,
+  'Le brulage tactique doit parcourir une zone tout en conservant sa ligne d appui.');
+
 /* Enjeux humains : cohérents, et jamais inventés hors du massif décrit. */
 const expose = landes(32, 0.9, 'landes');
 assert.ok(expose.network, 'Le réseau doit être nommé dans le résultat.');
@@ -236,5 +263,6 @@ console.log(JSON.stringify({
   debitPlein: pleine.suppression.deployedFlowLpm, debitDemi: demi.suppression.deployedFlowLpm,
   croissanceNocturneHa: nightRun.totalBurnedHa, croissanceDiurneHa: dayRun.totalBurnedHa,
   priseReseauModere: (priseModere*100).toFixed(0)+"%", priseReseauExtreme: (priseExtreme*100).toFixed(0)+"%",
+  ligneCumuleeM: withDozers.suppression.constructedLineM,
   pistesPart: (partA*100).toFixed(1)+"%", habitantsMenaces: expose.exposure.populationMenacee,
 }, null, 1));
