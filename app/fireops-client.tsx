@@ -22,7 +22,8 @@ type Plan = {
 type Activity = { id: string; tool: string; label: string; state: 'running' | 'done'; at: string };
 type Ignition = { lng: number; lat: number; radiusM: number };
 type Suppression = {
-  firelineIntensityKwM: number; activePerimeterM: number; requiredFlowLpm: number;
+  firelineIntensityKwM: number; meanIntensityKwM: number; activePerimeterM: number;
+  headM: number; flankM: number; rearM: number; requiredFlowLpm: number;
   deployedFlowLpm: number; containmentRatio: number; containmentMinutes: number | null;
   litresPerHour: number; attackViable: boolean; status: 'eteint' | 'maitrise' | 'contenu' | 'libre';
   attackMode: 'directe' | 'moyens-lourds' | 'indirect'; appliances: number; lineMetresPerHour: number;
@@ -44,13 +45,14 @@ type ModelContextLike = {
 };
 
 const initialWeather: Weather = {
-  windSpeed: 32, windDirection: 'Ouest-nord-ouest', windBearing: 135, gusts: 47,
-  temperature: 38, humidity: 18, droughtIndex: 0.91,
+  windSpeed: 22, windDirection: 'Nord-ouest', windBearing: 135, gusts: 38,
+  temperature: 39, humidity: 19, droughtIndex: 0.95,
 };
 const units = [
   { code: 'CCF', count: 18, label: 'Camions-citernes', autonomy: 82 },
   { code: 'FPT', count: 6, label: 'Fourgons pompe', autonomy: 91 },
   { code: 'HBE', count: 2, label: 'Hélicoptères', autonomy: 64 },
+  { code: 'CL4', count: 4, label: 'Canadair CL-415', autonomy: 58 },
   { code: 'DOZ', count: 3, label: 'Bulldozers', autonomy: 76 },
 ];
 const planDescriptions = [
@@ -60,9 +62,12 @@ const planDescriptions = [
 ];
 const defaultIgnition: Ignition = { lng: -0.4540519, lat: 44.5897472, radiusM: 0 };
 const landirasUnits = (): Deployment[] => [
-  { id: 'ccf12', type: 'CCF', count: 12, sector: 'Sud-est', mission: 'Défense du village', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09 },
-  { id: 'fpt04', type: 'FPT', count: 4, sector: 'Sud-ouest', mission: 'Protection des habitations', lng: -0.465, lat: 44.579, radiusM: 700, capacity: 0.06 },
-  { id: 'hbe02', type: 'HBE', count: 2, sector: 'Nord-est', mission: 'Attaque aérienne', lng: -0.442, lat: 44.598, radiusM: 1500, capacity: 0.08 },
+  { id: 'ccf22', type: 'CCF', count: 22, sector: 'Flanc nord-est', mission: 'Tenue du flanc gauche', lng: -0.4159, lat: 44.6088, radiusM: 2200, capacity: 0.09 },
+  { id: 'ccf18', type: 'CCF', count: 18, sector: 'Flanc sud-ouest', mission: 'Tenue du flanc droit', lng: -0.4922, lat: 44.5707, radiusM: 2200, capacity: 0.09 },
+  { id: 'fpt08', type: 'FPT', count: 8, sector: 'Sud-est', mission: 'Défense des habitations', lng: -0.4139, lat: 44.5611, radiusM: 1600, capacity: 0.06 },
+  { id: 'cl404', type: 'CL4', count: 4, sector: 'Tête', mission: 'Largages sur la tête de feu', lng: -0.4272, lat: 44.5707, radiusM: 2600, capacity: 0.08 },
+  { id: 'hbe02', type: 'HBE', count: 2, sector: 'Flanc nord-est', mission: 'Appui héliporté', lng: -0.4362, lat: 44.6025, radiusM: 1800, capacity: 0.08 },
+  { id: 'doz04', type: 'DOZ', count: 4, sector: 'Sud-est', mission: 'Ligne d’appui DFCI', lng: -0.4050, lat: 44.5548, radiusM: 2000, capacity: 0.05 },
 ];
 const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'Ouest', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
 const makeScenario = (name: string, preset: 'landiras' | 'blank'): Scenario => preset === 'landiras'
@@ -151,7 +156,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
-  const engineGeoRef = useRef<{ perimeter: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, forecast: emptyGeoJSON });
+  const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
@@ -181,6 +186,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [suppression, setSuppression] = useState<Suppression | null>(null);
   const [perimeterGeoJSON, setPerimeterGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [forecastGeoJSON, setForecastGeoJSON] = useState<unknown>(emptyGeoJSON);
+  const [activeGeoJSON, setActiveGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(20);
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
@@ -280,11 +286,16 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
           tileSize: 256, encoding: 'terrarium', maxzoom: 15,
         });
+        // Trois couches distinctes, du plus ancien au plus vif : la surface deja
+        // parcourue, la bande encore en flammes, puis la projection a +3 h.
         map.addSource('fire', { type: 'geojson', data: engineGeoRef.current.perimeter as Parameters<GeoJSONSource['setData']>[0] });
-        map.addLayer({ id: 'fire-fill', type: 'fill', source: 'fire', paint: { 'fill-color': '#FF3B30', 'fill-opacity': 0.18 } });
-        map.addLayer({ id: 'fire-line', type: 'line', source: 'fire', paint: { 'line-color': '#FF3B30', 'line-width': 2, 'line-opacity': 1 } });
+        map.addLayer({ id: 'fire-fill', type: 'fill', source: 'fire', paint: { 'fill-color': '#7A2E1E', 'fill-opacity': 0.42 } });
+        map.addLayer({ id: 'fire-line', type: 'line', source: 'fire', paint: { 'line-color': '#FF6B45', 'line-width': 1.6, 'line-opacity': 0.9 } });
+        map.addSource('fire-active', { type: 'geojson', data: engineGeoRef.current.active as Parameters<GeoJSONSource['setData']>[0] });
+        map.addLayer({ id: 'fire-active-fill', type: 'fill', source: 'fire-active', paint: { 'fill-color': '#FF7A18', 'fill-opacity': 0.55 } });
+        map.addLayer({ id: 'fire-active-line', type: 'line', source: 'fire-active', paint: { 'line-color': '#FFC53D', 'line-width': 2.2, 'line-opacity': 0.95, 'line-blur': 1.2 } });
         map.addSource('fire-forecast', { type: 'geojson', data: engineGeoRef.current.forecast as Parameters<GeoJSONSource['setData']>[0] });
-        map.addLayer({ id: 'fire-forecast-line', type: 'line', source: 'fire-forecast', paint: { 'line-color': '#FF3B30', 'line-width': 2, 'line-opacity': 0.75, 'line-dasharray': [3, 2] } });
+        map.addLayer({ id: 'fire-forecast-line', type: 'line', source: 'fire-forecast', paint: { 'line-color': '#FF3B30', 'line-width': 1.8, 'line-opacity': 0.8, 'line-dasharray': [3, 2] } });
         setMapReady(true);
       });
       let anchor: { lng: number; lat: number } | null = null;
@@ -344,12 +355,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const applyEngineResult = useCallback((engine: Record<string, unknown>) => {
     const perimeter = engine.perimeterGeoJSON || emptyGeoJSON;
     const forecast = engine.forecastPerimeterGeoJSON || emptyGeoJSON;
-    engineGeoRef.current = { perimeter, forecast };
+    const active = engine.activeFrontGeoJSON || emptyGeoJSON;
+    engineGeoRef.current = { perimeter, active, forecast };
     setBurnedHa(Number(engine.totalBurnedHa));
     setFrontRate(Number(engine.rateOfSpreadMetersPerMinute));
     setSuppression((engine.suppression as Suppression) ?? null);
     setPerimeterGeoJSON(perimeter);
     setForecastGeoJSON(forecast);
+    setActiveGeoJSON(active);
   }, []);
 
   useEffect(() => {
@@ -379,20 +392,23 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   useEffect(() => {
     const fireSource = mapRef.current?.getSource('fire') as GeoJSONSource | undefined;
     const forecastSource = mapRef.current?.getSource('fire-forecast') as GeoJSONSource | undefined;
+    const activeSource = mapRef.current?.getSource('fire-active') as GeoJSONSource | undefined;
     fireSource?.setData((ignition ? perimeterGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
     forecastSource?.setData((ignition ? forecastGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
-  }, [forecastGeoJSON, perimeterGeoJSON, ignition]);
+    activeSource?.setData((ignition ? activeGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
+  }, [forecastGeoJSON, perimeterGeoJSON, activeGeoJSON, ignition]);
 
   useEffect(() => {
     // Carte vierge : on vide la ref (lue par le handler 'load') sans toucher a l'etat,
     // les valeurs affichees etant derivees plus bas.
-    if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
+    if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, active: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
     runWorker({
-      type: 'simulate', ignitionLngLat: ignition, reset: true, targetMinutes: minutes, moisture: 0.08,
+      type: 'simulate', ignitionLngLat: ignition, reset: true, targetMinutes: minutes,
+      temperature: weather.temperature, humidity: weather.humidity, droughtIndex: weather.droughtIndex,
       windKph: weather.windSpeed, windDirection: weather.windDirection, windBearingDegrees: weather.windBearing,
       slopeDegrees: 7.4, deployments: committed, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, ignition]);
+  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, ignition]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
@@ -474,7 +490,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     ];
     const engineRuns = await Promise.all(placementSets.map((deployments) => {
       return runWorker({
-        type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: horizonHours * 60, moisture: 0.08,
+        type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: horizonHours * 60,
+        temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
+        droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
         windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
         slopeDegrees: 7.4, deployments,
       });
@@ -541,7 +559,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
+            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
             return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
@@ -895,7 +913,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <span>PRÉRÉGLAGES</span>
             <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { setWeather((current) => ({ ...current, ...preset.values })); logTool('set_weather', preset.label); }}>{preset.label}</button>)}</div>
           </div>
-          <p className="weather-note">Seuls le vent, sa direction et l’humidité entrent dans le calcul de propagation. Température et sécheresse sont contextuelles.</p>
+          <p className="weather-note">Vent, direction, température, humidité et sécheresse entrent tous dans le calcul : ils fixent la teneur en eau du combustible fin, donc la vitesse du front.</p>
         </div>}
         {shownSuppression && <div className={'suppression-card ' + shownSuppression.status}>
           <div className="supp-head">
@@ -910,7 +928,20 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <div><span>Débit déployé</span><b className="water">{shownSuppression.deployedFlowLpm.toLocaleString('fr-FR')} <small>L/min</small></b></div>
             <div><span>Débit nécessaire</span><b>{shownSuppression.requiredFlowLpm.toLocaleString('fr-FR')} <small>L/min</small></b></div>
             <div><span>Front actif</span><b>{shownSuppression.activePerimeterM.toLocaleString('fr-FR')} <small>m</small></b></div>
-            <div><span>Intensité de front</span><b className={shownSuppression.attackViable ? '' : 'danger'}>{shownSuppression.firelineIntensityKwM.toLocaleString('fr-FR')} <small>kW/m</small></b></div>
+            <div><span>Intensité en tête</span><b className={shownSuppression.attackViable ? '' : 'danger'}>{shownSuppression.firelineIntensityKwM.toLocaleString('fr-FR')} <small>kW/m</small></b></div>
+          </div>
+          <div className="front-split" aria-label="Répartition du front">
+            <div className="front-bars">
+              <i className="head" style={{ flexGrow: Math.max(1, shownSuppression.headM) }} title="Tête" />
+              <i className="flank" style={{ flexGrow: Math.max(1, shownSuppression.flankM) }} title="Flancs" />
+              <i className="rear" style={{ flexGrow: Math.max(1, shownSuppression.rearM) }} title="Arrière" />
+            </div>
+            <div className="front-legend">
+              <span><i className="head" />Tête {shownSuppression.headM.toLocaleString('fr-FR')} m</span>
+              <span><i className="flank" />Flancs {shownSuppression.flankM.toLocaleString('fr-FR')} m</span>
+              <span><i className="rear" />Arrière {shownSuppression.rearM.toLocaleString('fr-FR')} m</span>
+            </div>
+            <small>Moyenne sur le périmètre : {shownSuppression.meanIntensityKwM.toLocaleString('fr-FR')} kW/m — l’arrière recule contre le vent et demande peu d’eau.</small>
           </div>
           <p className="supp-verdict">
             {shownSuppression.status === 'eteint' ? 'Le front ne progresse plus.'
@@ -927,6 +958,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Revoir et appliquer</button></section>}
       {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} actions de l’agent<ChevronDown size={13} /></button>}
 
+      <aside className="map-legend glass-panel" aria-label="Légende de la carte">
+        <span><i className="lg-scar" />Surface parcourue</span>
+        <span><i className="lg-active" />Front en flammes</span>
+        <span><i className="lg-forecast" />Position projetée à +3 h</span>
+      </aside>
       <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels"><span>14:00</span><span>16:00</span><span>18:00</span><span>20:00</span><span>22:00</span></div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
 

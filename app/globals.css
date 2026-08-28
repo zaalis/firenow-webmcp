@@ -743,7 +743,8 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .unit-card:nth-child(1) .unit-code { color: var(--water); border-color: rgba(90,200,250,.42); background: rgba(90,200,250,.12); }
 .unit-card:nth-child(2) .unit-code { color: #7FB2FF; border-color: rgba(127,178,255,.42); background: rgba(127,178,255,.12); }
 .unit-card:nth-child(3) .unit-code { color: #7FE7C4; border-color: rgba(127,231,196,.42); background: rgba(127,231,196,.12); }
-.unit-card:nth-child(4) .unit-code { color: var(--earth); border-color: rgba(217,160,91,.42); background: rgba(217,160,91,.12); }
+.unit-card:nth-child(4) .unit-code { color: #9FD8FF; border-color: rgba(159,216,255,.42); background: rgba(159,216,255,.12); }
+.unit-card:nth-child(5) .unit-code { color: var(--earth); border-color: rgba(217,160,91,.42); background: rgba(217,160,91,.12); }
 
 /* ---------- Bloc hydraulique ---------- */
 .suppression-card {
@@ -777,6 +778,34 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .supp-grid div { display: flex; flex-direction: column; gap: 2px; }
 .supp-grid span { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
 .supp-grid b { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* Repartition du front : tete, flancs, arriere. La barre montre pourquoi le
+   besoin en eau est bien inferieur a l'intensite de tete. */
+.front-split { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.front-bars { display: flex; gap: 2px; height: 5px; }
+.front-bars i { border-radius: 2px; }
+.front-bars i.head { background: var(--fire-extreme); }
+.front-bars i.flank { background: var(--fire-active); }
+.front-bars i.rear { background: var(--fire-burnt); }
+.front-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.front-legend span { display: inline-flex; align-items: center; gap: 4px; color: var(--muted);
+  font: 650 8px/1 "SF Mono", Consolas, monospace; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.front-legend i { width: 6px; height: 6px; border-radius: 2px; }
+.front-legend i.head { background: var(--fire-extreme); }
+.front-legend i.flank { background: var(--fire-active); }
+.front-legend i.rear { background: var(--fire-burnt); }
+.front-split small { color: var(--faint); font-size: 9.5px; line-height: 1.45; }
+
+/* Legende carte : les pointilles etaient pris pour une probabilite. */
+.map-legend { position: absolute; z-index: 9; left: 18px; bottom: 107px;
+  display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border-radius: 10px; }
+.map-legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted);
+  font: 650 8.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+.map-legend i { width: 14px; height: 0; border-radius: 1px; flex: none; }
+.map-legend i.lg-scar { height: 8px; background: rgba(122,46,30,.75); border: 1px solid #FF6B45; border-radius: 2px; }
+.map-legend i.lg-active { height: 8px; background: rgba(255,122,24,.65); border: 1px solid #FFC53D; border-radius: 2px; }
+.map-legend i.lg-forecast { border-top: 2px dashed var(--fire-extreme); }
+@media (max-width: 900px) { .map-legend { display: none; } }
 .supp-grid b small { color: var(--muted); font-size: 8px; font-weight: 600; }
 .supp-grid b.water { color: var(--water); }
 .supp-grid b.danger { color: var(--fire-extreme); }

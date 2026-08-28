@@ -7,10 +7,10 @@ const LAT_DEGREES = BOX_METERS / 111320;
 const LNG_DEGREES = BOX_METERS / (111320 * Math.cos(IGNITION.lat * Math.PI / 180));
 const BOUNDS = { west: IGNITION.lng - LNG_DEGREES / 2, east: IGNITION.lng + LNG_DEGREES / 2, south: IGNITION.lat - LAT_DEGREES / 2, north: IGNITION.lat + LAT_DEGREES / 2 };
 const FUEL = {
-  0: { name: 'pin-dense', load: 0.071, depth: 0.60, savr: 1800, moistureExtinction: 0.25, multiplier: 2.1 },
-  1: { name: 'pin-clair', load: 0.050, depth: 0.52, savr: 1700, moistureExtinction: 0.25, multiplier: 1.65 },
-  2: { name: 'coupe-rase', load: 0.031, depth: 0.32, savr: 1500, moistureExtinction: 0.22, multiplier: 0.55 },
-  3: { name: 'agricole', load: 0.018, depth: 0.25, savr: 1900, moistureExtinction: 0.18, multiplier: 0.34 },
+  0: { name: 'pin-dense', load: 0.071, depth: 0.60, savr: 1800, moistureExtinction: 0.25, multiplier: 2.1, consumedKgM2: 1.8 },
+  1: { name: 'pin-clair', load: 0.050, depth: 0.52, savr: 1700, moistureExtinction: 0.25, multiplier: 1.65, consumedKgM2: 1.2 },
+  2: { name: 'coupe-rase', load: 0.031, depth: 0.32, savr: 1500, moistureExtinction: 0.22, multiplier: 0.55, consumedKgM2: 0.6 },
+  3: { name: 'agricole', load: 0.018, depth: 0.25, savr: 1900, moistureExtinction: 0.18, multiplier: 0.34, consumedKgM2: 0.3 },
   4: { name: 'urbain', nonBurnable: true },
   5: { name: 'eau', nonBurnable: true },
 };
@@ -106,6 +106,23 @@ function cellForLngLat(lng, lat) { return { x: clamp(Math.floor(((lng - BOUNDS.w
  * l'intensite locale du feu -- au-dela d'un seuil, aucune quantite d'eau ne
  * suffit en attaque directe, ce qui est le comportement operationnel reel.
  * ------------------------------------------------------------------------- */
+/* Humidite du combustible fin mort, derivee de la meteo (Simard / Fosberg).
+ * L'ancienne version recevait une constante 0,08 : les curseurs temperature,
+ * humidite et secheresse de l'interface n'avaient aucun effet sur le feu. */
+function deriveMoisture(input) {
+  const rh = Number(input.humidity), tc = Number(input.temperature);
+  if (!Number.isFinite(rh) || !Number.isFinite(tc)) {
+    return Number.isFinite(input.moisture) ? clamp(input.moisture, 0.02, 0.4) : 0.08;
+  }
+  const tf = tc * 9 / 5 + 32;
+  // Teneur en eau d'equilibre, en pourcent de la masse seche.
+  const emc = rh < 10 ? 0.03229 + 0.281073 * rh - 0.000578 * rh * tf
+    : rh < 50 ? 2.22749 + 0.160107 * rh - 0.014784 * tf
+    : 21.0606 + 0.005565 * rh * rh - 0.00035 * rh * tf - 0.483199 * rh;
+  // La secheresse cumulee asseche la litiere sous l'equilibre instantane.
+  const drought = clamp(Number(input.droughtIndex) || 0, 0, 1);
+  return clamp((emc / 100) * (1 - 0.35 * drought), 0.02, 0.4);
+}
 const HEAT_YIELD_KJ_KG = 18600;      // chaleur de combustion, valeur standard
 const LB_FT2_TO_KG_M2 = 4.882;
 const DIRECT_ATTACK_LIMIT_KW_M = 4000;  // au-dela : attaque directe inoperante
@@ -118,6 +135,7 @@ const APPLIANCES = {
   CCF: { label: 'Camion-citerne feux de forêts', tankL: 4000, flowLpm: 1000, refillMin: 20, offRoad: true,  heavy: false },
   FPT: { label: 'Fourgon pompe-tonne',           tankL: 3000, flowLpm: 2000, refillMin: 25, offRoad: false, heavy: false },
   HBE: { label: 'Hélicoptère bombardier d’eau',  tankL: 1500, flowLpm: 1500, refillMin: 11, offRoad: true,  heavy: true },
+  CL4: { label: 'Canadair CL-415', tankL: 6137, flowLpm: 6137, refillMin: 13, offRoad: true,  heavy: true },
   DOZ: { label: 'Bulldozer',                     tankL: 0,    flowLpm: 0,    refillMin: 0,  offRoad: true,  heavy: true, lineMetresPerHour: 320 },
 };
 function sustainedFlowLpm(code) {
@@ -129,14 +147,32 @@ function sustainedFlowLpm(code) {
 function firelineIntensity(fuelCode, rosMetresPerMinute) {
   const fuel = FUEL[fuelCode] || FUEL[0];
   if (fuel.nonBurnable) return 0;
-  const consumedKgM2 = fuel.load * LB_FT2_TO_KG_M2;
+  // w = combustible consomme dans le front (kg/m2), pas la seule litiere fine.
+  const consumedKgM2 = fuel.consumedKgM2 || fuel.load * LB_FT2_TO_KG_M2;
   return HEAT_YIELD_KJ_KG * consumedKgM2 * (rosMetresPerMinute / 60);
 }
 // Debit necessaire pour tenir un metre de front a cette intensite.
 function requiredFlowPerMetre(intensityKwM) { return intensityKwM / FLOW_PER_METRE_DIVISOR; }
 
-function buildSuppressionMask(deployments, input) {
+/* Cellules ou le feu touche encore du combustible : c'est la que les engins
+ * travaillent reellement. */
+function frontCells(sim) {
+  const cells = [];
+  for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
+    const index = indexOf(x, y);
+    if (!(sim.arrival[index] <= sim.currentMinutes)) continue;
+    for (const [dx, dy] of NEIGHBORS) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
+      const n = indexOf(nx, ny);
+      if (!(sim.arrival[n] <= sim.currentMinutes) && !FUEL[sim.fuel[n]].nonBurnable) { cells.push([x, y]); break; }
+    }
+  }
+  return cells;
+}
+function buildSuppressionMask(deployments, input, sim) {
   const mask = new Float32Array(GRID_SIZE * GRID_SIZE);
+  const front = sim ? frontCells(sim) : null;
   const totals = { deployedFlowLpm: 0, lineMetresPerHour: 0, appliances: 0, byType: {} };
   for (const unit of deployments || []) {
     if (!Number.isFinite(unit.lng) || !Number.isFinite(unit.lat)) continue;
@@ -149,7 +185,22 @@ function buildSuppressionMask(deployments, input) {
 
     const radius = unit.radiusM || 600;
     const radiusCells = Math.max(1, Math.ceil(radius / CELL_METERS));
-    const center = cellForLngLat(unit.lng, unit.lat);
+    // Un engin pose a l'allumage ne resterait pas la pendant que le feu court
+    // a vingt kilometres : il se reporte sur le front le plus proche de son
+    // secteur. Sa position choisie determine donc QUEL flanc il traite.
+    const posted = cellForLngLat(unit.lng, unit.lat);
+    let center = posted;
+    if (front && front.length) {
+      let best = Infinity, nearest = null;
+      for (const [fx, fy] of front) {
+        const distance = Math.hypot(fx - posted.x, fy - posted.y) * CELL_METERS;
+        if (distance < best) { best = distance; nearest = { x: fx, y: fy }; }
+      }
+      // Tant que le front reste dans son secteur, l'engin tient sa position :
+      // c'est le choix de l'operateur qui decide du flanc traite. Il ne se
+      // reporte que lorsque le feu lui a totalement echappe.
+      if (nearest && best > radius) center = nearest;
+    }
     // Le front couvert par cet engin, en metres : on repartit son debit dessus.
     const coveredMetres = Math.max(CELL_METERS, 2 * radius);
     const flowPerMetre = flow / coveredMetres;
@@ -208,7 +259,7 @@ function directionalFactor(dx, dy, bearing, lengthToBreadth) {
 }
 function propagate(sim, input, targetMinutes) {
   SIM_FUEL = sim.fuel;
-  const built = buildSuppressionMask(input.deployments, input); const suppression = built.mask; const bearing = spreadBearing(input);
+  const built = buildSuppressionMask(input.deployments, input, sim); const suppression = built.mask; const bearing = spreadBearing(input);
   // Alexander doit recevoir le meme vent que Rothermel (mi-flamme, facteur 0,25).
   // Avec le vent brut on obtenait L/B ~ 6 : une ellipse plus fine qu'une cellule de 195 m,
   // que la grille ne peut pas representer -- la surface s'effondrait.
@@ -227,72 +278,247 @@ function propagate(sim, input, targetMinutes) {
   }
   sim.currentMinutes = targetMinutes; let affectedCells = 0; let burningCells = 0;
   for (let i = 0; i < sim.state.length; i += 1) { if (sim.arrival[i] <= targetMinutes) { sim.state[i] = targetMinutes - sim.arrival[i] < 12 ? 1 : 2; affectedCells += 1; if (sim.state[i] === 1) burningCells += 1; } else sim.state[i] = 0; }
-  return { affectedCells, burningCells, lengthToBreadth, suppressionTotals: built.totals, suppression };
+  return { affectedCells, burningCells, lengthToBreadth, bearing, suppressionTotals: built.totals, suppression };
 }
-function perimeterGeoJSON(sim) {
-  const spanLng = (BOUNDS.east - BOUNDS.west) / GRID_SIZE;
-  const spanLat = (BOUNDS.north - BOUNDS.south) / GRID_SIZE;
-  const polygons = [];
-  for (let y = 0; y < GRID_SIZE; y += 1) {
-    let runStart = -1;
-    for (let x = 0; x <= GRID_SIZE; x += 1) {
-      const burnt = x < GRID_SIZE && sim.state[indexOf(x, y)] > 0;
-      if (burnt && runStart < 0) runStart = x;
-      if (!burnt && runStart >= 0) {
-        const west = BOUNDS.west + runStart * spanLng;
-        const east = BOUNDS.west + x * spanLng;
-        const north = BOUNDS.north - y * spanLat;
-        const south = BOUNDS.north - (y + 1) * spanLat;
-        polygons.push([[[west, north], [east, north], [east, south], [west, south], [west, north]]]);
-        runStart = -1;
-      }
+/* ---------------------------------------------------------------------------
+ * Geometrie : trace du contour reel.
+ *
+ * L'ancienne version emettait un rectangle par segment horizontal de chaque
+ * ligne de la grille -- un feu apparaissait donc comme un empilement de
+ * briques, et la couche de contour dessinait le bord de chacune. On suit
+ * desormais la frontiere entre cellules brulees et intactes pour produire des
+ * anneaux fermes (contour exterieur + trous), qu'on simplifie puis qu'on
+ * lisse : une seule forme continue, comme un perimetre de feu reel.
+ * ------------------------------------------------------------------------- */
+const SIDES = [
+  [0, -1, 0, 0, 1, 0], // voisin nord absent : arete (x,y) -> (x+1,y)
+  [1, 0, 1, 0, 1, 1],  // voisin est absent  : arete (x+1,y) -> (x+1,y+1)
+  [0, 1, 1, 1, 0, 1],  // voisin sud absent  : arete (x+1,y+1) -> (x,y+1)
+  [-1, 0, 0, 1, 0, 0], // voisin ouest absent: arete (x,y+1) -> (x,y)
+];
+function traceRings(GRID, filled) {
+  const key = (x, y) => x * (GRID + 1) + y;
+  const outgoing = new Map();
+  for (let y = 0; y < GRID; y += 1) for (let x = 0; x < GRID; x += 1) {
+    if (!filled(x, y)) continue;
+    for (const [nx, ny, ax, ay, bx, by] of SIDES) {
+      const px = x + nx, py = y + ny;
+      const neighbourFilled = px >= 0 && py >= 0 && px < GRID && py < GRID && filled(px, py);
+      if (neighbourFilled) continue;
+      const from = key(x + ax, y + ay), to = [x + bx, y + by];
+      const list = outgoing.get(from);
+      if (list) list.push(to); else outgoing.set(from, [to]);
     }
   }
-  return { type: 'Feature', properties: { source: 'FireOps cellular simulation' }, geometry: { type: 'MultiPolygon', coordinates: polygons } };
+  const rings = [];
+  for (const [start] of outgoing) {
+    while (true) {
+      const first = outgoing.get(start);
+      if (!first || !first.length) break;
+      const ring = [];
+      let point = [Math.floor(start / (GRID + 1)), start % (GRID + 1)];
+      while (true) {
+        const list = outgoing.get(key(point[0], point[1]));
+        if (!list || !list.length) break;
+        const next = list.pop();
+        ring.push(point);
+        point = next;
+        if (key(point[0], point[1]) === start) break;
+      }
+      if (ring.length >= 4) rings.push(ring);
+    }
+  }
+  return rings;
+}
+// Aire signee (shoelace). Positive = contour exterieur, negative = trou.
+function ringArea(ring) {
+  let sum = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    sum += a[0] * b[1] - b[0] * a[1];
+  }
+  return sum / 2;
+}
+// Ramer-Douglas-Peucker : supprime l'escalier de la grille avant lissage.
+function simplifyRing(ring, epsilon) {
+  if (ring.length < 4) return ring;
+  const keep = new Uint8Array(ring.length); keep[0] = 1; keep[ring.length - 1] = 1;
+  const stack = [[0, ring.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    if (last <= first + 1) continue;
+    const ax = ring[first][0], ay = ring[first][1];
+    const bx = ring[last][0], by = ring[last][1];
+    const dx = bx - ax, dy = by - ay;
+    const norm = Math.hypot(dx, dy) || 1;
+    let worst = -1, worstIndex = -1;
+    for (let i = first + 1; i < last; i += 1) {
+      const distance = Math.abs((ring[i][0] - ax) * dy - (ring[i][1] - ay) * dx) / norm;
+      if (distance > worst) { worst = distance; worstIndex = i; }
+    }
+    if (worst > epsilon && worstIndex > 0) {
+      keep[worstIndex] = 1;
+      stack.push([first, worstIndex], [worstIndex, last]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < ring.length; i += 1) if (keep[i]) out.push(ring[i]);
+  return out.length >= 3 ? out : ring;
+}
+// Chaikin : arrondit les angles restants, sans deformer la surface.
+function smoothRing(ring, iterations) {
+  let points = ring;
+  for (let pass = 0; pass < iterations; pass += 1) {
+    if (points.length < 3) break;
+    const out = [];
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i], b = points[(i + 1) % points.length];
+      out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+      out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    points = out;
+  }
+  return points;
+}
+function pointInRing(point, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if ((yi > point[1]) !== (yj > point[1]) && point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || 1e-12) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/* Convertit les anneaux traces en Polygon/MultiPolygon lisses en lng/lat. */
+function ringsToGeoJSON(filled) {
+  const rings = traceRings(GRID_SIZE, filled);
+  const outers = [], holes = [];
+  for (const ring of rings) {
+    const area = ringArea(ring);
+    // Les taches d'une seule cellule sont du bruit de grille : on les ecarte.
+    if (Math.abs(area) < 0.75) continue;
+    // Un petit foyer ne compte que quelques cellules : simplifier fort lui
+    // ferait perdre sa surface. On adoucit le traitement a mesure qu il est petit.
+    const small = ring.length < 32;
+    const shaped = smoothRing(simplifyRing(ring, small ? 0.3 : 0.75), small ? 1 : 2);
+    (area > 0 ? outers : holes).push({ grid: shaped, area: Math.abs(area) });
+  }
+  if (!outers.length) return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [] } };
+  const toLngLat = (point) => [
+    BOUNDS.west + (point[0] / GRID_SIZE) * (BOUNDS.east - BOUNDS.west),
+    BOUNDS.north - (point[1] / GRID_SIZE) * (BOUNDS.north - BOUNDS.south),
+  ];
+  const close = (ring) => { const out = ring.map(toLngLat); out.push(out[0]); return out; };
+  outers.sort((a, b) => b.area - a.area);
+  const polygons = outers.map((outer) => [close(outer.grid)]);
+  for (const hole of holes) {
+    const probe = hole.grid[0];
+    const index = outers.findIndex((outer) => pointInRing(probe, outer.grid));
+    if (index >= 0) polygons[index].push(close(hole.grid));
+  }
+  return polygons.length === 1
+    ? { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: polygons[0] } }
+    : { type: 'Feature', properties: {}, geometry: { type: 'MultiPolygon', coordinates: polygons } };
+}
+function perimeterGeoJSON(sim) {
+  const feature = ringsToGeoJSON((x, y) => sim.state[indexOf(x, y)] > 0);
+  feature.properties = { source: 'FireOps cellular simulation', layer: 'perimetre' };
+  return feature;
+}
+// Bande en flammes : cellules encore dans leur temps de residence.
+function activeFrontGeoJSON(sim) {
+  const feature = ringsToGeoJSON((x, y) => sim.state[indexOf(x, y)] === 1);
+  feature.properties = { source: 'FireOps cellular simulation', layer: 'front-actif' };
+  return feature;
 }
 function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition};}
-function activePerimeterMetres(sim) {
-  // Longueur du front encore actif : cellules en feu bordant du combustible intact.
-  let edges = 0;
+/* ---------------------------------------------------------------------------
+ * Analyse du front.
+ *
+ * L'ancienne version mesurait la longueur du perimetre puis lui appliquait
+ * l'intensite de TETE sur toute sa longueur. Elle exigeait donc de tenir
+ * l'arriere du feu -- qui recule contre le vent et s'eteint presque seul --
+ * au meme debit que la tete. D'ou des besoins en eau absurdes (des centaines
+ * de milliers de litres par minute) sans rapport avec la realite operationnelle.
+ *
+ * Ici chaque cellule de bordure est evaluee selon SA direction : l'ellipse
+ * d'Alexander donne la vitesse locale, Byram l'intensite locale, et le besoin
+ * en eau est la somme des besoins locaux.
+ * ------------------------------------------------------------------------- */
+function analyseFront(sim, input, lengthToBreadth, bearing) {
+  let totalM = 0, requiredLpm = 0, weightedIntensity = 0, peakIntensity = 0;
+  let headM = 0, flankM = 0, rearM = 0;
   for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
-    const i = indexOf(x, y);
-    if (!sim.state[i]) continue;
+    const index = indexOf(x, y);
+    if (!sim.state[index]) continue;
+    // Normale sortante : moyenne des directions vers le combustible intact.
+    let ox = 0, oy = 0, exposed = 0;
     for (const [dx, dy] of NEIGHBORS) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
-      if (!sim.state[indexOf(nx, ny)] && !FUEL[sim.fuel[indexOf(nx, ny)]].nonBurnable) { edges += 1; break; }
+      const neighbour = indexOf(nx, ny);
+      if (sim.state[neighbour] || FUEL[sim.fuel[neighbour]].nonBurnable) continue;
+      ox += dx; oy += dy; exposed += 1;
     }
+    if (!exposed) continue;
+    const headRos = rothermelRateOfSpread(input, sim.fuel[index]);
+    if (headRos <= 0) continue;
+    const localRos = headRos * directionalFactor(ox, oy, bearing, lengthToBreadth);
+    const intensity = firelineIntensity(sim.fuel[index], localRos);
+    const segment = CELL_METERS;
+    totalM += segment;
+    requiredLpm += requiredFlowPerMetre(intensity) * segment;
+    weightedIntensity += intensity * segment;
+    if (intensity > peakIntensity) peakIntensity = intensity;
+    // Secteur du front, mesure entre la normale sortante et le cap du vent.
+    const direction = (Math.atan2(ox, -oy) * 180 / Math.PI + 360) % 360;
+    const offset = Math.abs(((direction - bearing + 540) % 360) - 180);
+    if (offset < 60) headM += segment; else if (offset < 120) flankM += segment; else rearM += segment;
   }
-  return edges * CELL_METERS;
+  return {
+    totalM, requiredLpm, peakIntensity,
+    meanIntensity: totalM > 0 ? weightedIntensity / totalM : 0,
+    headM, flankM, rearM,
+  };
 }
 function resultFor(sim, input, spread) {
   const headRos = rothermelRateOfSpread(input, 0);
-  const intensity = firelineIntensity(0, headRos);
+  const front = analyseFront(sim, input, spread.lengthToBreadth, spread.bearing);
   const totals = spread.suppressionTotals || { deployedFlowLpm: 0, lineMetresPerHour: 0, appliances: 0, byType: {} };
-  const perimetreM = activePerimeterMetres(sim);
-  const requiredFlowLpm = perimetreM * requiredFlowPerMetre(intensity);
-  const attackViable = intensity <= DIRECT_ATTACK_LIMIT_KW_M;
+  const perimetreM = front.totalM;
+  const requiredFlowLpm = front.requiredLpm;
+  // Le mode d'attaque se decide sur l'intensite de TETE : c'est elle qui
+  // interdit ou non l'attaque directe, pas la moyenne du perimetre.
+  const headIntensity = front.peakIntensity;
+  const attackViable = headIntensity <= DIRECT_ATTACK_LIMIT_KW_M;
   const containmentRatio = requiredFlowLpm > 0 ? totals.deployedFlowLpm / requiredFlowLpm : (perimetreM === 0 ? 1 : 0);
-  // Temps de maitrise : si le debit excede le besoin, le surplus consomme le front
-  // restant ; sinon le feu n'est pas maitrisable avec les moyens en place.
+
+  // Maitrise : le debit excedentaire eteint du front, pendant que le feu en
+  // cree du nouveau. On ne maitrise que si le solde est positif.
+  const meanRequiredPerMetre = perimetreM > 0 ? requiredFlowLpm / perimetreM : 0;
   const surplus = totals.deployedFlowLpm - requiredFlowLpm;
-  // Front nul = plus rien a contenir : le feu ne progresse plus.
+  const knockdownMetresPerMin = meanRequiredPerMetre > 0 ? surplus / meanRequiredPerMetre : 0;
+  const lineMetresPerMin = totals.lineMetresPerHour / 60;
+  const growthMetresPerMin = Math.PI * headRos / Math.max(1, spread.lengthToBreadth);
+  const netMetresPerMin = knockdownMetresPerMin + (attackViable ? lineMetresPerMin : 0) - growthMetresPerMin;
   const containmentMinutes = perimetreM === 0 ? 0
-    : (attackViable && surplus > 0
-      ? Math.max(4, Math.round(perimetreM / (surplus / Math.max(1, requiredFlowPerMetre(intensity))) * 1.6))
-      : null);
+    : (attackViable && netMetresPerMin > 0 ? Math.max(5, Math.round(perimetreM / netMetresPerMin)) : null);
   const litresUsedPerHour = Math.round(Math.min(totals.deployedFlowLpm, Math.max(requiredFlowLpm, 0)) * 60);
+
   return {
     model: 'Rothermel 1972 cellular grid', shape: 'Alexander 1985 directional ellipse',
     gridSize: GRID_SIZE, gridMeters: Number(CELL_METERS.toFixed(2)),
     ignition: sim.ignition || IGNITION, bounds: BOUNDS, simulationMinutes: sim.currentMinutes,
     rateOfSpreadMetersPerMinute: Number(headRos.toFixed(2)),
+    fuelMoisture: Number(input.moisture.toFixed(3)),
     lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
     totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
     affectedCells: spread.affectedCells, burningCells: spread.burningCells,
     suppression: {
-      firelineIntensityKwM: Math.round(intensity),
+      firelineIntensityKwM: Math.round(headIntensity),
+      meanIntensityKwM: Math.round(front.meanIntensity),
       activePerimeterM: Math.round(perimetreM),
+      headM: Math.round(front.headM), flankM: Math.round(front.flankM), rearM: Math.round(front.rearM),
       requiredFlowLpm: Math.round(requiredFlowLpm),
       deployedFlowLpm: Math.round(totals.deployedFlowLpm),
       containmentRatio: Number(containmentRatio.toFixed(2)),
@@ -300,15 +526,18 @@ function resultFor(sim, input, spread) {
       litresPerHour: litresUsedPerHour,
       attackViable,
       status: perimetreM === 0 ? 'eteint' : containmentMinutes !== null ? 'maitrise' : containmentRatio >= 0.6 ? 'contenu' : 'libre',
-      attackMode: intensity > DIRECT_ATTACK_LIMIT_KW_M ? 'indirect'
-        : intensity > HAND_ATTACK_LIMIT_KW_M ? 'moyens-lourds' : 'directe',
+      attackMode: headIntensity > DIRECT_ATTACK_LIMIT_KW_M ? 'indirect'
+        : headIntensity > HAND_ATTACK_LIMIT_KW_M ? 'moyens-lourds' : 'directe',
       appliances: totals.appliances, byType: totals.byType,
       lineMetresPerHour: Math.round(totals.lineMetresPerHour),
     },
     perimeterGeoJSON: perimeterGeoJSON(sim),
+    activeFrontGeoJSON: activeFrontGeoJSON(sim),
   };
 }
 let scenario=null;
-function simulate(input){const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState(input.ignitionLngLat):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);const spread=propagate(sim,input,target);if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={simulate,rothermelRateOfSpread,IGNITION,GRID_SIZE,CELL_METERS};
+function simulate(input){input={...input,moisture:deriveMoisture(input)};const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState(input.ignitionLngLat):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
+// decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
+const STEP=15;let spread;{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);spread=propagate(sim,input,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
+self.__fireopsTest={simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,IGNITION,GRID_SIZE,CELL_METERS};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};
