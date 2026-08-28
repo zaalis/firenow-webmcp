@@ -811,3 +811,7 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .supp-grid b.danger { color: var(--fire-extreme); }
 .supp-verdict { margin: 0; color: var(--muted); font-size: 9.5px; line-height: 1.5; }
 .supp-verdict b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Bouton de reconstitution d un feu reel dans le selecteur. */
+.popover-head .preset-new { color: var(--fire-active); border-color: rgba(255,159,10,.38); background: rgba(255,159,10,.10); letter-spacing: .04em; }
+.popover-head .preset-new:hover { border-color: rgba(255,159,10,.62); background: rgba(255,159,10,.18); }

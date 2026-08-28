@@ -1,11 +1,25 @@
 /* FireOps local wildfire engine: Rothermel (1972), Alexander (1985), 128 x 128 cellular grid. */
 const GRID_SIZE = 128;
-const BOX_METERS = 25000;
-const CELL_METERS = BOX_METERS / GRID_SIZE;
-const IGNITION = { lng: -0.4540519, lat: 44.5897472 };
-const LAT_DEGREES = BOX_METERS / 111320;
-const LNG_DEGREES = BOX_METERS / (111320 * Math.cos(IGNITION.lat * Math.PI / 180));
-const BOUNDS = { west: IGNITION.lng - LNG_DEGREES / 2, east: IGNITION.lng + LNG_DEGREES / 2, south: IGNITION.lat - LAT_DEGREES / 2, north: IGNITION.lat + LAT_DEGREES / 2 };
+/* Le domaine etait fige sur Landiras en 25 km. Un feu comme Saumos 2026
+ * (47 000 ha) deborde largement cette boite : centre et emprise sont donc
+ * desormais choisis par le scenario, la grille restant a 128 x 128. */
+const DEFAULT_DOMAIN = { lng: -0.4540519, lat: 44.5897472, boxMetres: 25000 };
+let BOX_METERS, CELL_METERS, IGNITION, BOUNDS;
+function configureDomain(domain) {
+  const centre = {
+    lng: Number.isFinite(domain && domain.lng) ? domain.lng : DEFAULT_DOMAIN.lng,
+    lat: Number.isFinite(domain && domain.lat) ? domain.lat : DEFAULT_DOMAIN.lat,
+  };
+  const box = Math.max(2000, Math.min(120000, Number(domain && domain.boxMetres) || DEFAULT_DOMAIN.boxMetres));
+  BOX_METERS = box;
+  CELL_METERS = box / GRID_SIZE;
+  IGNITION = centre;
+  const latDegrees = box / 111320;
+  const lngDegrees = box / (111320 * Math.cos(centre.lat * Math.PI / 180));
+  BOUNDS = { west: centre.lng - lngDegrees / 2, east: centre.lng + lngDegrees / 2, south: centre.lat - latDegrees / 2, north: centre.lat + latDegrees / 2 };
+  return `${centre.lng},${centre.lat},${box}`;
+}
+let DOMAIN_KEY = configureDomain(DEFAULT_DOMAIN);
 const FUEL = {
   0: { name: 'pin-dense', load: 0.071, depth: 0.60, savr: 1800, moistureExtinction: 0.25, multiplier: 2.1, consumedKgM2: 1.8 },
   1: { name: 'pin-clair', load: 0.050, depth: 0.52, savr: 1700, moistureExtinction: 0.25, multiplier: 1.65, consumedKgM2: 1.2 },
@@ -48,7 +62,7 @@ function rothermelRateOfSpread(input, fuelCode = 0) {
   return Math.max(0, feetPerMinute * 0.3048 * fuel.multiplier);
 }
 
-function generateFuelMask() {
+function generateFuelMask(terrain) {
   const mask = new Uint8Array(GRID_SIZE * GRID_SIZE);
   for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
     const nx = x / (GRID_SIZE - 1); const ny = y / (GRID_SIZE - 1);
@@ -59,12 +73,30 @@ function generateFuelMask() {
     if (Math.abs(nx - (0.13 + 0.035 * Math.sin(ny * 15))) < 0.008 && y > 16) code = 5;
     mask[indexOf(x, y)] = code;
   }
+  if (terrain) applyTerrain(mask, terrain);
   return mask;
+}
+/* Geographie reelle du scenario : trait de cote, plans d'eau, zones baties.
+ * Sans elle un feu cotier se propage sur la mer, ce qui rend toute
+ * comparaison avec un evenement reel sans objet. */
+function applyTerrain(mask, terrain) {
+  const metresBetween = (lng, lat, point) => Math.hypot(
+    (lng - point.lng) * 111320 * Math.cos(lat * Math.PI / 180),
+    (lat - point.lat) * 111320,
+  );
+  for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
+    const [lng, lat] = lngLatForCell(x, y);
+    let code = mask[indexOf(x, y)];
+    if (Number.isFinite(terrain.oceanWestOfLng) && lng < terrain.oceanWestOfLng) code = 5;
+    for (const body of terrain.water || []) if (metresBetween(lng, lat, body) < body.radiusM) code = 5;
+    for (const town of terrain.urban || []) if (metresBetween(lng, lat, town) < town.radiusM) code = 4;
+    mask[indexOf(x, y)] = code;
+  }
 }
 function createState(origin) {
   const state = new Uint8Array(GRID_SIZE * GRID_SIZE);
   const arrival = new Float32Array(GRID_SIZE * GRID_SIZE); arrival.fill(Infinity);
-  const fuel = generateFuelMask();
+  const fuel = generateFuelMask(origin && origin.terrain);
   const point = origin && Number.isFinite(origin.lng) && Number.isFinite(origin.lat)
     ? cellForLngLat(origin.lng, origin.lat)
     : { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2) };
@@ -242,6 +274,54 @@ class MinHeap {
   pop() { if (!this.items.length) return null; const root = this.items[0]; const tail = this.items.pop(); if (this.items.length && tail) { let i = 0; while (true) { let c = i * 2 + 1; if (c >= this.items.length) break; if (c + 1 < this.items.length && this.items[c + 1].time < this.items[c].time) c += 1; if (this.items[c].time >= tail.time) break; this.items[i] = this.items[c]; i = c; } this.items[i] = tail; } return root; }
 }
 const NEIGHBORS = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
+/* ---------------------------------------------------------------------------
+ * Sautes de feu (projection de braises).
+ *
+ * Un front de forte intensite projette des brandons en avant de lui : c'est ce
+ * qui permet a un feu de franchir une piste, une route ou un pare-feu. Sans ce
+ * mecanisme, un modele de proche-en-proche ne peut pas reproduire les grandes
+ * journees de propagation -- ni un panache orageux (pyrocumulonimbus), qui
+ * projette bien plus loin et plus souvent.
+ *
+ * Longueur de flamme : Byram. Portee : croissante avec la flamme et le vent.
+ * Le tirage est deterministe (haché sur l'indice de cellule) pour qu'une meme
+ * simulation redonne toujours le meme resultat.
+ * ------------------------------------------------------------------------- */
+const SPOT_MIN_INTENSITY_KW_M = 3000; // en deca, pas de brandon porteur
+function spotNoise(index, salt) {
+  let h = (Math.imul(index, 2654435761) + Math.imul(salt, 40503)) >>> 0;
+  h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0;
+  return h / 4294967296;
+}
+function spotFrom(sim, input, index, time, bearing, plume, heap) {
+  const fuelCode = sim.fuel[index];
+  const ros = rothermelRateOfSpread(input, fuelCode);
+  const intensity = firelineIntensity(fuelCode, ros);
+  if (intensity < SPOT_MIN_INTENSITY_KW_M) return 0;
+  // Un panache orageux multiplie la frequence et la portee des projections.
+  const rate = clamp((intensity - SPOT_MIN_INTENSITY_KW_M) / 20000, 0, 1) * 0.10 * plume;
+  if (spotNoise(index, 1) >= rate) return 0;
+  const flameLength = 0.0775 * Math.pow(intensity, 0.46);
+  const windKph = Math.max(1, input.windKph);
+  const reach = 60 * flameLength * Math.pow(windKph / 10, 1.2) * plume;
+  const distance = reach * (0.35 + 0.65 * spotNoise(index, 2));
+  // Les brandons ne partent pas tous exactement dans l'axe du vent.
+  const heading = bearing + (spotNoise(index, 3) - 0.5) * 50;
+  const x = index % GRID_SIZE, y = Math.floor(index / GRID_SIZE);
+  const tx = Math.round(x + Math.sin(heading * Math.PI / 180) * distance / CELL_METERS);
+  const ty = Math.round(y - Math.cos(heading * Math.PI / 180) * distance / CELL_METERS);
+  if (tx < 0 || ty < 0 || tx >= GRID_SIZE || ty >= GRID_SIZE) return 0;
+  const target = indexOf(tx, ty);
+  if (FUEL[sim.fuel[target]].nonBurnable) return 0;
+  // Une braise n'allume que si le combustible est assez sec pour la recevoir.
+  if (spotNoise(index, 4) > clamp(1 - input.moisture / 0.18, 0, 1)) return 0;
+  const travel = distance / (windKph * 1000 / 60) + 2; // vol + delai d'allumage
+  const arrival = time + travel;
+  if (arrival >= sim.arrival[target]) return 0;
+  sim.arrival[target] = arrival;
+  heap.push({ index: target, time: arrival });
+  return 1;
+}
 function spreadBearing(input) {
   if (Number.isFinite(input.windBearingDegrees)) return input.windBearingDegrees;
   const value = String(input.windDirection || '').toLowerCase();
@@ -264,9 +344,14 @@ function propagate(sim, input, targetMinutes) {
   // Avec le vent brut on obtenait L/B ~ 6 : une ellipse plus fine qu'une cellule de 195 m,
   // que la grille ne peut pas representer -- la surface s'effondrait.
   const lengthToBreadth = clamp(1 + 0.25 * input.windKph * 0.621371 * MIDFLAME_FACTOR, 1, 8); const heap = new MinHeap();
+  // Panache orageux : phenomene observe a Saumos le 24 juillet 2026.
+  const plume = input.plumeDriven ? 2.4 : 1;
+  const spotting = input.spotting !== false;
+  let spotFires = 0;
   for (let i = 0; i < sim.arrival.length; i += 1) if (sim.arrival[i] <= sim.currentMinutes) heap.push({ index: i, time: sim.arrival[i] });
   while (heap.items.length) {
     const current = heap.pop(); if (!current || current.time > targetMinutes) break; if (Math.abs(current.time - sim.arrival[current.index]) > 0.001) continue;
+    if (spotting) spotFires += spotFrom(sim, input, current.index, current.time, bearing, plume, heap);
     const x = current.index % GRID_SIZE; const y = Math.floor(current.index / GRID_SIZE);
     for (const [dx, dy] of NEIGHBORS) {
       const nx = x + dx; const ny = y + dy; if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
@@ -278,7 +363,7 @@ function propagate(sim, input, targetMinutes) {
   }
   sim.currentMinutes = targetMinutes; let affectedCells = 0; let burningCells = 0;
   for (let i = 0; i < sim.state.length; i += 1) { if (sim.arrival[i] <= targetMinutes) { sim.state[i] = targetMinutes - sim.arrival[i] < 12 ? 1 : 2; affectedCells += 1; if (sim.state[i] === 1) burningCells += 1; } else sim.state[i] = 0; }
-  return { affectedCells, burningCells, lengthToBreadth, bearing, suppressionTotals: built.totals, suppression };
+  return { affectedCells, burningCells, lengthToBreadth, bearing, spotFires, suppressionTotals: built.totals, suppression };
 }
 /* ---------------------------------------------------------------------------
  * Geometrie : trace du contour reel.
@@ -507,13 +592,13 @@ function resultFor(sim, input, spread) {
 
   return {
     model: 'Rothermel 1972 cellular grid', shape: 'Alexander 1985 directional ellipse',
-    gridSize: GRID_SIZE, gridMeters: Number(CELL_METERS.toFixed(2)),
+    gridSize: GRID_SIZE, gridMeters: Number(CELL_METERS.toFixed(2)), boxMetres: BOX_METERS,
     ignition: sim.ignition || IGNITION, bounds: BOUNDS, simulationMinutes: sim.currentMinutes,
     rateOfSpreadMetersPerMinute: Number(headRos.toFixed(2)),
     fuelMoisture: Number(input.moisture.toFixed(3)),
     lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
     totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
-    affectedCells: spread.affectedCells, burningCells: spread.burningCells,
+    affectedCells: spread.affectedCells, burningCells: spread.burningCells, spotFires: spread.spotFires || 0,
     suppression: {
       firelineIntensityKwM: Math.round(headIntensity),
       meanIntensityKwM: Math.round(front.meanIntensity),
@@ -536,8 +621,11 @@ function resultFor(sim, input, spread) {
   };
 }
 let scenario=null;
-function simulate(input){input={...input,moisture:deriveMoisture(input)};const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState(input.ignitionLngLat):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
+function simulate(input){input={...input,moisture:deriveMoisture(input)};
+// Changer de domaine invalide la grille persistante : on repart du foyer.
+const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOMAIN_KEY=key;if(domainChanged)scenario=null;
+const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread;{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);spread=propagate(sim,input,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,IGNITION,GRID_SIZE,CELL_METERS};
+self.__fireopsTest={simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};

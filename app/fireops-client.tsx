@@ -8,7 +8,9 @@ import {
 } from 'lucide-react';
 
 type ViewMode = '2D' | '3D' | 'globe';
-type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number };
+type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
+type Domain = { lng: number; lat: number; boxMetres: number };
+type Terrain = { oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
 type Deployment = { id: string; type: string; count: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
 type Plan = {
@@ -29,10 +31,12 @@ type Suppression = {
   attackMode: 'directe' | 'moyens-lourds' | 'indirect'; appliances: number; lineMetresPerHour: number;
 };
 type Scenario = {
-  id: string; name: string; createdAt: number; preset: 'landiras' | 'blank';
+  id: string; name: string; createdAt: number; preset: 'landiras' | 'saumos' | 'blank';
   ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[];
-  burnedHa: number | null;
+  domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
+// L en-tete affichait la date de Landiras quel que soit le scenario ouvert.
+type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number };
 type ToolClient = { requestUserInteraction?: <T>(handler: () => Promise<T>) => Promise<T> };
 type ToolDefinition = {
   name: string; title: string; description: string; inputSchema: Record<string, unknown>;
@@ -69,10 +73,49 @@ const landirasUnits = (): Deployment[] => [
   { id: 'hbe02', type: 'HBE', count: 2, sector: 'Flanc nord-est', mission: 'Appui héliporté', lng: -0.4362, lat: 44.6025, radiusM: 1800, capacity: 0.08 },
   { id: 'doz04', type: 'DOZ', count: 4, sector: 'Sud-est', mission: 'Ligne d’appui DFCI', lng: -0.4050, lat: 44.5548, radiusM: 2000, capacity: 0.05 },
 ];
+const LANDIRAS_DOMAIN: Domain = { lng: -0.4540519, lat: 44.5897472, boxMetres: 25000 };
+// Saumos (44,921 N / -0,987 O). Le feu part vers le sud-ouest puis l'ouest :
+// il faut une emprise de 50 km pour contenir les 47 000 ha parcourus.
+const SAUMOS_IGNITION: Ignition = { lng: -0.987, lat: 44.921, radiusM: 0 };
+const SAUMOS_DOMAIN: Domain = { lng: -1.10, lat: 44.80, boxMetres: 50000 };
+// Sans le trait de cote ni les plans d'eau, la simulation propage le feu sur
+// l'Atlantique et toute comparaison avec l'evenement reel perd son sens.
+const SAUMOS_TERRAIN: Terrain = {
+  oceanWestOfLng: -1.205,
+  water: [
+    { lng: -1.135, lat: 44.990, radiusM: 3200 },  // étang de Lacanau
+    { lng: -1.130, lat: 44.680, radiusM: 7000 },  // bassin d’Arcachon
+  ],
+  urban: [
+    { lng: -1.078, lat: 44.980, radiusM: 1500 },  // Lacanau
+    { lng: -1.091, lat: 44.874, radiusM: 1300 },  // Le Porge
+    { lng: -0.987, lat: 44.921, radiusM: 700 },   // Saumos
+  ],
+};
+const saumosWeather = (): Weather => ({
+  windSpeed: 26, windDirection: 'Nord-est', windBearing: 225, gusts: 42,
+  temperature: 38, humidity: 22, droughtIndex: 0.96,
+});
+// 3 300 pompiers, 18 moyens aeriens, 121 km de pare-feux, 105 vehicules forestiers.
+const saumosUnits = (): Deployment[] => [
+  { id: 'sccf1', type: 'CCF', count: 45, sector: 'Flanc sud', mission: 'Tenue du flanc sud', lng: -0.9870, lat: 44.8671, radiusM: 5000, capacity: 0.09 },
+  { id: 'sccf2', type: 'CCF', count: 45, sector: 'Flanc sud-est', mission: 'Tenue du flanc est', lng: -0.9330, lat: 44.8828, radiusM: 5000, capacity: 0.09 },
+  { id: 'sccf3', type: 'CCF', count: 40, sector: 'Le Porge', mission: 'Défense des habitations', lng: -1.0678, lat: 44.8639, radiusM: 5000, capacity: 0.09 },
+  { id: 'sfpt1', type: 'FPT', count: 30, sector: 'Littoral', mission: 'Protection du littoral', lng: -1.1298, lat: 44.8841, radiusM: 4500, capacity: 0.06 },
+  { id: 'scl41', type: 'CL4', count: 9, sector: 'Tête', mission: 'Largages sur la tête', lng: -1.0872, lat: 44.9085, radiusM: 6000, capacity: 0.08 },
+  { id: 'shbe1', type: 'HBE', count: 9, sector: 'Flanc sud', mission: 'Appui héliporté', lng: -1.0170, lat: 44.8618, radiusM: 5000, capacity: 0.08 },
+  { id: 'sdoz1', type: 'DOZ', count: 30, sector: 'Ouest', mission: 'Pare-feu (121 km réalisés)', lng: -1.1521, lat: 44.9210, radiusM: 5500, capacity: 0.05 },
+];
 const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'Ouest', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
-const makeScenario = (name: string, preset: 'landiras' | 'blank'): Scenario => preset === 'landiras'
-  ? { id: nextId(), name, createdAt: Date.now(), preset, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), burnedHa: null }
-  : { id: nextId(), name, createdAt: Date.now(), preset, ignition: null, minutes: 0, weather: blankWeather(), committed: [], burnedHa: null };
+const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JUIL. 2022', startHour: 14, startMinute: 0 };
+const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JUIL. 2026', startHour: 13, startMinute: 30 };
+const BLANK_INCIDENT: Incident = { ref: 'SIMULATION LIBRE', dateLabel: 'T0', startHour: 12, startMinute: 0 };
+const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'blank'): Scenario => {
+  const base = { id: nextId(), name, createdAt: Date.now(), preset, burnedHa: null };
+  if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), domain: LANDIRAS_DOMAIN, incident: LANDIRAS_INCIDENT };
+  if (preset === 'saumos') return { ...base, ignition: { ...SAUMOS_IGNITION }, minutes: 450, weather: saumosWeather(), committed: saumosUnits(), domain: SAUMOS_DOMAIN, terrain: SAUMOS_TERRAIN, incident: SAUMOS_INCIDENT };
+  return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], domain: LANDIRAS_DOMAIN, incident: BLANK_INCIDENT };
+};
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
 const toolNames = [
   'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
@@ -97,6 +140,7 @@ const WEATHER_PRESETS: { label: string; values: Partial<Weather> }[] = [
   { label: 'Chaud et sec', values: { windSpeed: 22, gusts: 34, humidity: 22, temperature: 36, droughtIndex: 0.82 } },
   { label: 'Bascule NO 40 km/h', values: { windSpeed: 40, gusts: 62, windBearing: 135, windDirection: 'Nord-ouest', humidity: 18, temperature: 38, droughtIndex: 0.91 } },
   { label: 'Rafales 70 km/h', values: { windSpeed: 55, gusts: 70, humidity: 15, temperature: 39, droughtIndex: 0.95 } },
+  { label: 'Panache orageux', values: { windSpeed: 38, gusts: 60, humidity: 18, temperature: 38, droughtIndex: 0.97, plumeDriven: true } },
 ];
 const nextId = () => Math.random().toString(36).slice(2, 9);
 const atNow = () => new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(new Date());
@@ -191,14 +235,17 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [speed, setSpeed] = useState(20);
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
   const [committed, setCommitted] = useState<Deployment[]>(landirasUnits);
+  const [domain, setDomain] = useState<Domain>(LANDIRAS_DOMAIN);
+  const [terrain, setTerrain] = useState<Terrain | undefined>(undefined);
+  const [incident, setIncident] = useState<Incident>(LANDIRAS_INCIDENT);
   const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode });
+  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain });
 
   useEffect(() => {
-    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode };
-  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode]);
+    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain };
+  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain]);
 
   const patchWeather = useCallback((patch: Partial<Weather>) => {
     setWeather((current) => ({ ...current, ...patch }));
@@ -405,37 +452,46 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     runWorker({
       type: 'simulate', ignitionLngLat: ignition, reset: true, targetMinutes: minutes,
       temperature: weather.temperature, humidity: weather.humidity, droughtIndex: weather.droughtIndex,
+      plumeDriven: weather.plumeDriven === true, domain, terrain,
       windKph: weather.windSpeed, windDirection: weather.windDirection, windBearingDegrees: weather.windBearing,
       slopeDegrees: 7.4, deployments: committed, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, ignition]);
+  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
     setRunning(false);
     setScenarios((list) => list.map((item) => item.id === activeScenario
-      ? { ...item, ignition, minutes, weather, committed, burnedHa }
+      ? { ...item, ignition, minutes, weather, committed, domain, terrain, burnedHa }
       : item));
     const target = scenarios.find((item) => item.id === id);
     if (!target) return;
     setActiveScenario(id);
     setIgnition(target.ignition); ignitionRef.current = target.ignition;
     setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed);
+    setDomain(target.domain); setTerrain(target.terrain); setIncident(target.incident);
+    mapRef.current?.jumpTo({ center: [target.domain.lng, target.domain.lat], zoom: target.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(false);
-  }, [activeScenario, burnedHa, committed, ignition, minutes, scenarios, weather]);
+  }, [activeScenario, burnedHa, committed, domain, terrain, ignition, minutes, scenarios, weather]);
 
-  const createScenario = useCallback(() => {
+  const createScenario = useCallback((preset: 'blank' | 'saumos' = 'blank') => {
     setRunning(false);
-    const created = makeScenario('Simulation ' + String(scenarios.length + 1), 'blank');
+    const created = preset === 'saumos'
+      ? makeScenario('Saumos · 22 juil. 2026', 'saumos')
+      : makeScenario('Simulation ' + String(scenarios.length + 1), 'blank');
     setScenarios((list) => list.map((item) => item.id === activeScenario
-      ? { ...item, ignition, minutes, weather, committed, burnedHa }
+      ? { ...item, ignition, minutes, weather, committed, domain, terrain, burnedHa }
       : item).concat(created));
     setActiveScenario(created.id);
-    setIgnition(null); ignitionRef.current = null;
-    setMinutes(0); setWeather(created.weather); setCommitted([]);
-    setStagedPlan(null); setUndoStack([]); setPickingIgnition(true);
-    notify('Nouvelle simulation. Placez le point de départ du feu.');
-  }, [activeScenario, burnedHa, committed, ignition, minutes, notify, scenarios.length, weather]);
+    setIgnition(created.ignition); ignitionRef.current = created.ignition;
+    setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed);
+    setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
+    mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
+    setStagedPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
+    notify(preset === 'saumos'
+      ? 'Feu de Saumos, 22 juillet 2026 — 47 004 ha parcourus, 220 000 évacués.'
+      : 'Nouvelle simulation. Placez le point de départ du feu.');
+  }, [activeScenario, burnedHa, committed, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
 
   // La liste affichee derive de l'etat vivant pour la simulation ouverte.
   const scenarioList = scenarios.map((item) => item.id === activeScenario
@@ -493,6 +549,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: horizonHours * 60,
         temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
         droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
+        plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain,
         windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
         slopeDegrees: 7.4, deployments,
       });
@@ -559,7 +616,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
+            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
             return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
@@ -787,6 +844,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
   const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
   const timeLabel = 'H+' + String(Math.floor(minutes / 60)).padStart(2,'0') + ':' + String(minutes % 60).padStart(2,'0');
+  // Horloge de l incident : heure de depart reelle du scenario + temps simule.
+  const clockAt = (offset: number) => {
+    const total = incident.startHour * 60 + incident.startMinute + offset;
+    return String(Math.floor(total / 60) % 24).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+  };
+  const incidentClock = incident.dateLabel + ' · ' + clockAt(minutes);
+  const timelineMarks = [0, 120, 240, 360, 480].map((offset) => clockAt(offset));
 
   return (
     <main className="ops-shell">
@@ -809,13 +873,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <div className="brand-block"><span className="brand-mark"><Flame size={18} /></span><div><strong>FireOps</strong><span>Centre de commandement</span></div></div>
         <div className="scenario-picker">
           <button className={'scenario-title' + (scenarioOpen ? ' open' : '')} type="button" onClick={() => setScenarioOpen((value) => !value)} aria-expanded={scenarioOpen}>
-            <span>{activeIsBlank ? 'SIMULATION LIBRE' : 'INCIDENT 33-2022-0712'}</span>
+            <span>{activeIsBlank ? 'SIMULATION LIBRE' : incident.ref}</span>
             <strong>{activeName}<ChevronDown size={13} /></strong>
           </button>
           {scenarioOpen && <>
             <div className="popover-shield" role="presentation" onMouseDown={() => setScenarioOpen(false)} />
             <div className="popover scenario-pop glass-panel">
-              <div className="popover-head"><span>SIMULATIONS</span><button type="button" onClick={() => { createScenario(); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
+              <div className="popover-head"><span>SIMULATIONS</span><button type="button" className="preset-new" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Reconstitution du feu de Saumos, 22 juillet 2026">Saumos 2026</button><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
               <div className="scenario-list">{scenarioList.map((item) => {
                 const isActive = item.id === activeScenario;
                 const state = !item.ignition ? 'vierge' : (isActive && running) ? 'active' : 'pause';
@@ -884,7 +948,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       </aside>
 
       <aside className="situation-panel glass-panel">
-        <div className="panel-heading"><div><span>12 JUIL. 2022 · {String(14 + Math.floor(minutes / 60)).padStart(2,'0')}:{String(minutes % 60).padStart(2,'0')}</span><strong>Situation opérationnelle</strong></div><span className="beta-chip">BÊTA</span></div>
+        <div className="panel-heading"><div><span>{incidentClock}</span><strong>Situation opérationnelle</strong></div><span className="beta-chip">BÊTA</span></div>
         <div className="metric-grid"><div><span>Surface simulée</span><strong>{shownBurnedHa === null ? '—' : shownBurnedHa.toLocaleString('fr-FR')} <small>ha</small></strong><em>calcul worker</em></div><div><span>Vitesse de tête</span><strong>{shownFrontRate === null ? '—' : shownFrontRate.toLocaleString('fr-FR')} <small>m/min</small></strong><em>calcul Rothermel</em></div><div><span>Temps simulé</span><strong>{minutes} <small>min</small></strong><em>depuis l’allumage</em></div><div><span>Calibration</span><strong>—</strong><em>non réalisée</em></div></div>
         <button className={'weather-card' + (weatherOpen ? ' open' : '')} type="button" onClick={() => setWeatherOpen((value) => !value)} aria-expanded={weatherOpen}>
           <span className="weather-icon"><Wind size={18} /></span>
@@ -964,7 +1028,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-forecast" />Position projetée à +3 h</span>
       </aside>
       <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
-      <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels"><span>14:00</span><span>16:00</span><span>18:00</span><span>20:00</span><span>22:00</span></div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
+      <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels">{timelineMarks.map((mark) => <span key={mark}>{mark}</span>)}</div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
 
       {toolsOpen && <Modal onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
   <span className="connect-dot" />
