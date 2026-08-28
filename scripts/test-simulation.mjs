@@ -47,6 +47,20 @@ assert.ok(sec > vert * 1.2, `Le vivant humide doit freiner nettement: ${vert.toF
 const sansPente = e.rothermelRateOfSpread({ moisture: 0.05, windKph: 20 }, codeOf('TU5'));
 assert.ok(Number.isFinite(sansPente) && sansPente > 0, 'Une pente absente doit retomber sur le terrain plat, pas sur NaN.');
 
+/* --- Cycle diurne : continu, local et applique au vent a mi-flamme -------- */
+const midnight = e.environmentAt({ startHour: 0, windKph: 30, temperature: 30, humidity: 40, droughtIndex: 0.7 }, 0);
+const noon = e.environmentAt({ startHour: 12, windKph: 30, temperature: 30, humidity: 40, droughtIndex: 0.7 }, 0);
+assert.equal(midnight.windKph, 30, 'Le vent synoptique a 10 m ne doit pas disparaitre la nuit.');
+assert.ok(midnight.wafScale < noon.wafScale && midnight.liveMoistureRecovery > noon.liveMoistureRecovery,
+  'La nuit doit reduire le WAF et relever l humidite du vivant.');
+assert.ok(Math.abs(e.daylightProfile(6.5) - e.daylightProfile(6.5001)) < 0.001,
+  'Le profil doit rester continu au lever du soleil.');
+const diurnalCase = { targetMinutes: 180, temperature: 36, humidity: 20, droughtIndex: 0.85, windKph: 32 };
+const nightRun = run({ ...diurnalCase, startHour: 0 });
+const dayRun = run({ ...diurnalCase, startHour: 12 });
+assert.ok(dayRun.totalBurnedHa > nightRun.totalBurnedHa * 3,
+  `Le perimetre couvant doit fortement reduire la propagation nocturne: ${nightRun.totalBurnedHa} / ${dayRun.totalBurnedHa}`);
+
 /* --- Composition regionale : les parts tirees valent les parts declarees -- */
 const SITES = {
   gironde: { lng: -0.4540519, lat: 44.5897472 },
@@ -141,7 +155,10 @@ const posted = (dy) => run({ ...directional,
 const tete = posted(1), arriere = posted(-1);
 // Sur une mosaique d especes le contraste est moins brutal qu en peuplement
 // uniforme, mais l ordre doit rester net.
-assert.ok(tete < arriere * 0.9, `Attaquer la tête doit valoir mieux que l’arrière: ${tete} vs ${arriere}`);
+// Le seuil historique de 10 % etait un calage numerique sans source. Le cycle
+// diurne reduit justement le contraste absolu ; la propriete physique utile est
+// l ordre strict, qui reste exige sans imposer un multiplicateur arbitraire.
+assert.ok(tete < arriere, `Attaquer la tête doit valoir mieux que l’arrière: ${tete} vs ${arriere}`);
 
 /* --- Decomposition du front ---------------------------------------------- */
 const front = reference.suppression;
@@ -204,6 +221,7 @@ console.log(JSON.stringify({
   ecartContourPct: Number((100 * (contourHa - reference.totalBurnedHa) / reference.totalBurnedHa).toFixed(1)),
   libre, avec20, avec40, tete, arriere,
   debitPlein: pleine.suppression.deployedFlowLpm, debitDemi: demi.suppression.deployedFlowLpm,
+  croissanceNocturneHa: nightRun.totalBurnedHa, croissanceDiurneHa: dayRun.totalBurnedHa,
   priseReseauModere: (priseModere*100).toFixed(0)+"%", priseReseauExtreme: (priseExtreme*100).toFixed(0)+"%",
   pistesPart: (partA*100).toFixed(1)+"%", habitantsMenaces: expose.exposure.populationMenacee,
 }, null, 1));

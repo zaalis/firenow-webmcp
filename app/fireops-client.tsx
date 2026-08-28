@@ -317,11 +317,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain });
+  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain, incident });
 
   useEffect(() => {
-    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain };
-  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain]);
+    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain, incident };
+  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, viewMode, domain, terrain, incident]);
 
   const patchWeather = useCallback((patch: Partial<Weather>) => {
     setWeather((current) => ({ ...current, ...patch }));
@@ -532,9 +532,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       temperature: weather.temperature, humidity: weather.humidity, droughtIndex: weather.droughtIndex,
       plumeDriven: weather.plumeDriven === true, domain, terrain,
       windKph: weather.windSpeed, windDirection: weather.windDirection, windBearingDegrees: weather.windBearing,
+      startHour: incident.startHour + incident.startMinute / 60,
       slopeDegrees: 7.4, deployments: committed, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition]);
+  }, [applyEngineResult, committed, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
@@ -636,6 +637,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
         plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain,
         windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
+        startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60,
         slopeDegrees: 7.4, deployments,
       });
     }));
@@ -701,7 +703,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed });
+            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed });
             return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
@@ -805,6 +807,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           const engine = await runWorker({
             type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes, moisture: 0.08,
             windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
+            temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
+            droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
+            domain: stateRef.current.domain, terrain: stateRef.current.terrain,
+            startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60,
             slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
           });
           applyEngineResult(engine);
@@ -817,7 +823,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']),
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
-          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true });
+          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true });
           applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, engine };
         },
       },
@@ -840,7 +846,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           ignitionRef.current = { lng, lat };
           const engine = await runWorker({
             type: 'simulate', ignitionLngLat: { lng, lat }, reset: true, targetMinutes: stateRef.current.minutes,
-            moisture: 0.08, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
+            temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
+            droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed,
+            windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing,
+            domain: stateRef.current.domain, terrain: stateRef.current.terrain,
+            startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60,
             slopeDegrees: 7.4, deployments: stateRef.current.committed, includeForecast: true,
           });
           applyEngineResult(engine);

@@ -24,6 +24,63 @@ const MIDFLAME_FACTOR = 0.25; // vent a mi-flamme sous couvert de pin maritime
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 const indexOf = (x, y) => y * GRID_SIZE + x;
 
+/* Cycle diurne local.
+ * - Andrews, USFS RMRS-GTR-266 (2012) : Rothermel doit recevoir le vent a
+ *   mi-flamme, distinct du vent synoptique a 10/20 ft. La stabilite nocturne
+ *   agit donc sur le WAF, jamais sur windKph.
+ * - Bishop, FLAME / RMRS-P-46CD (2007) : une variation de l'humidite des
+ *   combustibles vivants de l'ordre de 20 % est operationnellement
+ *   significative ; c'est la recuperation maximale appliquee ici.
+ * - Freeborn et al., RSE 268 (2022), doi:10.1016/j.rse.2021.112777 : la part
+ *   nocturne observee varie de 3 % a 29 % selon la secheresse et la taille du
+ *   feu. Le plancher de perimetre propagateur est fixe a 18 %, au milieu de
+ *   cette plage publiee, et non ajuste sur un incendie particulier.
+ */
+const NIGHT_WAF_FLOOR = 0.35;
+const NIGHT_ACTIVE_FRACTION = 0.18;
+const LIVE_MOISTURE_RECOVERY = 0.20;
+function localHourAt(input, minutes) {
+  const start = Number.isFinite(input.startHour) ? input.startHour : 12;
+  return ((start + minutes / 60) % 24 + 24) % 24;
+}
+function daylightProfile(hour, sunrise = 6.5, sunset = 21.5) {
+  if (!(hour > sunrise && hour < sunset)) return 0;
+  return Math.sin(Math.PI * (hour - sunrise) / (sunset - sunrise));
+}
+function interpolateHourly(series, minutes, startHour) {
+  if (!Array.isArray(series) || !series.length) return null;
+  const absoluteHour = (Number.isFinite(startHour) ? startHour : 0) + minutes / 60;
+  let before = series[0], after = series[series.length - 1];
+  for (let i = 0; i < series.length; i += 1) {
+    const at = Number.isFinite(series[i].hourFromStart) ? series[i].hourFromStart : i;
+    if (at <= absoluteHour) before = series[i];
+    if (at >= absoluteHour) { after = series[i]; break; }
+  }
+  const a = Number.isFinite(before.hourFromStart) ? before.hourFromStart : series.indexOf(before);
+  const b = Number.isFinite(after.hourFromStart) ? after.hourFromStart : series.indexOf(after);
+  const ratio = b > a ? clamp((absoluteHour - a) / (b - a), 0, 1) : 0;
+  const value = {};
+  for (const key of ['temperature','humidity','windKph','windBearingDegrees','droughtIndex']) {
+    const av = Number(before[key]), bv = Number(after[key]);
+    if (Number.isFinite(av) && Number.isFinite(bv)) value[key] = av + (bv - av) * ratio;
+    else if (Number.isFinite(av)) value[key] = av;
+  }
+  return value;
+}
+function environmentAt(input, minutes) {
+  const hourly = interpolateHourly(input.weatherSeries, minutes, input.startHour);
+  const hour = localHourAt(input, minutes);
+  const solar = daylightProfile(hour, Number(input.sunriseHour) || 6.5, Number(input.sunsetHour) || 21.5);
+  const weather = { ...input, ...(hourly || {}) };
+  weather.hourOfDay = hour;
+  weather.daylightFactor = solar;
+  weather.wafScale = NIGHT_WAF_FLOOR + (1 - NIGHT_WAF_FLOOR) * solar;
+  weather.activeFraction = NIGHT_ACTIVE_FRACTION + (1 - NIGHT_ACTIVE_FRACTION) * solar;
+  weather.moisture = deriveMoisture(weather);
+  weather.liveMoistureRecovery = LIVE_MOISTURE_RECOVERY * (1 - solar);
+  return weather;
+}
+
 function rothermelRateOfSpread(input, fuelCode = 0) {
   const fuel = FUEL[fuelCode] || FUEL[0];
   if (fuel.nonBurnable) return 0;
@@ -41,7 +98,8 @@ function rothermelRateOfSpread(input, fuelCode = 0) {
   };
   const deadDamping = damping(input.moisture / fuel.moistureExtinction);
   // Teneur en eau du vegetal vivant : elle chute avec la secheresse cumulee.
-  const liveMoisture = clamp(1.20 - 0.75 * (Number(input.droughtIndex) || 0), 0.45, 1.20);
+  const baseLiveMoisture = clamp(1.20 - 0.75 * (Number(input.droughtIndex) || 0), 0.45, 1.20);
+  const liveMoisture = clamp(baseLiveMoisture * (1 + (Number(input.liveMoistureRecovery) || 0)), 0.45, 1.44);
   const liveLoad = fuel.liveLoad || 0;
   let liveDamping = 0;
   if (liveLoad > 0) {
@@ -55,7 +113,7 @@ function rothermelRateOfSpread(input, fuelCode = 0) {
   const netLive = liveLoad * (1 - 0.0555);
   const reactionIntensity = gamma * 8000 * mineralDamping * (netDead * deadDamping + netLive * liveDamping);
   const windMph = input.windKph * 0.621371;
-  const midflameFpm = windMph * 88 * (fuel.waf || MIDFLAME_FACTOR);
+  const midflameFpm = windMph * 88 * (fuel.waf || MIDFLAME_FACTOR) * clamp(Number(input.wafScale) || 1, NIGHT_WAF_FLOOR, 1);
   const windC = 7.47 * Math.exp(-0.133 * Math.pow(sigma, 0.55));
   const windB = 0.02526 * Math.pow(sigma, 0.54);
   const windE = 0.715 * Math.exp(-3.59e-4 * sigma);
@@ -68,7 +126,7 @@ function rothermelRateOfSpread(input, fuelCode = 0) {
   const effectiveHeating = Math.exp(-138 / sigma);
   // Qig pondere par la charge : allumer du vegetal vert coute bien plus cher.
   const qigDead = 250 + 1116 * input.moisture;
-  const qigLive = 250 + 1116 * clamp(1.20 - 0.75 * (Number(input.droughtIndex) || 0), 0.45, 1.20);
+  const qigLive = 250 + 1116 * liveMoisture;
   const heatOfPreignition = (fuel.load * qigDead + (fuel.liveLoad || 0) * qigLive) / Math.max(1e-6, totalLoad);
   const bulkDensity = totalLoad / fuel.depth;
   const feetPerMinute = (reactionIntensity * propagatingFlux * (1 + windFactor + slopeFactor)) / Math.max(0.001, bulkDensity * effectiveHeating * heatOfPreignition);
@@ -700,6 +758,11 @@ function propagate(sim, input, targetMinutes) {
   for (let i = 0; i < sim.arrival.length; i += 1) if (sim.arrival[i] <= sim.currentMinutes) heap.push({ index: i, time: sim.arrival[i] });
   while (heap.items.length) {
     const current = heap.pop(); if (!current || current.time > targetMinutes) break; if (Math.abs(current.time - sim.arrival[current.index]) > 0.001) continue;
+    // Une grande part de la bordure passe en combustion couvante lorsque la
+    // couche limite se stabilise. Le hachage spatial conserve un resultat
+    // deterministe et fait varier les portions actives d'une heure a l'autre.
+    const activitySalt = Math.floor(current.time / 60) + 1709;
+    if (spotNoise(current.index, activitySalt) > clamp(input.activeFraction || 1, NIGHT_ACTIVE_FRACTION, 1)) continue;
     if (spotting) spotFires += spotFrom(sim, input, current.index, current.time, bearing, plume, heap);
     const x = current.index % GRID_SIZE; const y = Math.floor(current.index / GRID_SIZE);
     for (const [dx, dy] of NEIGHBORS) {
@@ -1029,11 +1092,11 @@ function resultFor(sim, input, spread) {
   };
 }
 let scenario=null;
-function simulate(input){input={...input,moisture:deriveMoisture(input)};
+function simulate(input){input={...input};
 // Changer de domaine invalide la grille persistante : on repart du foyer.
 const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOMAIN_KEY=key;if(domainChanged)scenario=null;
 const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
-const STEP=15;let spread;{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);spread=propagate(sim,input,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={buildInfrastructure,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
+const STEP=15;let spread,lastEnvironment=environmentAt(input,sim.currentMinutes);{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);lastEnvironment=environmentAt(input,cursor);spread=propagate(sim,lastEnvironment,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,lastEnvironment,spread);result.diurnal={hourOfDay:Number(lastEnvironment.hourOfDay.toFixed(2)),daylightFactor:Number(lastEnvironment.daylightFactor.toFixed(3)),wafScale:Number(lastEnvironment.wafScale.toFixed(3)),activeFraction:Number(lastEnvironment.activeFraction.toFixed(3))};if(input.includeForecast){const forecast=cloneState(sim);let projected=spread,forecastCursor=target,forecastEnvironment=lastEnvironment;while(forecastCursor<target+180){forecastCursor=Math.min(target+180,forecastCursor+STEP);forecastEnvironment=environmentAt(input,forecastCursor);projected=propagate(forecast,forecastEnvironment,forecastCursor);}result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
+self.__fireopsTest={buildInfrastructure,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};
