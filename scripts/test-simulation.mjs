@@ -5,7 +5,7 @@ import vm from 'node:vm';
 // Chaque scenario part d'un moteur neuf : l'etat de propagation est persistant.
 function engine() {
   const self = { postMessage() {} };
-  const context = vm.createContext({ self, Math, Number, String, Array, Object, Infinity, Uint8Array, Float32Array, Map, Set });
+  const context = vm.createContext({ self, Math, Number, String, Array, Object, Infinity, Uint8Array, Uint16Array, Float32Array, Map, Set, atob: globalThis.atob });
   vm.runInContext(fs.readFileSync(new URL('../public/simulation.worker.js', import.meta.url), 'utf8'), context);
   return self.__fireopsTest;
 }
@@ -110,6 +110,22 @@ const identiques = probes.filter((p) =>
   cadrageA.speciesAt(p.lng, p.lat, 'california') === cadrageB.speciesAt(p.lng, p.lat, 'california')).length;
 assert.equal(identiques, probes.length,
   `Un lieu doit garder sa végétation quel que soit le cadrage: ${identiques}/${probes.length}`);
+
+/* --- Raster territorial Gironde : reel, local et toujours ancre ---------- */
+const girondeAsset = JSON.parse(fs.readFileSync(new URL('../public/data/gironde-landscape.json', import.meta.url), 'utf8'));
+const decodedGironde = e.decodeLandscape(girondeAsset);
+const assetIndices = probes.map((_, index) => ({ lng: -1.35 + (index % 20) * 0.02, lat: 44.62 + Math.floor(index / 20) * 0.025 }))
+  .map((point) => e.landscapeIndexAt(decodedGironde, point.lng, point.lat));
+assert.ok(assetIndices.every((index) => index >= 0), 'Les sondes Gironde doivent rester dans l asset territorial.');
+const realGironde = run({ targetMinutes: 30, ignitionLngLat: IGNITION,
+  domain: { lng: -1.10, lat: 44.80, boxMetres: 50000 }, terrain: { region: 'gironde' }, landscape: girondeAsset,
+  temperature: 30, humidity: 40, droughtIndex: 0.6, windKph: 15, windBearingDegrees: 90 });
+assert.ok(realGironde.landscape?.appliedCells > 0 && realGironde.landscape.sources.forest.includes('IGN'),
+  'Le moteur doit signaler les cellules et les sources du raster Gironde reel.');
+const flatInput = { moisture: 0.06, windKph: 20, droughtIndex: 0.7, slopeDegrees: 0 };
+const localSlopeInput = e.localFireInput({ slope: Float32Array.of(18), aspect: Float32Array.of(90) }, 0, 1, 0, flatInput);
+assert.ok(e.rothermelRateOfSpread(localSlopeInput, codeOf('TU5')) > e.rothermelRateOfSpread(flatInput, codeOf('TU5')),
+  'Une propagation vers l amont doit employer la pente locale de la cellule.');
 
 /* --- Geometrie : des formes continues, pas un empilement de rectangles ----
  * Les sautes de braises detachent de vrais ilots en avant du front : une
@@ -257,6 +273,7 @@ console.log(JSON.stringify({
   especes: e.SPECIES.length,
   moyens: Object.keys(e.APPLIANCES).length,
   ancrageIdentique: `${identiques}/${probes.length}`,
+  rasterGirondeCellules: realGironde.landscape.appliedCells,
   contourSommets: ring.length,
   ecartContourPct: Number((100 * (contourHa - reference.totalBurnedHa) / reference.totalBurnedHa).toFixed(1)),
   libre, avec20, avec40, tete, arriere,

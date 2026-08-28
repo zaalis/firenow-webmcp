@@ -17,6 +17,7 @@ type Exposure = {
 };
 type Region = 'gironde' | 'marseille' | 'california-basin' | 'california-chaparral' | 'california-sierra';
 type Terrain = { region?: Region; oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
+type LandscapeAsset = { gridSize: number; bounds: { west: number; east: number; south: number; north: number }; sources: Record<string, string>; fuel: string; infra: string; people10: string; slope: string; aspect: string };
 type Deployment = { id: string; type: string; count: number; autonomy?: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
 type Firebreak = { name: string; sector: string; lengthKm: number; coordinates: [number, number][]; widthM?: number; staffed?: boolean; tacticalBurn?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
@@ -317,6 +318,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [situationOpen, setSituationOpen] = useState(true);
   const [exposure, setExposure] = useState<Exposure | null>(null);
   const [composition, setComposition] = useState<{ nom: string; strate: string; part: number }[]>([]);
+  const [landscapeAsset, setLandscapeAsset] = useState<LandscapeAsset | null>(null);
+  const [landscapeStatus, setLandscapeStatus] = useState<'loading' | 'real' | 'procedural'>('loading');
+  const landscapeRef = useRef<LandscapeAsset | null>(null);
   const [undoStack, setUndoStack] = useState<{ deployments: Deployment[]; firebreaks: Firebreak[] }[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
@@ -325,6 +329,18 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   useEffect(() => {
     stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident };
   }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/data/gironde-landscape.json').then((response) => {
+      if (!response.ok) throw new Error('Asset Gironde indisponible');
+      return response.json() as Promise<LandscapeAsset>;
+    }).then((asset) => {
+      if (cancelled) return;
+      landscapeRef.current = asset; setLandscapeAsset(asset); setLandscapeStatus('real');
+    }).catch(() => { if (!cancelled) setLandscapeStatus('procedural'); });
+    return () => { cancelled = true; };
+  }, []);
 
   const patchWeather = useCallback((patch: Partial<Weather>) => {
     setWeather((current) => ({ ...current, ...patch }));
@@ -481,7 +497,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         else reject(new Error(event.data.error || 'Erreur du moteur.'));
       };
       worker.addEventListener('message', onMessage);
-      worker.postMessage({ ...payload, id: requestId });
+      worker.postMessage({ ...payload, landscape: landscapeRef.current, id: requestId });
     });
   }, []);
 
@@ -563,7 +579,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       startHour: incident.startHour + incident.startMinute / 60,
       slopeDegrees: 7.4, deployments: committed, firebreaks: committedFirebreaks, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident]);
+  }, [applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident, landscapeAsset]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
@@ -1167,6 +1183,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <i style={{ width: Math.max(4, entry.part * 100) + '%' }} />
             <span>{entry.nom}</span><b>{(entry.part * 100).toFixed(0)} %</b>
           </div>)}
+          {terrain?.region === 'gironde' && <small className={'data-source-status ' + landscapeStatus}>{landscapeStatus === 'real' ? 'IGN BD Forêt / BD TOPO · INSEE 200 m · relief DEM 90 m' : landscapeStatus === 'loading' ? 'Chargement des données territoriales…' : 'Données réelles indisponibles · repli procédural'}</small>}
         </div>}
         {exposure && <div className="exposure-card">
           <span className="cover-head">ENJEUX · {exposure.populationMenacee > 0 ? 'POPULATION MENACÉE' : 'AUCUNE POPULATION EXPOSÉE'}</span>

@@ -47,9 +47,9 @@ function daylightProfile(hour, sunrise = 6.5, sunset = 21.5) {
   if (!(hour > sunrise && hour < sunset)) return 0;
   return Math.sin(Math.PI * (hour - sunrise) / (sunset - sunrise));
 }
-function interpolateHourly(series, minutes, startHour) {
+function interpolateHourly(series, minutes) {
   if (!Array.isArray(series) || !series.length) return null;
-  const absoluteHour = (Number.isFinite(startHour) ? startHour : 0) + minutes / 60;
+  const absoluteHour = minutes / 60;
   let before = series[0], after = series[series.length - 1];
   for (let i = 0; i < series.length; i += 1) {
     const at = Number.isFinite(series[i].hourFromStart) ? series[i].hourFromStart : i;
@@ -68,7 +68,7 @@ function interpolateHourly(series, minutes, startHour) {
   return value;
 }
 function environmentAt(input, minutes) {
-  const hourly = interpolateHourly(input.weatherSeries, minutes, input.startHour);
+  const hourly = interpolateHourly(input.weatherSeries, minutes);
   const hour = localHourAt(input, minutes);
   const solar = daylightProfile(hour, Number(input.sunriseHour) || 6.5, Number(input.sunsetHour) || 21.5);
   const weather = { ...input, ...(hourly || {}) };
@@ -350,6 +350,55 @@ function applyTerrain(mask, terrain) {
     mask[indexOf(x, y)] = code;
   }
 }
+
+/* Raster Gironde pre-cuit, indexe par longitude/latitude absolues. Les valeurs
+ * 255 gardent la mosaique procedurale : l'asset complete le paysage sans faire
+ * dependre les cellules du cadrage courant. */
+function decodeLandscape(asset) {
+  if (!asset || !asset.bounds || !Number.isFinite(asset.gridSize)) return null;
+  const bytes = (value) => {
+    const binary = atob(value || '');
+    const output = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) output[index] = binary.charCodeAt(index);
+    return output;
+  };
+  const populationBytes = bytes(asset.people10);
+  return {
+    gridSize: asset.gridSize, bounds: asset.bounds, sources: asset.sources || {},
+    fuel: bytes(asset.fuel), infra: bytes(asset.infra), slope: bytes(asset.slope), aspect: bytes(asset.aspect),
+    people10: new Uint16Array(populationBytes.buffer, populationBytes.byteOffset, populationBytes.byteLength / 2),
+  };
+}
+function landscapeIndexAt(landscape, lng, lat) {
+  const bounds = landscape && landscape.bounds;
+  if (!bounds || lng < bounds.west || lng >= bounds.east || lat < bounds.south || lat >= bounds.north) return -1;
+  const x = clamp(Math.floor((lng - bounds.west) / (bounds.east - bounds.west) * landscape.gridSize), 0, landscape.gridSize - 1);
+  const y = clamp(Math.floor((bounds.north - lat) / (bounds.north - bounds.south) * landscape.gridSize), 0, landscape.gridSize - 1);
+  return y * landscape.gridSize + x;
+}
+function applyLandscape(fuel, anthropic, asset) {
+  const landscape = decodeLandscape(asset);
+  if (!landscape) return { anthropic, slope: null, aspect: null, sources: null, appliedCells: 0 };
+  const infra = anthropic ? anthropic.infra : new Uint8Array(GRID_SIZE * GRID_SIZE);
+  const people = anthropic ? anthropic.people : new Float32Array(GRID_SIZE * GRID_SIZE);
+  const slope = new Float32Array(GRID_SIZE * GRID_SIZE);
+  const aspect = new Float32Array(GRID_SIZE * GRID_SIZE);
+  let appliedCells = 0;
+  for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
+    const index = indexOf(x, y);
+    const [lng, lat] = lngLatForCell(x, y);
+    const sourceIndex = landscapeIndexAt(landscape, lng, lat);
+    if (sourceIndex < 0) continue;
+    appliedCells += 1;
+    if (landscape.fuel[sourceIndex] !== 255) fuel[index] = landscape.fuel[sourceIndex];
+    infra[index] = landscape.infra[sourceIndex];
+    people[index] = landscape.people10[sourceIndex] / 10;
+    slope[index] = landscape.slope[sourceIndex];
+    aspect[index] = landscape.aspect[sourceIndex] / 255 * 360;
+  }
+  return { anthropic: { infra, people, spec: anthropic ? anthropic.spec : NETWORKS.landes }, slope, aspect,
+    sources: landscape.sources, appliedCells };
+}
 /* ---------------------------------------------------------------------------
  * Anthropisation du massif : pistes DFCI, routes, bati, habitants.
  *
@@ -485,7 +534,9 @@ function createState(origin) {
   // Le reseau n'existe que la ou il est decrit : pour l'instant le massif landais.
   // Un 'network' explicitement fourni prime, y compris null pour desactiver.
   const networkKey = terrain && (terrain.network !== undefined ? terrain.network : (terrain.region === 'gironde' ? 'landes' : null));
-  const anthropic = networkKey ? buildInfrastructure(networkKey, terrain) : null;
+  let anthropic = networkKey ? buildInfrastructure(networkKey, terrain) : null;
+  const landscapeResult = applyLandscape(fuel, anthropic, origin && origin.landscape);
+  anthropic = landscapeResult.anthropic;
   const point = origin && Number.isFinite(origin.lng) && Number.isFinite(origin.lat)
     ? cellForLngLat(origin.lng, origin.lat)
     : { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2) };
@@ -520,6 +571,8 @@ function createState(origin) {
     fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
     infra: anthropic && anthropic.infra, people: anthropic && anthropic.people,
     network: anthropic && anthropic.spec,
+    slope: landscapeResult.slope, aspect: landscapeResult.aspect,
+    landscapeSources: landscapeResult.sources, landscapeAppliedCells: landscapeResult.appliedCells,
   };
 }
 function lngLatForCell(x, y) { return [BOUNDS.west + ((x + 0.5) / GRID_SIZE) * (BOUNDS.east - BOUNDS.west), BOUNDS.north - ((y + 0.5) / GRID_SIZE) * (BOUNDS.north - BOUNDS.south)]; }
@@ -818,6 +871,18 @@ function spreadBearing(input) {
   if (value.includes('nord-ouest')) return 135; if (value.includes('sud-ouest')) return 45; if (value.includes('nord-est')) return 225; if (value.includes('sud-est')) return 315;
   if (value.includes('ouest')) return 90; if (value.includes('est')) return 270; if (value.includes('nord')) return 180; if (value.includes('sud')) return 0; return 110;
 }
+/* Le raster stocke le cap de la plus forte montee. Rothermel applique son
+ * terme de pente dans le sens de propagation : une pente locale ne peut donc
+ * plus accelerer uniformement les huit voisins comme le faisait l'unique
+ * slopeDegrees du domaine. */
+function localFireInput(sim, index, dx, dy, input) {
+  if (!sim.slope || !sim.slope[index]) return input;
+  const heading = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+  const upslope = sim.aspect ? sim.aspect[index] : heading;
+  const difference = Math.abs(((heading - upslope + 540) % 360) - 180);
+  const projectedSlope = sim.slope[index] * Math.max(0, Math.cos(difference * Math.PI / 180));
+  return { ...input, slopeDegrees: projectedSlope };
+}
 function directionalFactor(dx, dy, bearing, lengthToBreadth) {
   const direction = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
   const theta = ((direction - bearing + 540) % 360 - 180) * Math.PI / 180;
@@ -860,7 +925,7 @@ function propagate(sim, input, targetMinutes) {
     const x = current.index % GRID_SIZE; const y = Math.floor(current.index / GRID_SIZE);
     for (const [dx, dy] of NEIGHBORS) {
       const nx = x + dx; const ny = y + dy; if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
-      const next = indexOf(nx, ny); const headRos = rothermelRateOfSpread(input, sim.fuel[next]); if (headRos <= 0) continue;
+      const next = indexOf(nx, ny); const headRos = rothermelRateOfSpread(localFireInput(sim, next, dx, dy, input), sim.fuel[next]); if (headRos <= 0) continue;
       const effectiveRos = headRos * directionalFactor(dx, dy, bearing, lengthToBreadth) * (1 - suppression[next]); if (effectiveRos <= 0) continue;
       // Piste, route ou debroussaillement : le front doit franchir la coupure.
       const width = breakWidthAt(sim, next);
@@ -893,7 +958,7 @@ function propagate(sim, input, targetMinutes) {
       if (!sim.state[n] && !FUEL[sim.fuel[n]].nonBurnable) { ox += dx; oy += dy; exposed += 1; }
     }
     if (!exposed) continue;
-    const localRos = rothermelRateOfSpread(input, sim.fuel[index]) * directionalFactor(ox, oy, bearing, lengthToBreadth);
+    const localRos = rothermelRateOfSpread(localFireInput(sim, index, ox, oy, input), sim.fuel[index]) * directionalFactor(ox, oy, bearing, lengthToBreadth);
     const intensity = firelineIntensity(sim.fuel[index], localRos);
     const direction = (Math.atan2(ox, -oy) * 180 / Math.PI + 360) % 360;
     const offset = Math.abs(((direction - bearing + 540) % 360) - 180);
@@ -1066,7 +1131,7 @@ function extinguishedEdgeGeoJSON(sim) {
   feature.properties = { source: 'FireOps cellular simulation', layer: 'lisiere-eteinte' };
   return feature;
 }
-function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),constructedBreak:sim.constructedBreak.slice(),heldBreak:sim.heldBreak.slice(),lineProgressM:{...sim.lineProgressM},lineCellsBuilt:{...sim.lineCellsBuilt},explicitLinesReady:sim.explicitLinesReady,tacticalBurnsReady:sim.tacticalBurnsReady,fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network};}
+function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),constructedBreak:sim.constructedBreak.slice(),heldBreak:sim.heldBreak.slice(),lineProgressM:{...sim.lineProgressM},lineCellsBuilt:{...sim.lineCellsBuilt},explicitLinesReady:sim.explicitLinesReady,tacticalBurnsReady:sim.tacticalBurnsReady,fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network,slope:sim.slope,aspect:sim.aspect,landscapeSources:sim.landscapeSources,landscapeAppliedCells:sim.landscapeAppliedCells};}
 /* ---------------------------------------------------------------------------
  * Analyse du front.
  *
@@ -1096,7 +1161,7 @@ function analyseFront(sim, input, lengthToBreadth, bearing) {
       ox += dx; oy += dy; exposed += 1;
     }
     if (!exposed) continue;
-    const headRos = rothermelRateOfSpread(input, sim.fuel[index]);
+    const headRos = rothermelRateOfSpread(localFireInput(sim, index, ox, oy, input), sim.fuel[index]);
     if (headRos <= 0) continue;
     const localRos = headRos * directionalFactor(ox, oy, bearing, lengthToBreadth);
     const intensity = firelineIntensity(sim.fuel[index], localRos);
@@ -1198,6 +1263,7 @@ function resultFor(sim, input, spread) {
     region: (input.terrain && input.terrain.region) || 'gironde',
     exposure: humanExposure(sim),
     network: sim.network ? sim.network.label : null,
+    landscape: sim.landscapeSources ? { sources: sim.landscapeSources, appliedCells: sim.landscapeAppliedCells } : null,
     fuelComposition: fuelComposition(sim.fuel),
     lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
     totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
@@ -1229,8 +1295,8 @@ let scenario=null;
 function simulate(input){input={...input};
 // Changer de domaine invalide la grille persistante : on repart du foyer.
 const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOMAIN_KEY=key;if(domainChanged)scenario=null;
-const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
+const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain,landscape:input.landscape}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread,lastEnvironment=environmentAt(input,sim.currentMinutes);{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);lastEnvironment=environmentAt(input,cursor);spread=propagate(sim,lastEnvironment,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,lastEnvironment,spread);result.diurnal={hourOfDay:Number(lastEnvironment.hourOfDay.toFixed(2)),daylightFactor:Number(lastEnvironment.daylightFactor.toFixed(3)),wafScale:Number(lastEnvironment.wafScale.toFixed(3)),activeFraction:Number(lastEnvironment.activeFraction.toFixed(3))};if(input.includeForecast){const forecast=cloneState(sim);let projected=spread,forecastCursor=target,forecastEnvironment=lastEnvironment;while(forecastCursor<target+180){forecastCursor=Math.min(target+180,forecastCursor+STEP);forecastEnvironment=environmentAt(input,forecastCursor);projected=propagate(forecast,forecastEnvironment,forecastCursor);}result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={buildInfrastructure,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,crossingDelayMinutes,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
+self.__fireopsTest={buildInfrastructure,decodeLandscape,landscapeIndexAt,localFireInput,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,crossingDelayMinutes,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};
