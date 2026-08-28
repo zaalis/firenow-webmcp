@@ -61,6 +61,19 @@ const dayRun = run({ ...diurnalCase, startHour: 12 });
 assert.ok(dayRun.totalBurnedHa > nightRun.totalBurnedHa * 3,
   `Le perimetre couvant doit fortement reduire la propagation nocturne: ${nightRun.totalBurnedHa} / ${dayRun.totalBurnedHa}`);
 
+/* --- Mort du perimetre : etat 3 persistant, jamais re-ensemence ----------- */
+const edgeEngine = engine();
+const weakEdge = edgeEngine.simulate({ reset: true, targetMinutes: 360, ignitionLngLat: IGNITION,
+  temperature: 16, humidity: 80, droughtIndex: 0.1, windKph: 5, startHour: 0,
+  slopeDegrees: 0, deployments: [] });
+assert.ok(weakEdge.extinguishedEdgeCells > 0 && weakEdge.extinguishedEdgeGeoJSON,
+  'Une lisiere faible doit devenir eteinte et etre exposee en geometrie.');
+const reignitionAttempt = edgeEngine.simulate({ reset: false, targetMinutes: 420, ignitionLngLat: IGNITION,
+  temperature: 40, humidity: 10, droughtIndex: 0.98, windKph: 60, startHour: 0,
+  slopeDegrees: 0, deployments: [] });
+assert.equal(reignitionAttempt.totalBurnedHa, weakEdge.totalBurnedHa,
+  'Une cellule de lisiere eteinte ne doit pas etre re-ensemencee au sous-pas suivant.');
+
 /* --- Composition regionale : les parts tirees valent les parts declarees -- */
 const SITES = {
   gironde: { lng: -0.4540519, lat: 44.5897472 },

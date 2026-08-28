@@ -267,7 +267,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
-  const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, forecast: emptyGeoJSON });
+  const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
@@ -298,6 +298,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [perimeterGeoJSON, setPerimeterGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [forecastGeoJSON, setForecastGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [activeGeoJSON, setActiveGeoJSON] = useState<unknown>(emptyGeoJSON);
+  const [extinguishedGeoJSON, setExtinguishedGeoJSON] = useState<unknown>(emptyGeoJSON);
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(20);
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
@@ -417,6 +418,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         map.addSource('fire-active', { type: 'geojson', data: engineGeoRef.current.active as Parameters<GeoJSONSource['setData']>[0] });
         map.addLayer({ id: 'fire-active-fill', type: 'fill', source: 'fire-active', paint: { 'fill-color': '#FF7A18', 'fill-opacity': 0.55 } });
         map.addLayer({ id: 'fire-active-line', type: 'line', source: 'fire-active', paint: { 'line-color': '#FFC53D', 'line-width': 2.2, 'line-opacity': 0.95, 'line-blur': 1.2 } });
+        map.addSource('fire-extinguished', { type: 'geojson', data: engineGeoRef.current.extinguished as Parameters<GeoJSONSource['setData']>[0] });
+        map.addLayer({ id: 'fire-extinguished-line', type: 'line', source: 'fire-extinguished', paint: { 'line-color': '#B8B8B8', 'line-width': 1.5, 'line-opacity': 0.85, 'line-dasharray': [2, 2] } });
         map.addSource('fire-forecast', { type: 'geojson', data: engineGeoRef.current.forecast as Parameters<GeoJSONSource['setData']>[0] });
         map.addLayer({ id: 'fire-forecast-line', type: 'line', source: 'fire-forecast', paint: { 'line-color': '#FF3B30', 'line-width': 1.8, 'line-opacity': 0.8, 'line-dasharray': [3, 2] } });
         setMapReady(true);
@@ -479,13 +482,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     const perimeter = engine.perimeterGeoJSON || emptyGeoJSON;
     const forecast = engine.forecastPerimeterGeoJSON || emptyGeoJSON;
     const active = engine.activeFrontGeoJSON || emptyGeoJSON;
-    engineGeoRef.current = { perimeter, active, forecast };
+    const extinguished = engine.extinguishedEdgeGeoJSON || emptyGeoJSON;
+    engineGeoRef.current = { perimeter, active, extinguished, forecast };
     setBurnedHa(Number(engine.totalBurnedHa));
     setFrontRate(Number(engine.rateOfSpreadMetersPerMinute));
     setSuppression((engine.suppression as Suppression) ?? null);
     setPerimeterGeoJSON(perimeter);
     setForecastGeoJSON(forecast);
     setActiveGeoJSON(active);
+    setExtinguishedGeoJSON(extinguished);
     setComposition(Array.isArray(engine.fuelComposition) ? engine.fuelComposition.slice(0, 4) : []);
     setExposure((engine.exposure as Exposure) || null);
   }, []);
@@ -518,15 +523,17 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     const fireSource = mapRef.current?.getSource('fire') as GeoJSONSource | undefined;
     const forecastSource = mapRef.current?.getSource('fire-forecast') as GeoJSONSource | undefined;
     const activeSource = mapRef.current?.getSource('fire-active') as GeoJSONSource | undefined;
+    const extinguishedSource = mapRef.current?.getSource('fire-extinguished') as GeoJSONSource | undefined;
     fireSource?.setData((ignition ? perimeterGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
     forecastSource?.setData((ignition ? forecastGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
     activeSource?.setData((ignition ? activeGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
-  }, [forecastGeoJSON, perimeterGeoJSON, activeGeoJSON, ignition]);
+    extinguishedSource?.setData((ignition ? extinguishedGeoJSON : emptyGeoJSON) as Parameters<GeoJSONSource['setData']>[0]);
+  }, [forecastGeoJSON, perimeterGeoJSON, activeGeoJSON, extinguishedGeoJSON, ignition]);
 
   useEffect(() => {
     // Carte vierge : on vide la ref (lue par le handler 'load') sans toucher a l'etat,
     // les valeurs affichees etant derivees plus bas.
-    if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, active: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
+    if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
     runWorker({
       type: 'simulate', ignitionLngLat: ignition, reset: true, targetMinutes: minutes,
       temperature: weather.temperature, humidity: weather.humidity, droughtIndex: weather.droughtIndex,

@@ -476,6 +476,7 @@ function crossingDelayMinutes(width, intensityKwM, rosMetresPerMinute, windKph) 
 function createState(origin) {
   const state = new Uint8Array(GRID_SIZE * GRID_SIZE);
   const arrival = new Float32Array(GRID_SIZE * GRID_SIZE); arrival.fill(Infinity);
+  const lowIntensitySince = new Float32Array(GRID_SIZE * GRID_SIZE); lowIntensitySince.fill(Infinity);
   const terrain = (origin && origin.terrain) || null;
   const fuel = generateFuelMask(terrain);
   // Le reseau n'existe que la ou il est decrit : pour l'instant le massif landais.
@@ -511,7 +512,7 @@ function createState(origin) {
   if (!seeded) arrival[indexOf(cell.x, cell.y)] = 0;
   const [lng, lat] = lngLatForCell(cell.x, cell.y);
   return {
-    state, arrival, fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
+    state, arrival, lowIntensitySince, fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
     infra: anthropic && anthropic.infra, people: anthropic && anthropic.people,
     network: anthropic && anthropic.spec,
   };
@@ -592,7 +593,7 @@ function frontCells(sim) {
   const cells = [];
   for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
     const index = indexOf(x, y);
-    if (!(sim.arrival[index] <= sim.currentMinutes)) continue;
+    if (!(sim.arrival[index] <= sim.currentMinutes) || sim.state[index] === 3) continue;
     for (const [dx, dy] of NEIGHBORS) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
@@ -755,9 +756,10 @@ function propagate(sim, input, targetMinutes) {
   const plume = input.plumeDriven ? 2.4 : 1;
   const spotting = input.spotting !== false;
   let spotFires = 0;
-  for (let i = 0; i < sim.arrival.length; i += 1) if (sim.arrival[i] <= sim.currentMinutes) heap.push({ index: i, time: sim.arrival[i] });
+  for (let i = 0; i < sim.arrival.length; i += 1) if (sim.arrival[i] <= sim.currentMinutes && sim.state[i] !== 3) heap.push({ index: i, time: sim.arrival[i] });
   while (heap.items.length) {
     const current = heap.pop(); if (!current || current.time > targetMinutes) break; if (Math.abs(current.time - sim.arrival[current.index]) > 0.001) continue;
+    if (sim.state[current.index] === 3) continue;
     // Une grande part de la bordure passe en combustion couvante lorsque la
     // couche limite se stabilise. Le hachage spatial conserve un resultat
     // deterministe et fait varier les portions actives d'une heure a l'autre.
@@ -779,9 +781,43 @@ function propagate(sim, input, targetMinutes) {
       if (arrivalTime < sim.arrival[next]) { sim.arrival[next] = arrivalTime; heap.push({ index: next, time: arrivalTime }); }
     }
   }
-  sim.currentMinutes = targetMinutes; let affectedCells = 0; let burningCells = 0;
-  for (let i = 0; i < sim.state.length; i += 1) { if (sim.arrival[i] <= targetMinutes) { sim.state[i] = targetMinutes - sim.arrival[i] < 12 ? 1 : 2; affectedCells += 1; if (sim.state[i] === 1) burningCells += 1; } else sim.state[i] = 0; }
-  return { affectedCells, burningCells, lengthToBreadth, bearing, spotFires, suppressionTotals: built.totals, suppression };
+  sim.currentMinutes = targetMinutes; let affectedCells = 0; let burningCells = 0; let extinguishedEdgeCells = 0;
+  for (let i = 0; i < sim.state.length; i += 1) {
+    if (!(sim.arrival[i] <= targetMinutes)) { sim.state[i] = 0; continue; }
+    affectedCells += 1;
+    if (sim.state[i] === 3) { extinguishedEdgeCells += 1; continue; }
+    sim.state[i] = targetMinutes - sim.arrival[i] < 12 ? 1 : 2;
+    if (sim.state[i] === 1) burningCells += 1;
+  }
+  // Mort du perimetre : une bordure faible ne reste pas une source Dijkstra
+  // eternelle. Le seuil de maintien reste tres sous les seuils operationnels
+  // Byram/NWCG de 2 000 et 4 000 kW/m ; trois sous-pas evitent les bascules.
+  for (const [x, y] of frontCells(sim)) {
+    const index = indexOf(x, y);
+    let ox = 0, oy = 0, exposed = 0;
+    for (const [dx, dy] of NEIGHBORS) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) continue;
+      const n = indexOf(nx, ny);
+      if (!sim.state[n] && !FUEL[sim.fuel[n]].nonBurnable) { ox += dx; oy += dy; exposed += 1; }
+    }
+    if (!exposed) continue;
+    const localRos = rothermelRateOfSpread(input, sim.fuel[index]) * directionalFactor(ox, oy, bearing, lengthToBreadth);
+    const intensity = firelineIntensity(sim.fuel[index], localRos);
+    const direction = (Math.atan2(ox, -oy) * 180 / Math.PI + 360) % 360;
+    const offset = Math.abs(((direction - bearing + 540) % 360) - 180);
+    const wetRear = offset >= 120 && input.moisture >= 0.12;
+    const treated = suppression[index] >= 0.82 && intensity <= DIRECT_ATTACK_LIMIT_KW_M;
+    const weak = intensity < 500 || wetRear || treated;
+    if (weak) {
+      if (!Number.isFinite(sim.lowIntensitySince[index])) sim.lowIntensitySince[index] = targetMinutes;
+      const requiredMinutes = treated ? 15 : wetRear ? 30 : 45;
+      if (targetMinutes - sim.lowIntensitySince[index] + 15 >= requiredMinutes) {
+        sim.state[index] = 3; extinguishedEdgeCells += 1;
+      }
+    } else sim.lowIntensitySince[index] = Infinity;
+  }
+  return { affectedCells, burningCells, extinguishedEdgeCells, lengthToBreadth, bearing, spotFires, suppressionTotals: built.totals, suppression };
 }
 /* ---------------------------------------------------------------------------
  * Geometrie : trace du contour reel.
@@ -934,7 +970,12 @@ function activeFrontGeoJSON(sim) {
   feature.properties = { source: 'FireOps cellular simulation', layer: 'front-actif' };
   return feature;
 }
-function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network};}
+function extinguishedEdgeGeoJSON(sim) {
+  const feature = ringsToGeoJSON((x, y) => sim.state[indexOf(x, y)] === 3);
+  feature.properties = { source: 'FireOps cellular simulation', layer: 'lisiere-eteinte' };
+  return feature;
+}
+function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network};}
 /* ---------------------------------------------------------------------------
  * Analyse du front.
  *
@@ -953,7 +994,7 @@ function analyseFront(sim, input, lengthToBreadth, bearing) {
   let headM = 0, flankM = 0, rearM = 0;
   for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
     const index = indexOf(x, y);
-    if (!sim.state[index]) continue;
+    if (!sim.state[index] || sim.state[index] === 3) continue;
     // Normale sortante : moyenne des directions vers le combustible intact.
     let ox = 0, oy = 0, exposed = 0;
     for (const [dx, dy] of NEIGHBORS) {
@@ -1069,7 +1110,7 @@ function resultFor(sim, input, spread) {
     fuelComposition: fuelComposition(sim.fuel),
     lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
     totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
-    affectedCells: spread.affectedCells, burningCells: spread.burningCells, spotFires: spread.spotFires || 0,
+    affectedCells: spread.affectedCells, burningCells: spread.burningCells, extinguishedEdgeCells: spread.extinguishedEdgeCells || 0, spotFires: spread.spotFires || 0,
     suppression: {
       firelineIntensityKwM: Math.round(headIntensity),
       meanIntensityKwM: Math.round(front.meanIntensity),
@@ -1089,6 +1130,7 @@ function resultFor(sim, input, spread) {
     },
     perimeterGeoJSON: perimeterGeoJSON(sim),
     activeFrontGeoJSON: activeFrontGeoJSON(sim),
+    extinguishedEdgeGeoJSON: extinguishedEdgeGeoJSON(sim),
   };
 }
 let scenario=null;
