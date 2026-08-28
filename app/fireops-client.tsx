@@ -186,6 +186,24 @@ const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | '
   if (preset === 'saumos') return { ...base, ignition: { ...SAUMOS_IGNITION }, minutes: 450, weather: saumosWeather(), committed: saumosUnits(), firebreaks: [], domain: SAUMOS_DOMAIN, terrain: SAUMOS_TERRAIN, incident: SAUMOS_INCIDENT };
   return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: BLANK_INCIDENT };
 };
+// Fond raster : charge par le fil principal, contrairement aux tuiles
+// vectorielles qui transitent par le worker MapLibre.
+const BASEMAP_STYLE = {
+  version: 8 as const,
+  sources: {
+    carto: {
+      type: 'raster' as const,
+      tiles: ['a', 'b', 'c', 'd'].map((sub) => `https://${sub}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png`),
+      tileSize: 256,
+      attribution: '© CARTO © OpenStreetMap',
+    },
+  },
+  layers: [
+    { id: 'fond', type: 'background' as const, paint: { 'background-color': '#08090A' } },
+    // Desaturation legere : le fond doit rester en retrait, le feu prime.
+    { id: 'basemap', type: 'raster' as const, source: 'carto', paint: { 'raster-saturation': -0.55, 'raster-opacity': 0.92 } },
+  ],
+};
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
 const toolNames = [
   'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
@@ -425,10 +443,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       if (cancelled || !mapNode.current) return;
       const map = new maplibre.Map({
         container: mapNode.current,
-        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        style: BASEMAP_STYLE,
         center: [defaultIgnition.lng, defaultIgnition.lat], zoom: 11.2, attributionControl: false, cooperativeGestures: false,
       });
-      map.once('load', () => {
+      const setupMapLayers = () => {
         try { neutralizeMapStyle(map); } catch { /* le fond reste colore, le feu prime */ }
         if (!map.getSource('terrain-dem')) map.addSource('terrain-dem', {
           type: 'raster-dem',
@@ -451,7 +469,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         map.addLayer({ id: 'operational-lines-held', type: 'line', source: 'operational-lines', filter: ['==', ['get', 'tacticalBurn'], false], paint: { 'line-color': '#E2E2E2', 'line-width': 2.4, 'line-opacity': ['case', ['get', 'staged'], 0.45, 0.95], 'line-dasharray': [4, 2] } });
         map.addLayer({ id: 'operational-lines-burn', type: 'line', source: 'operational-lines', filter: ['==', ['get', 'tacticalBurn'], true], paint: { 'line-color': '#FF7A18', 'line-width': 3, 'line-opacity': ['case', ['get', 'staged'], 0.45, 0.95], 'line-dasharray': [2, 1] } });
         setMapReady(true);
-      });
+      };
+      // Le feu doit s'afficher meme si le fond de carte ne repond pas.
+      if (map.isStyleLoaded()) setupMapLayers(); else map.once('style.load', setupMapLayers);
       let anchor: { lng: number; lat: number } | null = null;
       const metresBetween = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) => {
         const latMean = ((a.lat + b.lat) / 2) * Math.PI / 180;
