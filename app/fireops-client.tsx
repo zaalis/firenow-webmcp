@@ -192,19 +192,30 @@ const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | '
 // en deux couches distinctes, sans cle d'API -- CARTO filigrane desormais ses
 // tuiles raster avec « API KEY REQUIRED ».
 const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas';
+// Dernier niveau reellement couvert par le service, et plafond de zoom de la
+// carte : au-dela on n etire plus qu une bouillie, et la grille de simulation
+// (195 a 390 m par cellule) n a de toute facon plus rien a montrer.
+const BASEMAP_MAX_ZOOM = 16;
+const MAP_MAX_ZOOM = 17.5;
 const BASEMAP_STYLE = {
   version: 8 as const,
   sources: {
+    // Le service annonce 23 niveaux mais ne couvre reellement que jusqu'a 16
+    // sur le massif : au-dela il renvoie une tuile « Map data not yet
+    // available ». En bornant la source, MapLibre etire la derniere tuile
+    // valide au lieu d'aller chercher ce placeholder.
     fondEsri: {
       type: 'raster' as const,
       tiles: [ESRI + '/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256,
+      maxzoom: BASEMAP_MAX_ZOOM,
       attribution: 'Esri, HERE, Garmin, © OpenStreetMap',
     },
     etiquettesEsri: {
       type: 'raster' as const,
       tiles: [ESRI + '/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256,
+      maxzoom: BASEMAP_MAX_ZOOM,
     },
   },
   layers: [
@@ -252,43 +263,6 @@ const textValue = (value: unknown, field: string, max = 240) => {
 const numberValue = (value: unknown, field: string, min: number, max: number) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new Error(field + ' doit être compris entre ' + min + ' et ' + max + '.');
   return value;
-};
-const grayscaleColor = (value: string) => {
-  const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
-  const rgb = value.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*([\d.]+))?\s*\)$/i);
-  let red: number; let green: number; let blue: number; let alpha: number | undefined;
-  if (hex) {
-    const raw = hex[1].length === 3 ? hex[1].split('').map((digit) => digit + digit).join('') : hex[1];
-    red = parseInt(raw.slice(0, 2), 16); green = parseInt(raw.slice(2, 4), 16); blue = parseInt(raw.slice(4, 6), 16);
-    alpha = raw.length === 8 ? parseInt(raw.slice(6, 8), 16) / 255 : undefined;
-  } else if (rgb) {
-    red = Number(rgb[1]); green = Number(rgb[2]); blue = Number(rgb[3]); alpha = rgb[4] === undefined ? undefined : Number(rgb[4]);
-  } else return value;
-  const luminance = Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
-  return alpha === undefined ? `rgb(${luminance},${luminance},${luminance})` : `rgba(${luminance},${luminance},${luminance},${alpha})`;
-};
-const grayscalePaint = (value: unknown): unknown => Array.isArray(value) ? value.map(grayscalePaint) : typeof value === 'string' ? grayscaleColor(value) : value;
-// getPaintProperty LEVE une exception quand la propriete n'existe pas pour ce type de couche
-// (par ex. 'fill-color' sur une couche 'background') -- il ne renvoie pas undefined. Interroger
-// les trois proprietes sur toutes les couches faisait donc echouer la toute premiere iteration,
-// ce qui interrompait le handler 'load' avant l'ajout des couches de feu et du relief.
-const COLOR_PROPERTY: Record<string, string> = {
-  background: 'background-color', fill: 'fill-color', line: 'line-color',
-  'fill-extrusion': 'fill-extrusion-color',
-};
-const neutralizeMapStyle = (map: MapLibreMap) => {
-  for (const layer of map.getStyle().layers || []) {
-    const property = COLOR_PROPERTY[layer.type];
-    if (property) {
-      try {
-        const value = map.getPaintProperty(layer.id, property as 'fill-color');
-        if (value !== undefined) map.setPaintProperty(layer.id, property as 'fill-color', grayscalePaint(value));
-      } catch { /* couche sans couleur explicite : on la laisse telle quelle */ }
-    }
-    if (layer.type === 'raster') {
-      try { map.setPaintProperty(layer.id, 'raster-saturation', -1); } catch { /* idem */ }
-    }
-  }
 };
 const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
@@ -456,10 +430,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       const map = new maplibre.Map({
         container: mapNode.current,
         style: BASEMAP_STYLE,
-        center: [defaultIgnition.lng, defaultIgnition.lat], zoom: 11.2, attributionControl: false, cooperativeGestures: false,
+        center: [defaultIgnition.lng, defaultIgnition.lat], zoom: 11.2, maxZoom: MAP_MAX_ZOOM, attributionControl: false, cooperativeGestures: false,
       });
       const setupMapLayers = () => {
-        try { neutralizeMapStyle(map); } catch { /* le fond reste colore, le feu prime */ }
         if (!map.getSource('terrain-dem')) map.addSource('terrain-dem', {
           type: 'raster-dem',
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],

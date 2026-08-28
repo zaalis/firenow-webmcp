@@ -256,6 +256,18 @@ assert.ok(expose.exposure && expose.exposure.populationMenacee >= 0 && expose.ex
   'Bilan des enjeux incohérent.');
 assert.equal(landes(32, 0.9, null).exposure, null,
   'Sans réseau décrit, aucun enjeu ne doit être inventé.');
+// Le raster territorial ne couvre que la Gironde. Sur un domaine situé ailleurs
+// il ne doit produire ni infrastructure ni bilan d'enjeux, même chargé.
+const provence = run({
+  targetMinutes: 240, temperature: 34, humidity: 24, droughtIndex: 0.88, windKph: 30, windBearingDegrees: 135,
+  ignitionLngLat: { lng: 5.4474, lat: 43.3170, radiusM: 0 },
+  domain: { lng: 5.4474, lat: 43.3170, boxMetres: 25000 },
+  terrain: { region: 'marseille' },
+});
+assert.equal(provence.exposure, null,
+  'Hors du massif couvert par le raster, aucun bilan d’enjeux ne doit apparaître.');
+assert.equal(provence.network, null,
+  'Aucun réseau ne doit être nommé hors du massif décrit.');
 
 /* Le réseau tient au lieu, comme la végétation. */
 const reseauA = engine(); reseauA.configureDomain({ lng: IGNITION.lng, lat: IGNITION.lat, boxMetres: 25000 });

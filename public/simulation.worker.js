@@ -396,6 +396,11 @@ function applyLandscape(fuel, anthropic, asset) {
     slope[index] = landscape.slope[sourceIndex];
     aspect[index] = landscape.aspect[sourceIndex] / 255 * 360;
   }
+  // Le raster est charge une fois pour toutes, mais il ne couvre que la Gironde.
+  // Sur un domaine situe ailleurs aucune cellule n'est reprise : fabriquer malgre
+  // tout un calque d'infrastructure vide faisait afficher un bilan d'enjeux a
+  // zero -- et un reseau etiquete « Landes » -- sur Marseille et la Californie.
+  if (!appliedCells) return { anthropic, slope: null, aspect: null, sources: null, appliedCells: 0 };
   return { anthropic: { infra, people, spec: anthropic ? anthropic.spec : NETWORKS.landes }, slope, aspect,
     sources: landscape.sources, appliedCells };
 }

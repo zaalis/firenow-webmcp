@@ -8,9 +8,9 @@
 
 ## 0:18–0:42 — La simulation
 
-**Écran :** vue 2D, lecture du front, météo, score Sørensen, lecture accélérée.
+**Écran :** vue 2D, front actif, couvert dominant, enjeux humains, bloc d’extinction, lecture accélérée.
 
-**Voix :** « Le front est simulé localement dans le navigateur, hors du fil principal. Le moteur utilise les termes de propagation de Rothermel, la pente, le combustible, l’humidité et le vent. FireOps affiche aussi sa marge d’erreur : ici, un score de Sørensen de 0,67. »
+**Voix :** « Le front est simulé localement dans le navigateur, hors du fil principal. Rothermel à deux classes, modèles de combustible standard, trente-cinq espèces réelles, maillage DFCI du massif. Et FireOps affiche ce qu’il ne sait pas : le bandeau indique que le moteur n’est pas calibré, et les écarts mesurés sont publiés dans le dépôt. »
 
 ## 0:42–1:00 — WebMCP, pas une API de chat
 
