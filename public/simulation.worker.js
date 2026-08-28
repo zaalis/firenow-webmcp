@@ -20,14 +20,6 @@ function configureDomain(domain) {
   return `${centre.lng},${centre.lat},${box}`;
 }
 let DOMAIN_KEY = configureDomain(DEFAULT_DOMAIN);
-const FUEL = {
-  0: { name: 'pin-dense', load: 0.071, depth: 0.60, savr: 1800, moistureExtinction: 0.25, multiplier: 2.1, consumedKgM2: 1.8 },
-  1: { name: 'pin-clair', load: 0.050, depth: 0.52, savr: 1700, moistureExtinction: 0.25, multiplier: 1.65, consumedKgM2: 1.2 },
-  2: { name: 'coupe-rase', load: 0.031, depth: 0.32, savr: 1500, moistureExtinction: 0.22, multiplier: 0.55, consumedKgM2: 0.6 },
-  3: { name: 'agricole', load: 0.018, depth: 0.25, savr: 1900, moistureExtinction: 0.18, multiplier: 0.34, consumedKgM2: 0.3 },
-  4: { name: 'urbain', nonBurnable: true },
-  5: { name: 'eau', nonBurnable: true },
-};
 const MIDFLAME_FACTOR = 0.25; // vent a mi-flamme sous couvert de pin maritime
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 const indexOf = (x, y) => y * GRID_SIZE + x;
@@ -36,46 +28,253 @@ function rothermelRateOfSpread(input, fuelCode = 0) {
   const fuel = FUEL[fuelCode] || FUEL[0];
   if (fuel.nonBurnable) return 0;
   const sigma = fuel.savr;
-  const beta = clamp(fuel.load / (fuel.depth * 32), 0.001, 0.12);
+  const totalLoad = fuel.load + (fuel.liveLoad || 0);
+  const beta = clamp(totalLoad / (fuel.depth * 32), 0.001, 0.12);
   const betaOpt = 3.348 * Math.pow(sigma, -0.8189);
   const ratio = beta / betaOpt;
   const exponentA = 133 * Math.pow(sigma, -0.7913);
   const gammaMax = Math.pow(sigma, 1.5) / (495 + 0.0594 * Math.pow(sigma, 1.5));
   const gamma = gammaMax * Math.pow(ratio, exponentA) * Math.exp(exponentA * (1 - ratio));
-  const moistureRatio = clamp(input.moisture / fuel.moistureExtinction, 0, 1.5);
-  const moistureDamping = clamp(1 - 2.59 * moistureRatio + 5.11 * moistureRatio ** 2 - 3.52 * moistureRatio ** 3, 0, 1);
+  const damping = (ratioValue) => {
+    const r = clamp(ratioValue, 0, 1.5);
+    return clamp(1 - 2.59 * r + 5.11 * r ** 2 - 3.52 * r ** 3, 0, 1);
+  };
+  const deadDamping = damping(input.moisture / fuel.moistureExtinction);
+  // Teneur en eau du vegetal vivant : elle chute avec la secheresse cumulee.
+  const liveMoisture = clamp(1.20 - 0.75 * (Number(input.droughtIndex) || 0), 0.45, 1.20);
+  const liveLoad = fuel.liveLoad || 0;
+  let liveDamping = 0;
+  if (liveLoad > 0) {
+    // Rothermel 1972 : la teneur d'extinction du vivant depend de la sécheresse du mort.
+    const w = fuel.load / liveLoad;
+    const liveExtinction = Math.max(fuel.moistureExtinction, 2.9 * w * (1 - input.moisture / fuel.moistureExtinction) - 0.226);
+    liveDamping = damping(liveMoisture / liveExtinction);
+  }
   const mineralDamping = 0.174 * Math.pow(0.01, -0.19);
-  const netFuelLoad = fuel.load * (1 - 0.0555);
-  const reactionIntensity = gamma * netFuelLoad * 8000 * moistureDamping * mineralDamping;
+  const netDead = fuel.load * (1 - 0.0555);
+  const netLive = liveLoad * (1 - 0.0555);
+  const reactionIntensity = gamma * 8000 * mineralDamping * (netDead * deadDamping + netLive * liveDamping);
   const windMph = input.windKph * 0.621371;
-  const midflameFpm = windMph * 88 * MIDFLAME_FACTOR;
+  const midflameFpm = windMph * 88 * (fuel.waf || MIDFLAME_FACTOR);
   const windC = 7.47 * Math.exp(-0.133 * Math.pow(sigma, 0.55));
   const windB = 0.02526 * Math.pow(sigma, 0.54);
   const windE = 0.715 * Math.exp(-3.59e-4 * sigma);
   const windFactor = windC * Math.pow(Math.max(0, midflameFpm), windB) * Math.pow(ratio, -windE);
-  const slopeFactor = 5.275 * Math.pow(beta, -0.3) * Math.tan((input.slopeDegrees * Math.PI) / 180) ** 2;
+  // Une pente absente produisait Math.tan(NaN), donc une vitesse NaN propagee
+  // silencieusement dans tout le modele. On retombe sur le terrain plat.
+  const slopeDegrees = Number.isFinite(input.slopeDegrees) ? input.slopeDegrees : 0;
+  const slopeFactor = 5.275 * Math.pow(beta, -0.3) * Math.tan((slopeDegrees * Math.PI) / 180) ** 2;
   const propagatingFlux = Math.exp((0.792 + 0.681 * Math.sqrt(sigma)) * (beta + 0.1)) / (192 + 0.2595 * sigma);
   const effectiveHeating = Math.exp(-138 / sigma);
-  const heatOfPreignition = 250 + 1116 * input.moisture;
-  const bulkDensity = fuel.load / fuel.depth;
+  // Qig pondere par la charge : allumer du vegetal vert coute bien plus cher.
+  const qigDead = 250 + 1116 * input.moisture;
+  const qigLive = 250 + 1116 * clamp(1.20 - 0.75 * (Number(input.droughtIndex) || 0), 0.45, 1.20);
+  const heatOfPreignition = (fuel.load * qigDead + (fuel.liveLoad || 0) * qigLive) / Math.max(1e-6, totalLoad);
+  const bulkDensity = totalLoad / fuel.depth;
   const feetPerMinute = (reactionIntensity * propagatingFlux * (1 + windFactor + slopeFactor)) / Math.max(0.001, bulkDensity * effectiveHeating * heatOfPreignition);
-  return Math.max(0, feetPerMinute * 0.3048 * fuel.multiplier);
+  const metresPerMinute = feetPerMinute * 0.3048 * (fuel.multiplier || 1);
+  return Number.isFinite(metresPerMinute) ? Math.max(0, metresPerMinute) : 0;
 }
 
+/* ---------------------------------------------------------------------------
+ * Combustibles.
+ *
+ * L'ancienne table decrivait quatre types landais et la carte etait un motif
+ * fige dans l'espace de la grille : le moteur croyait simuler du pin maritime
+ * partout sur la Terre, et deplacer le cadrage deplacait une riviere fictive,
+ * ce qui faisait varier la surface d'un facteur vingt sur un meme feu.
+ *
+ * On repart des modeles de combustible standard (Anderson 1982, Scott &
+ * Burgan 2005), auxquels on rattache un registre d'especes reelles. Chaque
+ * espece declare sa presence relative par region : la mosaique est tiree de
+ * ces proportions, et le bruit qui la dessine est ancre sur les coordonnees
+ * geographiques -- un meme lieu redonne toujours le meme paysage, quel que
+ * soit le cadrage de la fenetre.
+ *
+ * load : litiere fine 1 h en lb/ft2 (entree de Rothermel)
+ * depth : epaisseur du lit de combustible en pieds
+ * savr : rapport surface/volume en 1/ft
+ * mx : teneur en eau d'extinction
+ * consumed : combustible consomme dans le front de flammes en kg/m2 (Byram)
+ * ------------------------------------------------------------------------- */
+const FUEL_MODELS = {
+  // Herbacees
+  GR1: { label: 'Herbe rase',            load: 0.034, depth: 0.4, savr: 3500, mx: 0.15, consumed: 0.20, liveLoad: 0.01, waf: 0.50 },
+  GR2: { label: 'Herbe haute',           load: 0.092, depth: 1.0, savr: 3000, mx: 0.15, consumed: 0.45, liveLoad: 0.02, waf: 0.50 },
+  GR4: { label: 'Herbe continue sèche',  load: 0.138, depth: 2.0, savr: 2000, mx: 0.15, consumed: 0.70, liveLoad: 0.03, waf: 0.50 },
+  // Herbe et arbustes melanges
+  GS2: { label: 'Herbe et arbustes',     load: 0.110, depth: 1.5, savr: 2000, mx: 0.20, consumed: 0.90, liveLoad: 0.06, waf: 0.45 },
+  // Arbustes
+  SH2: { label: 'Arbustes bas',          load: 0.115, depth: 1.0, savr: 2000, mx: 0.20, consumed: 1.10, liveLoad: 0.08, waf: 0.45 },
+  SH5: { label: 'Arbustes hauts secs',   load: 0.252, depth: 6.0, savr: 1600, mx: 0.15, consumed: 2.60, liveLoad: 0.20, waf: 0.40 },
+  SH7: { label: 'Arbustes très denses',  load: 0.312, depth: 6.0, savr: 1600, mx: 0.15, consumed: 3.20, liveLoad: 0.25, waf: 0.38 },
+  // Litieres forestieres
+  TL2: { label: 'Litière feuillus',      load: 0.062, depth: 0.2, savr: 2000, mx: 0.25, consumed: 0.55, liveLoad: 0.00, waf: 0.12 },
+  TL8: { label: 'Litière résineux',      load: 0.138, depth: 0.3, savr: 1800, mx: 0.35, consumed: 0.95, liveLoad: 0.00, waf: 0.12 },
+  // Forets avec sous-etage
+  TU1: { label: 'Sous-bois clair',       load: 0.092, depth: 0.6, savr: 2000, mx: 0.20, consumed: 1.10, liveLoad: 0.02, waf: 0.30 },
+  TU5: { label: 'Sous-bois dense',       load: 0.184, depth: 1.0, savr: 1800, mx: 0.25, consumed: 2.00, liveLoad: 0.05, waf: 0.28 },
+  // Cultures et sols nus
+  AGR: { label: 'Culture',               load: 0.030, depth: 0.4, savr: 1900, mx: 0.18, consumed: 0.25, liveLoad: 0.01, waf: 0.50 },
+  ROC: { label: 'Rocaille',              nonBurnable: true },
+  URB: { label: 'Zone bâtie',            nonBurnable: true },
+  EAU: { label: 'Eau',                   nonBurnable: true },
+};
+
+/* Registre d'especes. `regions` donne la part de surface occupee dans chaque
+ * region ; les valeurs sont normalisees a la generation. */
+const SPECIES = [
+  // --- Gironde : massif des Landes de Gascogne -----------------------------
+  { id: 'pinus-pinaster',   nom: 'Pin maritime',        latin: 'Pinus pinaster',        strate: 'conifère', model: 'TU5', regions: { gironde: 0.44, marseille: 0.04 } },
+  { id: 'pinus-pinaster-j', nom: 'Pin maritime (jeune)', latin: 'Pinus pinaster',       strate: 'conifère', model: 'TU1', regions: { gironde: 0.14 } },
+  { id: 'molinia',          nom: 'Molinie bleue',       latin: 'Molinia caerulea',      strate: 'herbacée', model: 'GR4', regions: { gironde: 0.09 } },
+  { id: 'pteridium',        nom: 'Fougère aigle',       latin: 'Pteridium aquilinum',   strate: 'herbacée', model: 'GS2', regions: { gironde: 0.06, marseille: 0.01 } },
+  { id: 'ulex-europaeus',   nom: 'Ajonc d’Europe',      latin: 'Ulex europaeus',        strate: 'arbustive', model: 'SH5', regions: { gironde: 0.05 } },
+  { id: 'calluna',          nom: 'Bruyère callune',     latin: 'Calluna vulgaris',      strate: 'arbustive', model: 'SH2', regions: { gironde: 0.04 } },
+  { id: 'quercus-robur',    nom: 'Chêne pédonculé',     latin: 'Quercus robur',         strate: 'feuillu',  model: 'TL2', regions: { gironde: 0.04 } },
+  { id: 'quercus-pyrenaica', nom: 'Chêne tauzin',       latin: 'Quercus pyrenaica',     strate: 'feuillu',  model: 'TL2', regions: { gironde: 0.03 } },
+  { id: 'coupe-rase',       nom: 'Coupe rase',          latin: '—',                     strate: 'ouverte',  model: 'GR2', regions: { gironde: 0.06 } },
+  { id: 'zea-mays',         nom: 'Maïs / culture',      latin: 'Zea mays',              strate: 'culture',  model: 'AGR', regions: { gironde: 0.05, 'california-chaparral': 0.03 } },
+
+  // --- Marseille : Provence calcaire ---------------------------------------
+  { id: 'pinus-halepensis', nom: 'Pin d’Alep',          latin: 'Pinus halepensis',      strate: 'conifère', model: 'TU5', regions: { marseille: 0.30 } },
+  { id: 'quercus-ilex',     nom: 'Chêne vert',          latin: 'Quercus ilex',          strate: 'feuillu',  model: 'TU1', regions: { marseille: 0.16 } },
+  { id: 'quercus-coccifera', nom: 'Chêne kermès',       latin: 'Quercus coccifera',     strate: 'arbustive', model: 'SH5', regions: { marseille: 0.12 } },
+  { id: 'garrigue',         nom: 'Garrigue (romarin, thym, ciste)', latin: 'Rosmarinus / Cistus', strate: 'arbustive', model: 'SH2', regions: { marseille: 0.14 } },
+  { id: 'juniperus-oxy',    nom: 'Genévrier cade',      latin: 'Juniperus oxycedrus',   strate: 'arbustive', model: 'SH5', regions: { marseille: 0.05 } },
+  { id: 'arbutus',          nom: 'Arbousier (maquis)',  latin: 'Arbutus unedo',         strate: 'arbustive', model: 'SH7', regions: { marseille: 0.05 } },
+  { id: 'pinus-pinea',      nom: 'Pin parasol',         latin: 'Pinus pinea',           strate: 'conifère', model: 'TL8', regions: { marseille: 0.03 } },
+  { id: 'olea',             nom: 'Oliveraie',           latin: 'Olea europaea',         strate: 'culture',  model: 'AGR', regions: { marseille: 0.04 } },
+  { id: 'brachypodium',     nom: 'Pelouse sèche',       latin: 'Brachypodium retusum',  strate: 'herbacée', model: 'GR1', regions: { marseille: 0.04 } },
+  { id: 'calcaire',         nom: 'Barre rocheuse',      latin: '—',                     strate: 'minérale', model: 'ROC', regions: { marseille: 0.03 } },
+
+  // --- Californie : Grand Bassin, chaparral et forets ----------------------
+  { id: 'artemisia',        nom: 'Armoise (big sagebrush)', latin: 'Artemisia tridentata', strate: 'arbustive', model: 'SH2', regions: { 'california-basin': 0.30 } },
+  { id: 'bromus-tectorum',  nom: 'Brome des toits',     latin: 'Bromus tectorum',       strate: 'herbacée', model: 'GR2', regions: { 'california-basin': 0.24 } },
+  { id: 'purshia',          nom: 'Bitterbrush',         latin: 'Purshia tridentata',    strate: 'arbustive', model: 'SH2', regions: { 'california-basin': 0.10 } },
+  { id: 'pinus-monophylla', nom: 'Pin à feuille unique', latin: 'Pinus monophylla',     strate: 'conifère', model: 'TU1', regions: { 'california-basin': 0.12, 'california-sierra': 0.08 } },
+  { id: 'juniperus-osteo',  nom: 'Genévrier de l’Utah', latin: 'Juniperus osteosperma', strate: 'conifère', model: 'TU1', regions: { 'california-basin': 0.11 } },
+  { id: 'adenostoma',       nom: 'Chamise (chaparral)', latin: 'Adenostoma fasciculatum', strate: 'arbustive', model: 'SH5', regions: { 'california-chaparral': 0.30 } },
+  { id: 'arctostaphylos',   nom: 'Manzanita',           latin: 'Arctostaphylos spp.',   strate: 'arbustive', model: 'SH7', regions: { 'california-chaparral': 0.16, 'california-sierra': 0.10 } },
+  { id: 'ceanothus',        nom: 'Ceanothus',           latin: 'Ceanothus spp.',        strate: 'arbustive', model: 'SH5', regions: { 'california-chaparral': 0.14 } },
+  { id: 'quercus-agrifolia', nom: 'Chêne vert de Californie', latin: 'Quercus agrifolia', strate: 'feuillu', model: 'TL2', regions: { 'california-chaparral': 0.10 } },
+  { id: 'quercus-douglasii', nom: 'Chêne bleu',         latin: 'Quercus douglasii',     strate: 'feuillu',  model: 'TL2', regions: { 'california-chaparral': 0.08, 'california-sierra': 0.08 } },
+  { id: 'pinus-ponderosa',  nom: 'Pin ponderosa',       latin: 'Pinus ponderosa',       strate: 'conifère', model: 'TL8', regions: { 'california-sierra': 0.26 } },
+  { id: 'pinus-jeffreyi',   nom: 'Pin de Jeffrey',      latin: 'Pinus jeffreyi',        strate: 'conifère', model: 'TL8', regions: { 'california-sierra': 0.18 } },
+  { id: 'pseudotsuga',      nom: 'Douglas',             latin: 'Pseudotsuga menziesii', strate: 'conifère', model: 'TU5', regions: { 'california-sierra': 0.16 } },
+  { id: 'avena-bromus',     nom: 'Prairie annuelle',    latin: 'Avena / Bromus',        strate: 'herbacée', model: 'GR4', regions: { 'california-basin': 0.08, 'california-chaparral': 0.18, 'california-sierra': 0.08 } },
+  { id: 'playa',            nom: 'Sol nu / rocaille',   latin: '—',                     strate: 'minérale', model: 'ROC', regions: { 'california-basin': 0.05, 'california-chaparral': 0.04, 'california-sierra': 0.06 } },
+];
+
+/* Codes numeriques : la grille est un Uint8Array. */
+const URBAN_CODE = 254;
+const WATER_CODE = 255;
+const FUEL = {};
+SPECIES.forEach((species, index) => {
+  const model = FUEL_MODELS[species.model];
+  species.code = index;
+  FUEL[index] = {
+    name: species.nom, species: species.id, latin: species.latin, strate: species.strate,
+    model: species.model, modelLabel: model.label,
+    nonBurnable: Boolean(model.nonBurnable),
+    load: model.load, depth: model.depth, savr: model.savr,
+    liveLoad: model.liveLoad || 0, waf: model.waf || 0.25,
+    moistureExtinction: model.mx, consumedKgM2: model.consumed,
+    // Plus aucun coefficient d'ajustement : Rothermel est utilise tel quel.
+    multiplier: 1,
+  };
+});
+FUEL[URBAN_CODE] = { name: 'Zone bâtie', nonBurnable: true, strate: 'urbaine' };
+FUEL[WATER_CODE] = { name: 'Eau', nonBurnable: true, strate: 'hydrique' };
+
+const REGIONS = {
+  'gironde':              { label: 'Landes de Gascogne',      pays: 'France' },
+  'marseille':            { label: 'Provence calcaire',       pays: 'France' },
+  'california-basin':     { label: 'Grand Bassin (steppe à armoise)', pays: 'États-Unis' },
+  'california-chaparral': { label: 'Chaparral cismontain',    pays: 'États-Unis' },
+  'california-sierra':    { label: 'Sierra Nevada (forêt montagnarde)', pays: 'États-Unis' },
+};
+// L'ancien identifiant unique pointait sur un melange incoherent ; il retombe
+// desormais sur la steppe, ou se sont produits les grands feux de 2026.
+const REGION_ALIAS = { california: 'california-basin' };
+function speciesMix(rawRegion) {
+  const region = REGIONS[rawRegion] ? rawRegion : (REGION_ALIAS[rawRegion] || 'gironde');
+  const entries = SPECIES
+    .filter((s) => (s.regions[region] || 0) > 0)
+    .map((s) => ({ code: s.code, weight: s.regions[region] }));
+  const total = entries.reduce((sum, e) => sum + e.weight, 0) || 1;
+  let cumulative = 0;
+  return entries.map((e) => { cumulative += e.weight / total; return { code: e.code, upTo: cumulative }; });
+}
+
+/* Bruit ancre sur la geographie : le meme lieu redonne toujours le meme
+ * paysage, quel que soit le centrage de la fenetre de simulation. */
+function hashLattice(ix, iy, salt) {
+  let h = Math.imul(ix | 0, 374761393) ^ Math.imul(iy | 0, 668265263) ^ Math.imul(salt | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function valueNoise(x, y, salt) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = hashLattice(ix, iy, salt), b = hashLattice(ix + 1, iy, salt);
+  const c = hashLattice(ix, iy + 1, salt), d = hashLattice(ix + 1, iy + 1, salt);
+  const top = a + (b - a) * sx, bottom = c + (d - c) * sx;
+  return top + (bottom - top) * sy;
+}
+function fractalNoise(x, y, salt) {
+  let value = 0, amplitude = 0.5, frequency = 1, norm = 0;
+  for (let octave = 0; octave < 4; octave += 1) {
+    value += amplitude * valueNoise(x * frequency, y * frequency, salt + octave);
+    norm += amplitude; frequency *= 2; amplitude *= 0.5;
+  }
+  return value / norm;
+}
+const PATCH_METRES = 900; // taille caracteristique d'un peuplement
+function landscapeField(mx, my) {
+  return fractalNoise(mx, my, 1013) + (fractalNoise(mx * 3.1, my * 3.1, 7717) - 0.5) * 0.12;
+}
+// Distribution de reference du champ, echantillonnee loin de toute region.
+const FIELD_CDF = (() => {
+  const samples = new Float64Array(8192);
+  for (let i = 0; i < samples.length; i += 1) {
+    const x = ((i * 7919) % 2039) + (i % 37) * 0.317;
+    const y = ((i * 6271) % 1811) + (i % 53) * 0.173;
+    samples[i] = landscapeField(x, y);
+  }
+  return samples.sort();
+})();
+function fieldQuantile(value) {
+  let low = 0, high = FIELD_CDF.length;
+  while (low < high) { const mid = (low + high) >> 1; if (FIELD_CDF[mid] < value) low = mid + 1; else high = mid; }
+  return low / FIELD_CDF.length;
+}
+
+/* Espece a une coordonnee exacte, independamment de toute grille : c est ce
+ * qui garantit qu un lieu garde sa vegetation quel que soit le cadrage. */
+function speciesAt(lng, lat, region) {
+  const mix = speciesMix(region);
+  const mx = (lng * 111320 * Math.cos(lat * Math.PI / 180)) / PATCH_METRES;
+  const my = (lat * 111320) / PATCH_METRES;
+  const quantile = fieldQuantile(landscapeField(mx, my));
+  let code = mix[mix.length - 1].code;
+  for (const entry of mix) if (quantile <= entry.upTo) { code = entry.code; break; }
+  return code;
+}
 function generateFuelMask(terrain) {
+  const region = (terrain && terrain.region) || 'gironde';
   const mask = new Uint8Array(GRID_SIZE * GRID_SIZE);
+  // Chaque cellule lit l'espece a sa propre coordonnee : la mosaique tient au
+  // lieu, jamais a la position de la cellule dans la grille.
   for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
-    const nx = x / (GRID_SIZE - 1); const ny = y / (GRID_SIZE - 1);
-    let code = ((x * 17 + y * 31) % 29 < 6) ? 1 : 0;
-    if ((x + 2 * y) % 47 < 3 || (x > 86 && y > 61)) code = 2;
-    if (x > 99 || (x > 78 && y < 26)) code = 3;
-    if (((nx - 0.66) / 0.055) ** 2 + ((ny - 0.40) / 0.045) ** 2 < 1 || ((nx - 0.31) / 0.042) ** 2 + ((ny - 0.50) / 0.038) ** 2 < 1) code = 4;
-    if (Math.abs(nx - (0.13 + 0.035 * Math.sin(ny * 15))) < 0.008 && y > 16) code = 5;
-    mask[indexOf(x, y)] = code;
+    const [lng, lat] = lngLatForCell(x, y);
+    mask[indexOf(x, y)] = speciesAt(lng, lat, region);
   }
   if (terrain) applyTerrain(mask, terrain);
   return mask;
 }
+
 /* Geographie reelle du scenario : trait de cote, plans d'eau, zones baties.
  * Sans elle un feu cotier se propage sur la mer, ce qui rend toute
  * comparaison avec un evenement reel sans objet. */
@@ -87,9 +286,9 @@ function applyTerrain(mask, terrain) {
   for (let y = 0; y < GRID_SIZE; y += 1) for (let x = 0; x < GRID_SIZE; x += 1) {
     const [lng, lat] = lngLatForCell(x, y);
     let code = mask[indexOf(x, y)];
-    if (Number.isFinite(terrain.oceanWestOfLng) && lng < terrain.oceanWestOfLng) code = 5;
-    for (const body of terrain.water || []) if (metresBetween(lng, lat, body) < body.radiusM) code = 5;
-    for (const town of terrain.urban || []) if (metresBetween(lng, lat, town) < town.radiusM) code = 4;
+    if (Number.isFinite(terrain.oceanWestOfLng) && lng < terrain.oceanWestOfLng) code = WATER_CODE;
+    for (const body of terrain.water || []) if (metresBetween(lng, lat, body) < body.radiusM) code = WATER_CODE;
+    for (const town of terrain.urban || []) if (metresBetween(lng, lat, town) < town.radiusM) code = URBAN_CODE;
     mask[indexOf(x, y)] = code;
   }
 }
@@ -164,11 +363,22 @@ const FLOW_PER_METRE_DIVISOR = 400;     // L/min par metre de front, par kW/m
 // tankL : capacite ; flowLpm : debit pompe en attaque ; refillMin : aller-retour
 // remplissage. Le debit soutenu tient compte du temps de reapprovisionnement.
 const APPLIANCES = {
-  CCF: { label: 'Camion-citerne feux de forêts', tankL: 4000, flowLpm: 1000, refillMin: 20, offRoad: true,  heavy: false },
-  FPT: { label: 'Fourgon pompe-tonne',           tankL: 3000, flowLpm: 2000, refillMin: 25, offRoad: false, heavy: false },
-  HBE: { label: 'Hélicoptère bombardier d’eau',  tankL: 1500, flowLpm: 1500, refillMin: 11, offRoad: true,  heavy: true },
-  CL4: { label: 'Canadair CL-415', tankL: 6137, flowLpm: 6137, refillMin: 13, offRoad: true,  heavy: true },
-  DOZ: { label: 'Bulldozer',                     tankL: 0,    flowLpm: 0,    refillMin: 0,  offRoad: true,  heavy: true, lineMetresPerHour: 320 },
+  // --- Moyens terrestres --------------------------------------------------
+  VLHR:  { label: 'Véhicule léger hors route',   famille: 'terrestre', tankL: 600,   flowLpm: 250,  refillMin: 15, offRoad: true,  heavy: false },
+  CCF:   { label: 'Camion-citerne feux de forêts', famille: 'terrestre', tankL: 4000,  flowLpm: 1000, refillMin: 20, offRoad: true,  heavy: false },
+  CCFS:  { label: 'Camion-citerne super',        famille: 'terrestre', tankL: 8000,  flowLpm: 2000, refillMin: 25, offRoad: true,  heavy: true },
+  FPT:   { label: 'Fourgon pompe-tonne',         famille: 'terrestre', tankL: 3000,  flowLpm: 2000, refillMin: 25, offRoad: false, heavy: false },
+  CCGC:  { label: 'Camion-citerne grande capacité', famille: 'terrestre', tankL: 13000, flowLpm: 2000, refillMin: 35, offRoad: false, heavy: true },
+  // --- Moyens aeriens -----------------------------------------------------
+  HBE:   { label: 'Hélicoptère bombardier d’eau', famille: 'aérien',   tankL: 1000,  flowLpm: 1000, refillMin: 8,  offRoad: true,  heavy: true },
+  HELIT: { label: 'Hélicoptère lourd S-64',      famille: 'aérien',   tankL: 9500,  flowLpm: 9500, refillMin: 14, offRoad: true,  heavy: true },
+  AT8:   { label: 'Air Tractor AT-802F',         famille: 'aérien',   tankL: 3100,  flowLpm: 3100, refillMin: 18, offRoad: true,  heavy: true },
+  CL4:   { label: 'Canadair CL-415',             famille: 'aérien',   tankL: 6137,  flowLpm: 6137, refillMin: 13, offRoad: true,  heavy: true },
+  DASH:  { label: 'Dash-8 Q400MR',               famille: 'aérien',   tankL: 10000, flowLpm: 10000, refillMin: 30, offRoad: true, heavy: true },
+  A400:  { label: 'A400M (retardant)',           famille: 'aérien',   tankL: 20000, flowLpm: 20000, refillMin: 90, offRoad: true, heavy: true },
+  // --- Genie et travail manuel -------------------------------------------
+  DOZ:   { label: 'Bulldozer',                   famille: 'génie',    tankL: 0, flowLpm: 0, refillMin: 0, offRoad: true, heavy: true, lineMetresPerHour: 320 },
+  CREW:  { label: 'Équipe au sol (20 sapeurs)',  famille: 'génie',    tankL: 0, flowLpm: 0, refillMin: 0, offRoad: true, heavy: false, lineMetresPerHour: 90 },
 };
 function sustainedFlowLpm(code) {
   const a = APPLIANCES[code]; if (!a || !a.tankL) return 0;
@@ -210,8 +420,10 @@ function buildSuppressionMask(deployments, input, sim) {
     if (!Number.isFinite(unit.lng) || !Number.isFinite(unit.lat)) continue;
     const spec = APPLIANCES[unit.type] || APPLIANCES.CCF;
     const count = clamp(unit.count || 1, 1, 50);
-    const flow = sustainedFlowLpm(unit.type) * count;
-    const line = (spec.lineMetresPerHour || 0) * count;
+    // 100 % = engin frais ; en dessous, la logistique bride le debit tenu.
+    const autonomy = clamp(Number.isFinite(unit.autonomy) ? unit.autonomy / 100 : 1, 0.1, 1);
+    const flow = sustainedFlowLpm(unit.type) * count * autonomy;
+    const line = (spec.lineMetresPerHour || 0) * count * autonomy;
     totals.deployedFlowLpm += flow; totals.lineMetresPerHour += line; totals.appliances += count;
     totals.byType[unit.type] = (totals.byType[unit.type] || 0) + count;
 
@@ -297,9 +509,10 @@ function spotFrom(sim, input, index, time, bearing, plume, heap) {
   const fuelCode = sim.fuel[index];
   const ros = rothermelRateOfSpread(input, fuelCode);
   const intensity = firelineIntensity(fuelCode, ros);
-  if (intensity < SPOT_MIN_INTENSITY_KW_M) return 0;
+  // Comparaison inversee : NaN < seuil est faux, la garde laissait passer.
+  if (!(intensity >= SPOT_MIN_INTENSITY_KW_M)) return 0;
   // Un panache orageux multiplie la frequence et la portee des projections.
-  const rate = clamp((intensity - SPOT_MIN_INTENSITY_KW_M) / 20000, 0, 1) * 0.10 * plume;
+  const rate = clamp((intensity - SPOT_MIN_INTENSITY_KW_M) / 20000, 0, 1) * 0.03 * plume; // ~3 % des cellules qui s allument projettent un brandon tenu
   if (spotNoise(index, 1) >= rate) return 0;
   const flameLength = 0.0775 * Math.pow(intensity, 0.46);
   const windKph = Math.max(1, input.windKph);
@@ -343,7 +556,11 @@ function propagate(sim, input, targetMinutes) {
   // Alexander doit recevoir le meme vent que Rothermel (mi-flamme, facteur 0,25).
   // Avec le vent brut on obtenait L/B ~ 6 : une ellipse plus fine qu'une cellule de 195 m,
   // que la grille ne peut pas representer -- la surface s'effondrait.
-  const lengthToBreadth = clamp(1 + 0.25 * input.windKph * 0.621371 * MIDFLAME_FACTOR, 1, 8); const heap = new MinHeap();
+  // Rapport longueur/largeur : la relation lineaire bricolee ici donnait 2,1
+  // a 28 km/h la ou Alexander (1985) donne 3,6. Un feu trop rond s'etale
+  // lateralement bien plus qu'il ne devrait, ce qui gonfle enormement la
+  // surface. On utilise la relation publiee, sur le vent a 10 m.
+  const lengthToBreadth = clamp(1 + 8.729 * Math.pow(1 - Math.exp(-0.030 * Math.max(0, input.windKph)), 2.155), 1, 8); const heap = new MinHeap();
   // Panache orageux : phenomene observe a Saumos le 24 juillet 2026.
   const plume = input.plumeDriven ? 2.4 : 1;
   const spotting = input.spotting !== false;
@@ -566,6 +783,18 @@ function analyseFront(sim, input, lengthToBreadth, bearing) {
     headM, flankM, rearM,
   };
 }
+/* Part de chaque espece reellement presente sur la grille simulee. */
+function fuelComposition(mask) {
+  const counts = new Map();
+  for (const code of mask) counts.set(code, (counts.get(code) || 0) + 1);
+  const total = mask.length;
+  return [...counts.entries()]
+    .map(([code, n]) => ({
+      code, nom: (FUEL[code] || {}).name || '?', strate: (FUEL[code] || {}).strate || '—',
+      model: (FUEL[code] || {}).model || '—', part: Number((n / total).toFixed(4)),
+    }))
+    .sort((a, b) => b.part - a.part);
+}
 function resultFor(sim, input, spread) {
   const headRos = rothermelRateOfSpread(input, 0);
   const front = analyseFront(sim, input, spread.lengthToBreadth, spread.bearing);
@@ -596,6 +825,8 @@ function resultFor(sim, input, spread) {
     ignition: sim.ignition || IGNITION, bounds: BOUNDS, simulationMinutes: sim.currentMinutes,
     rateOfSpreadMetersPerMinute: Number(headRos.toFixed(2)),
     fuelMoisture: Number(input.moisture.toFixed(3)),
+    region: (input.terrain && input.terrain.region) || 'gironde',
+    fuelComposition: fuelComposition(sim.fuel),
     lengthToBreadth: Number(spread.lengthToBreadth.toFixed(2)),
     totalBurnedHa: Number((spread.affectedCells * CELL_METERS * CELL_METERS / 10000).toFixed(2)),
     affectedCells: spread.affectedCells, burningCells: spread.burningCells, spotFires: spread.spotFires || 0,
@@ -627,5 +858,5 @@ const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOM
 const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread;{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);spread=propagate(sim,input,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,input,spread);if(input.includeForecast){const forecast=cloneState(sim);const projected=propagate(forecast,input,target+180);result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
+self.__fireopsTest={speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,firelineIntensity,sustainedFlowLpm,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};

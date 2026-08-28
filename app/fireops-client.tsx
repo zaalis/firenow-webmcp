@@ -10,8 +10,9 @@ import {
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
 type Domain = { lng: number; lat: number; boxMetres: number };
-type Terrain = { oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
-type Deployment = { id: string; type: string; count: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
+type Region = 'gironde' | 'marseille' | 'california-basin' | 'california-chaparral' | 'california-sierra';
+type Terrain = { region?: Region; oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
+type Deployment = { id: string; type: string; count: number; autonomy?: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
 type Plan = {
   id: string; name: string; intention: string; deployments: Deployment[];
@@ -31,7 +32,7 @@ type Suppression = {
   attackMode: 'directe' | 'moyens-lourds' | 'indirect'; appliances: number; lineMetresPerHour: number;
 };
 type Scenario = {
-  id: string; name: string; createdAt: number; preset: 'landiras' | 'saumos' | 'blank';
+  id: string; name: string; createdAt: number; preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank';
   ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[];
   domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
@@ -52,13 +53,32 @@ const initialWeather: Weather = {
   windSpeed: 22, windDirection: 'Nord-ouest', windBearing: 135, gusts: 38,
   temperature: 39, humidity: 19, droughtIndex: 0.95,
 };
+// Le parc reprend les caracteristiques constructeur portees par le moteur :
+// cuve, debit de pompe et duree de remplissage donnent le debit soutenu.
 const units = [
-  { code: 'CCF', count: 18, label: 'Camions-citernes', autonomy: 82 },
-  { code: 'FPT', count: 6, label: 'Fourgons pompe', autonomy: 91 },
-  { code: 'HBE', count: 2, label: 'Hélicoptères', autonomy: 64 },
-  { code: 'CL4', count: 4, label: 'Canadair CL-415', autonomy: 58 },
-  { code: 'DOZ', count: 3, label: 'Bulldozers', autonomy: 76 },
+  { code: 'VLHR', count: 14, label: 'Véhicules légers hors route', famille: 'terrestre', cuve: '600 L' },
+  { code: 'CCF',  count: 18, label: 'Camions-citernes feux de forêts', famille: 'terrestre', cuve: '4 000 L' },
+  { code: 'CCFS', count: 6,  label: 'Camions-citernes super', famille: 'terrestre', cuve: '8 000 L' },
+  { code: 'FPT',  count: 6,  label: 'Fourgons pompe-tonne', famille: 'terrestre', cuve: '3 000 L' },
+  { code: 'CCGC', count: 4,  label: 'Citernes grande capacité', famille: 'terrestre', cuve: '13 000 L' },
+  { code: 'HBE',  count: 2,  label: 'Hélicoptères bombardiers d’eau', famille: 'aérien', cuve: '1 000 L' },
+  { code: 'HELIT', count: 1, label: 'Hélicoptère lourd S-64', famille: 'aérien', cuve: '9 500 L' },
+  { code: 'AT8',  count: 4,  label: 'Air Tractor AT-802F', famille: 'aérien', cuve: '3 100 L' },
+  { code: 'CL4',  count: 4,  label: 'Canadair CL-415', famille: 'aérien', cuve: '6 137 L' },
+  { code: 'DASH', count: 2,  label: 'Dash-8 Q400MR', famille: 'aérien', cuve: '10 000 L' },
+  { code: 'A400', count: 1,  label: 'A400M (retardant)', famille: 'aérien', cuve: '20 000 L' },
+  { code: 'DOZ',  count: 3,  label: 'Bulldozers', famille: 'génie', cuve: '320 m/h' },
+  { code: 'CREW', count: 8,  label: 'Équipes au sol (20 sapeurs)', famille: 'génie', cuve: '90 m/h' },
 ];
+const REGION_LABEL: Record<string, string> = {
+  gironde: 'Landes de Gascogne',
+  marseille: 'Provence calcaire',
+  'california-basin': 'Grand Bassin · steppe à armoise',
+  'california-chaparral': 'Chaparral cismontain',
+  'california-sierra': 'Sierra Nevada · forêt montagnarde',
+};
+const FAMILLES: string[] = ['terrestre', 'aérien', 'génie'];
+const PARC_TOTAL = units.reduce((sum, unit) => sum + unit.count, 0);
 const planDescriptions = [
   'Concentration des moyens sur le flanc nord et la lisière du village.',
   'Répartition mobile sur les deux flancs avec une réserve centrale.',
@@ -81,6 +101,7 @@ const SAUMOS_DOMAIN: Domain = { lng: -1.10, lat: 44.80, boxMetres: 50000 };
 // Sans le trait de cote ni les plans d'eau, la simulation propage le feu sur
 // l'Atlantique et toute comparaison avec l'evenement reel perd son sens.
 const SAUMOS_TERRAIN: Terrain = {
+  region: 'gironde',
   oceanWestOfLng: -1.205,
   water: [
     { lng: -1.135, lat: 44.990, radiusM: 3200 },  // étang de Lacanau
@@ -92,6 +113,43 @@ const SAUMOS_TERRAIN: Terrain = {
     { lng: -0.987, lat: 44.921, radiusM: 700 },   // Saumos
   ],
 };
+// Massif de l'Etoile, au nord-est de Marseille. Mistral de nord-ouest,
+// garrigue et pin d'Alep : le contraste avec les Landes est maximal.
+const ETOILE_IGNITION: Ignition = { lng: 5.4474, lat: 43.3170, radiusM: 0 };
+const ETOILE_DOMAIN: Domain = { lng: 5.4474, lat: 43.3170, boxMetres: 25000 };
+const ETOILE_TERRAIN: Terrain = {
+  region: 'marseille',
+  urban: [
+    { lng: 5.3698, lat: 43.2965, radiusM: 4200 },  // Marseille nord
+    { lng: 5.4830, lat: 43.3370, radiusM: 1400 },  // Allauch
+    { lng: 5.5620, lat: 43.3480, radiusM: 1200 },  // Plan-de-Cuques / Camoins
+  ],
+};
+const etoileWeather = (): Weather => ({
+  windSpeed: 55, windDirection: 'Nord-ouest', windBearing: 135, gusts: 82,
+  temperature: 34, humidity: 24, droughtIndex: 0.88,
+});
+const etoileUnits = (): Deployment[] => [
+  { id: 'eccf1', type: 'CCF', count: 20, sector: 'Lisière urbaine', mission: 'Défense des habitations', lng: 5.4130, lat: 43.3050, radiusM: 2400, capacity: 0.09, autonomy: 90 },
+  { id: 'ecl41', type: 'CL4', count: 4, sector: 'Tête', mission: 'Largages sur la tête', lng: 5.4900, lat: 43.2960, radiusM: 3000, capacity: 0.08, autonomy: 80 },
+  { id: 'ehbe1', type: 'HBE', count: 3, sector: 'Flanc est', mission: 'Appui héliporté', lng: 5.4980, lat: 43.3300, radiusM: 2200, capacity: 0.08, autonomy: 75 },
+  { id: 'ecrw1', type: 'CREW', count: 6, sector: 'Crêtes', mission: 'Ligne d’appui sur crête', lng: 5.4600, lat: 43.3400, radiusM: 2000, capacity: 0.05, autonomy: 85 },
+];
+
+// Bug Fire : Long Valley, comte de Lassen. Sagebrush, herbe et pinyon-genevrier,
+// vent d'ouest soutenu (Washoe Zephyr), moyens tres legers.
+const BUG_IGNITION: Ignition = { lng: -120.0366, lat: 39.7229, radiusM: 0 };
+const BUG_DOMAIN: Domain = { lng: -119.90, lat: 39.72, boxMetres: 50000 };
+const BUG_TERRAIN: Terrain = { region: 'california-basin' };
+const bugWeather = (): Weather => ({
+  windSpeed: 28, windDirection: 'Ouest', windBearing: 95, gusts: 56,
+  temperature: 38, humidity: 12, droughtIndex: 0.92,
+});
+const bugUnits = (): Deployment[] => [
+  { id: 'bccf1', type: 'CCF', count: 12, sector: 'Flanc sud', mission: 'Tenue du flanc', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
+  { id: 'bdoz1', type: 'DOZ', count: 4, sector: 'Est', mission: 'Ligne d’appui', lng: -119.9700, lat: 39.7420, radiusM: 4000, capacity: 0.05, autonomy: 70 },
+  { id: 'bhbe1', type: 'HBE', count: 2, sector: 'Tête', mission: 'Appui héliporté', lng: -119.9800, lat: 39.7229, radiusM: 4000, capacity: 0.08, autonomy: 60 },
+];
 const saumosWeather = (): Weather => ({
   windSpeed: 26, windDirection: 'Nord-est', windBearing: 225, gusts: 42,
   temperature: 38, humidity: 22, droughtIndex: 0.96,
@@ -108,13 +166,17 @@ const saumosUnits = (): Deployment[] => [
 ];
 const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'Ouest', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
 const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JUIL. 2022', startHour: 14, startMinute: 0 };
+const ETOILE_INCIDENT: Incident = { ref: 'EXERCICE 13-ETOILE', dateLabel: 'EXERCICE', startHour: 13, startMinute: 0 };
+const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AOÛT 2026', startHour: 13, startMinute: 0 };
 const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JUIL. 2026', startHour: 13, startMinute: 30 };
 const BLANK_INCIDENT: Incident = { ref: 'SIMULATION LIBRE', dateLabel: 'T0', startHour: 12, startMinute: 0 };
-const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'blank'): Scenario => {
+const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank'): Scenario => {
   const base = { id: nextId(), name, createdAt: Date.now(), preset, burnedHa: null };
-  if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), domain: LANDIRAS_DOMAIN, incident: LANDIRAS_INCIDENT };
+  if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: LANDIRAS_INCIDENT };
+  if (preset === 'etoile') return { ...base, ignition: { ...ETOILE_IGNITION }, minutes: 240, weather: etoileWeather(), committed: etoileUnits(), domain: ETOILE_DOMAIN, terrain: ETOILE_TERRAIN, incident: ETOILE_INCIDENT };
+  if (preset === 'bug') return { ...base, ignition: { ...BUG_IGNITION }, minutes: 480, weather: bugWeather(), committed: bugUnits(), domain: BUG_DOMAIN, terrain: BUG_TERRAIN, incident: BUG_INCIDENT };
   if (preset === 'saumos') return { ...base, ignition: { ...SAUMOS_IGNITION }, minutes: 450, weather: saumosWeather(), committed: saumosUnits(), domain: SAUMOS_DOMAIN, terrain: SAUMOS_TERRAIN, incident: SAUMOS_INCIDENT };
-  return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], domain: LANDIRAS_DOMAIN, incident: BLANK_INCIDENT };
+  return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: BLANK_INCIDENT };
 };
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
 const toolNames = [
@@ -238,6 +300,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [domain, setDomain] = useState<Domain>(LANDIRAS_DOMAIN);
   const [terrain, setTerrain] = useState<Terrain | undefined>(undefined);
   const [incident, setIncident] = useState<Incident>(LANDIRAS_INCIDENT);
+  // Autonomie appliquee aux moyens prepositionnes : elle borne le debit
+  // qu'ils peuvent reellement tenir dans la duree.
+  const [autonomy, setAutonomy] = useState(85);
+  const [composition, setComposition] = useState<{ nom: string; strate: string; part: number }[]>([]);
   const [undoStack, setUndoStack] = useState<Deployment[][]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
@@ -410,6 +476,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setPerimeterGeoJSON(perimeter);
     setForecastGeoJSON(forecast);
     setActiveGeoJSON(active);
+    setComposition(Array.isArray(engine.fuelComposition) ? engine.fuelComposition.slice(0, 4) : []);
   }, []);
 
   useEffect(() => {
@@ -474,11 +541,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(false);
   }, [activeScenario, burnedHa, committed, domain, terrain, ignition, minutes, scenarios, weather]);
 
-  const createScenario = useCallback((preset: 'blank' | 'saumos' = 'blank') => {
+  const createScenario = useCallback((preset: 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
     setRunning(false);
-    const created = preset === 'saumos'
-      ? makeScenario('Saumos · 22 juil. 2026', 'saumos')
-      : makeScenario('Simulation ' + String(scenarios.length + 1), 'blank');
+    const NAMES: Record<string, string> = {
+      saumos: 'Saumos · 22 juil. 2026', etoile: 'Marseille · Massif de l’Étoile', bug: 'Bug Fire · 8 août 2026',
+    };
+    const created = preset === 'blank'
+      ? makeScenario('Simulation ' + String(scenarios.length + 1), 'blank')
+      : makeScenario(NAMES[preset], preset);
     setScenarios((list) => list.map((item) => item.id === activeScenario
       ? { ...item, ignition, minutes, weather, committed, domain, terrain, burnedHa }
       : item).concat(created));
@@ -488,9 +558,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
-    notify(preset === 'saumos'
-      ? 'Feu de Saumos, 22 juillet 2026 — 47 004 ha parcourus, 220 000 évacués.'
-      : 'Nouvelle simulation. Placez le point de départ du feu.');
+    const NOTES: Record<string, string> = {
+      saumos: 'Feu de Saumos, 22 juillet 2026 — 47 004 ha parcourus, 220 000 évacués.',
+      etoile: 'Massif de l’Étoile — exercice mistral, garrigue et pin d’Alep. Ce n’est pas un feu historique.',
+      bug: 'Bug Fire, 8 août 2026 — sagebrush et pinyon-genévrier, 93 733 acres parcourus.',
+      blank: 'Nouvelle simulation. Placez le point de départ du feu.',
+    };
+    notify(NOTES[preset]);
   }, [activeScenario, burnedHa, committed, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
 
   // La liste affichee derive de l'etat vivant pour la simulation ouverte.
@@ -879,7 +953,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           {scenarioOpen && <>
             <div className="popover-shield" role="presentation" onMouseDown={() => setScenarioOpen(false)} />
             <div className="popover scenario-pop glass-panel">
-              <div className="popover-head"><span>SIMULATIONS</span><button type="button" className="preset-new" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Reconstitution du feu de Saumos, 22 juillet 2026">Saumos 2026</button><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
+              <div className="popover-head"><span>SIMULATIONS</span><button type="button" className="preset-new" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Gironde — feu de Saumos, 22 juillet 2026">Gironde</button><button type="button" className="preset-new" onClick={() => { createScenario('etoile'); setScenarioOpen(false); }} title="Provence — massif de l’Étoile, exercice mistral">Marseille</button><button type="button" className="preset-new" onClick={() => { createScenario('bug'); setScenarioOpen(false); }} title="Californie — Bug Fire, 8 août 2026">Californie</button><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
               <div className="scenario-list">{scenarioList.map((item) => {
                 const isActive = item.id === activeScenario;
                 const state = !item.ignition ? 'vierge' : (isActive && running) ? 'active' : 'pause';
@@ -941,9 +1015,19 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       </button>
 
       <aside className="left-rail glass-panel">
-        <div className="panel-heading"><div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div><span className="resource-count">29</span></div>
+        <div className="panel-heading"><div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div><span className="resource-count">{PARC_TOTAL}</span></div>
         <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
-        <div className="unit-list">{units.map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui est', mission: 'Mission à préciser', lng: -0.442, lat: 44.585, radiusM: 700, capacity: unit.code === 'CCF' ? 0.09 : unit.code === 'HBE' ? 0.08 : 0.06 }); notify(unit.code + ' ajouté au point d’appui est. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code + ' au point d’appui est'} key={unit.code}><span className="unit-code">{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>Prêt · autonomie {unit.autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
+        <div className="autonomy-control">
+          <label htmlFor="autonomy">AUTONOMIE À L’ENGAGEMENT</label>
+          <input id="autonomy" type="range" min={20} max={100} step={5} value={autonomy}
+            onChange={(event) => setAutonomy(Number(event.target.value))} />
+          <b>{autonomy} %</b>
+        </div>
+        <p className="autonomy-note">Un engin à {autonomy} % ne tient que {autonomy} % de son débit théorique : carburant, relève des personnels et chaîne d’eau.</p>
+        {FAMILLES.map((famille) => <div className="unit-group" key={famille}>
+          <span className="unit-group-head">{famille}</span>
+          <div className="unit-list">{units.filter((unit) => unit.famille === famille).map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui', mission: 'Mission à préciser', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' ajouté. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code} key={unit.code}><span className={'unit-code fam-' + (unit.famille === 'aérien' ? 'aerien' : unit.famille === 'génie' ? 'genie' : 'terrestre')}>{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>{unit.cuve} · autonomie {autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
+        </div>)}
         <div className="rail-footer"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
       </aside>
 
@@ -978,6 +1062,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { setWeather((current) => ({ ...current, ...preset.values })); logTool('set_weather', preset.label); }}>{preset.label}</button>)}</div>
           </div>
           <p className="weather-note">Vent, direction, température, humidité et sécheresse entrent tous dans le calcul : ils fixent la teneur en eau du combustible fin, donc la vitesse du front.</p>
+        </div>}
+        {composition.length > 0 && <div className="cover-card">
+          <span className="cover-head">COUVERT DOMINANT · {(REGION_LABEL[(terrain?.region) || 'gironde'])}</span>
+          {composition.map((entry) => <div className="cover-row" key={entry.nom}>
+            <i style={{ width: Math.max(4, entry.part * 100) + '%' }} />
+            <span>{entry.nom}</span><b>{(entry.part * 100).toFixed(0)} %</b>
+          </div>)}
         </div>}
         {shownSuppression && <div className={'suppression-card ' + shownSuppression.status}>
           <div className="supp-head">

@@ -740,11 +740,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 
 /* Teinte par type d'engin : on distingue un porteur d'eau d'un engin de génie. */
 .unit-card .unit-code { border-color: var(--border-strong); }
-.unit-card:nth-child(1) .unit-code { color: var(--water); border-color: rgba(90,200,250,.42); background: rgba(90,200,250,.12); }
-.unit-card:nth-child(2) .unit-code { color: #7FB2FF; border-color: rgba(127,178,255,.42); background: rgba(127,178,255,.12); }
-.unit-card:nth-child(3) .unit-code { color: #7FE7C4; border-color: rgba(127,231,196,.42); background: rgba(127,231,196,.12); }
-.unit-card:nth-child(4) .unit-code { color: #9FD8FF; border-color: rgba(159,216,255,.42); background: rgba(159,216,255,.12); }
-.unit-card:nth-child(5) .unit-code { color: var(--earth); border-color: rgba(217,160,91,.42); background: rgba(217,160,91,.12); }
 
 /* ---------- Bloc hydraulique ---------- */
 .suppression-card {
@@ -815,3 +810,26 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 /* Bouton de reconstitution d un feu reel dans le selecteur. */
 .popover-head .preset-new { color: var(--fire-active); border-color: rgba(255,159,10,.38); background: rgba(255,159,10,.10); letter-spacing: .04em; }
 .popover-head .preset-new:hover { border-color: rgba(255,159,10,.62); background: rgba(255,159,10,.18); }
+
+/* Parc : pastille coloree par famille d engin. */
+.unit-code.fam-terrestre { color: var(--water); border-color: rgba(90,200,250,.42); background: rgba(90,200,250,.12); }
+.unit-code.fam-aerien    { color: #9FD8FF; border-color: rgba(159,216,255,.42); background: rgba(159,216,255,.12); }
+.unit-code.fam-genie     { color: var(--earth); border-color: rgba(217,160,91,.42); background: rgba(217,160,91,.12); }
+.unit-group { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.unit-group-head { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .13em; text-transform: uppercase; }
+
+/* Autonomie : elle borne le debit reellement tenu par les moyens engages. */
+.autonomy-control { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 10px; margin-top: 10px; }
+.autonomy-control label { grid-column: 1 / -1; color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .12em; }
+.autonomy-control input { width: 100%; accent-color: var(--water); }
+.autonomy-control b { color: var(--water); font-size: 11px; font-variant-numeric: tabular-nums; }
+.autonomy-note { color: var(--faint); font-size: 9.5px; line-height: 1.45; margin-top: 4px; }
+
+/* Couvert vegetal reellement tire sur la fenetre simulee. */
+.cover-card { display: flex; flex-direction: column; gap: 5px; padding: 11px 13px; border: 1px solid var(--border);
+  border-radius: 10px; background: rgba(255,255,255,.02); }
+.cover-head { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .1em; }
+.cover-row { position: relative; display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.cover-row i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: rgba(48,209,88,.14); z-index: 0; }
+.cover-row span { position: relative; z-index: 1; flex: 1; color: var(--muted); font-size: 10px; }
+.cover-row b { position: relative; z-index: 1; color: var(--text); font-size: 10px; font-variant-numeric: tabular-nums; }
