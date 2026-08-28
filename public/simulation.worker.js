@@ -536,6 +536,9 @@ function createState(origin) {
   const networkKey = terrain && (terrain.network !== undefined ? terrain.network : (terrain.region === 'gironde' ? 'landes' : null));
   let anthropic = networkKey ? buildInfrastructure(networkKey, terrain) : null;
   const landscapeResult = applyLandscape(fuel, anthropic, origin && origin.landscape);
+  // Les plans d'eau et agglomerations explicites du scenario restent
+  // non combustibles apres l'injection des peuplements forestiers reels.
+  if (terrain) applyTerrain(fuel, terrain);
   anthropic = landscapeResult.anthropic;
   const point = origin && Number.isFinite(origin.lng) && Number.isFinite(origin.lat)
     ? cellForLngLat(origin.lng, origin.lat)

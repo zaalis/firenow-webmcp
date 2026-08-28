@@ -10,24 +10,37 @@ const checkpointsOnly = process.argv.includes('--checkpoints-only');
 
 function engine() {
   const self = { postMessage() {} };
-  const context = vm.createContext({ self, Math, Number, String, Array, Object, Infinity, Uint8Array, Float32Array, Map, Set });
+  const context = vm.createContext({ self, Math, Number, String, Array, Object, Infinity, Uint8Array, Uint16Array, Float32Array, Map, Set, atob: globalThis.atob });
   vm.runInContext(fs.readFileSync(workerPath, 'utf8'), context);
   return self.__fireopsTest;
 }
 
 const saumos2022Perimeter = JSON.parse(fs.readFileSync(path.join(ROOT, 'validation-data/saumos-2022-emsr633.geojson'), 'utf8'));
+const girondeLandscape = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/data/gironde-landscape.json'), 'utf8'));
+const weather2022 = JSON.parse(fs.readFileSync(path.join(ROOT, 'validation-data/saumos-2022-weather.json'), 'utf8')).weatherSeries;
+const weather2026 = JSON.parse(fs.readFileSync(path.join(ROOT, 'validation-data/saumos-2026-weather.json'), 'utf8')).weatherSeries;
 const SAUMOS_IGNITION = { lng: -0.987, lat: 44.921, radiusM: 0 };
 const SAUMOS_TERRAIN = {
   region: 'gironde', oceanWestOfLng: -1.205,
   water: [{ lng: -1.135, lat: 44.990, radiusM: 3200 }, { lng: -1.130, lat: 44.680, radiusM: 7000 }],
   urban: [{ lng: -1.078, lat: 44.980, radiusM: 1500 }, { lng: -1.091, lat: 44.874, radiusM: 1300 }, { lng: -0.987, lat: 44.921, radiusM: 700 }],
 };
+const SAUMOS_2026_DEPLOYMENTS = [
+  { id: 'sccf1', type: 'CCF', count: 45, lng: -0.9870, lat: 44.8671, radiusM: 5000, autonomy: 85 },
+  { id: 'sccf2', type: 'CCF', count: 45, lng: -0.9330, lat: 44.8828, radiusM: 5000, autonomy: 85 },
+  { id: 'sccf3', type: 'CCF', count: 40, lng: -1.0678, lat: 44.8639, radiusM: 5000, autonomy: 85 },
+  { id: 'sfpt1', type: 'FPT', count: 30, lng: -1.1298, lat: 44.8841, radiusM: 4500, autonomy: 85 },
+  { id: 'scl41', type: 'CL4', count: 9, lng: -1.0872, lat: 44.9085, radiusM: 6000, autonomy: 80 },
+  { id: 'shbe1', type: 'HBE', count: 9, lng: -1.0170, lat: 44.8618, radiusM: 5000, autonomy: 75 },
+  { id: 'sdoz1', type: 'DOZ', count: 30, lng: -1.1521, lat: 44.9210, radiusM: 5500, autonomy: 85 },
+];
 
 const FIRES = [
   {
     name: 'Saumos 2022 · EMSR633', ignition: SAUMOS_IGNITION,
     domain: { lng: -0.955, lat: 44.935, boxMetres: 25000 }, terrain: SAUMOS_TERRAIN,
     startHour: 13, weather: { temperature: 28, humidity: 34, droughtIndex: 0.78, windKph: 18, windBearingDegrees: 45 },
+    weatherSeries: weather2022,
     deployments: [], measureNight: false,
     checkpoints: [{ label: '20/09 · Monit01', minutes: 8 * 1440, actualHa: 3248.39648665, perimeter: saumos2022Perimeter }],
   },
@@ -35,7 +48,8 @@ const FIRES = [
     name: 'Saumos 2026 · surfaces publiées', ignition: SAUMOS_IGNITION,
     domain: { lng: -1.10, lat: 44.80, boxMetres: 50000 }, terrain: SAUMOS_TERRAIN,
     startHour: 13.5, weather: { temperature: 38, humidity: 22, droughtIndex: 0.96, windKph: 26, windBearingDegrees: 225 },
-    deployments: [], measureNight: true,
+    weatherSeries: weather2026,
+    deployments: SAUMOS_2026_DEPLOYMENTS, measureNight: true, measureSuppression: true,
     checkpoints: [
       { label: '22/07', minutes: 630, actualHa: 1400 },
       { label: '23/07', minutes: 2070, actualHa: 4800 },
@@ -100,7 +114,8 @@ for (const fire of FIRES) {
     const result = simulator.simulate({
       reset: previousMinutes === 0, independent: false, targetMinutes,
       ignitionLngLat: fire.ignition, domain: fire.domain, terrain: fire.terrain,
-      startHour: fire.startHour, ...fire.weather, deployments: fire.deployments, spotting: true,
+      startHour: fire.startHour, ...fire.weather, weatherSeries: fire.weatherSeries, landscape: girondeLandscape,
+      deployments: fire.deployments, spotting: true,
     });
     const growth = result.totalBurnedHa - previousHa;
     const midpointHour = ((fire.startHour + (previousMinutes + targetMinutes) / 120) % 24 + 24) % 24;
@@ -116,12 +131,25 @@ for (const fire of FIRES) {
     previousMinutes = targetMinutes;
     previousHa = result.totalBurnedHa;
   }
-  summaries.push({ fire: fire.name, nightSharePct: fire.measureNight && totalGrowthHa > 0 ? 100 * nightGrowthHa / totalGrowthHa : null });
+  let withoutSuppressionHa = null;
+  if (fire.measureSuppression) {
+    withoutSuppressionHa = engine().simulate({ independent: true, targetMinutes: lastMinute,
+      ignitionLngLat: fire.ignition, domain: fire.domain, terrain: fire.terrain, landscape: girondeLandscape,
+      startHour: fire.startHour, ...fire.weather, weatherSeries: fire.weatherSeries, deployments: [], spotting: true }).totalBurnedHa;
+  }
+  summaries.push({ fire: fire.name, nightSharePct: fire.measureNight && totalGrowthHa > 0 ? 100 * nightGrowthHa / totalGrowthHa : null,
+    nightGrowthHa: fire.measureNight ? nightGrowthHa : null,
+    dayGrowthHa: fire.measureNight ? totalGrowthHa - nightGrowthHa : null,
+    withSuppressionHa: fire.measureSuppression ? previousHa : null, withoutSuppressionHa });
 }
 
 console.log(`Validation FireOps · worker ${path.relative(ROOT, workerPath)}`);
 console.log('| Feu | Échéance | Réel (ha) | Modèle (ha) | Écart | Jaccard |');
 console.log('| --- | ---: | ---: | ---: | ---: | ---: |');
 for (const row of rows) console.log(`| ${row.fire} | ${row.deadline} | ${row.actualHa.toFixed(0)} | ${row.modelHa.toFixed(0)} | ${row.errorPct >= 0 ? '+' : ''}${row.errorPct.toFixed(1)} % | ${row.jaccard === null ? 'n/d' : row.jaccard.toFixed(3)} |`);
-for (const summary of summaries) console.log(`${summary.fire} · croissance nocturne estimée: ${summary.nightSharePct === null ? 'n/d' : `${summary.nightSharePct.toFixed(1)} %`}`);
+for (const summary of summaries) {
+  console.log(`${summary.fire} · croissance nocturne estimée: ${summary.nightSharePct === null ? 'n/d' : `${summary.nightSharePct.toFixed(1)} %`}`);
+  if (summary.nightGrowthHa !== null) console.log(`${summary.fire} · croissance par régime: ${summary.dayGrowthHa.toFixed(0)} ha de jour / ${summary.nightGrowthHa.toFixed(0)} ha de nuit`);
+  if (summary.withoutSuppressionHa !== null) console.log(`${summary.fire} · effet des moyens: ${summary.withoutSuppressionHa.toFixed(0)} ha sans / ${summary.withSuppressionHa.toFixed(0)} ha avec (${(100 * (1 - summary.withSuppressionHa / summary.withoutSuppressionHa)).toFixed(1)} % évités)`);
+}
 console.log('Mesure uniquement : ce script ne modifie ni les coefficients ni les données du moteur.');

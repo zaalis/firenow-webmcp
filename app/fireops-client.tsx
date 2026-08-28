@@ -10,6 +10,7 @@ import {
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
+type WeatherSeriesPoint = { hourFromStart: number; temperature: number; humidity: number; windKph: number; windBearingDegrees: number };
 type Domain = { lng: number; lat: number; boxMetres: number };
 type Exposure = {
   populationAtteinte: number; populationMenacee: number;
@@ -44,7 +45,7 @@ type Scenario = {
   domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
 // L en-tete affichait la date de Landiras quel que soit le scenario ouvert.
-type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number };
+type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number; startDate?: string; endDate?: string };
 type ToolClient = { requestUserInteraction?: <T>(handler: () => Promise<T>) => Promise<T> };
 type ToolDefinition = {
   name: string; title: string; description: string; inputSchema: Record<string, unknown>;
@@ -172,10 +173,10 @@ const saumosUnits = (): Deployment[] => [
   { id: 'sdoz1', type: 'DOZ', count: 30, sector: 'Ouest', mission: 'Pare-feu (121 km réalisés)', lng: -1.1521, lat: 44.9210, radiusM: 5500, capacity: 0.05 },
 ];
 const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'Ouest', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
-const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JUIL. 2022', startHour: 14, startMinute: 0 };
+const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JUIL. 2022', startHour: 14, startMinute: 0, startDate: '2022-07-12', endDate: '2022-07-20' };
 const ETOILE_INCIDENT: Incident = { ref: 'EXERCICE 13-ETOILE', dateLabel: 'EXERCICE', startHour: 13, startMinute: 0 };
-const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AOÛT 2026', startHour: 13, startMinute: 0 };
-const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JUIL. 2026', startHour: 13, startMinute: 30 };
+const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AOÛT 2026', startHour: 13, startMinute: 0, startDate: '2026-08-08', endDate: '2026-08-15' };
+const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JUIL. 2026', startHour: 13, startMinute: 30, startDate: '2026-07-22', endDate: '2026-07-26' };
 const BLANK_INCIDENT: Incident = { ref: 'SIMULATION LIBRE', dateLabel: 'T0', startHour: 12, startMinute: 0 };
 const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank'): Scenario => {
   const base = { id: nextId(), name, createdAt: Date.now(), preset, burnedHa: null };
@@ -287,6 +288,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('2D');
   const [weather, setWeather] = useState(initialWeather);
+  const [weatherSeries, setWeatherSeries] = useState<WeatherSeriesPoint[] | null>(null);
+  const [weatherSource, setWeatherSource] = useState<'loading' | 'open-meteo' | 'manual' | 'error'>('loading');
+  const weatherSeriesRef = useRef<WeatherSeriesPoint[] | null>(null);
   const [minutes, setMinutes] = useState(162);
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
   const [activeScenario, setActiveScenario] = useState<string>(() => initialScenarios[0].id);
@@ -343,6 +347,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, []);
 
   const patchWeather = useCallback((patch: Partial<Weather>) => {
+    weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
     setWeather((current) => ({ ...current, ...patch }));
   }, []);
   const notify = useCallback((message: string) => {
@@ -477,6 +482,47 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    weatherSeriesRef.current = null;
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      setWeatherSeries(null); setWeatherSource(incident.startDate && incident.endDate ? 'loading' : 'manual');
+    });
+    if (!incident.startDate || !incident.endDate) return () => controller.abort();
+    const query = new URLSearchParams({
+      latitude: String(domain.lat), longitude: String(domain.lng), start_date: incident.startDate, end_date: incident.endDate,
+      hourly: 'temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m',
+      timezone: 'Europe/Paris', wind_speed_unit: 'kmh',
+    });
+    fetch(`https://archive-api.open-meteo.com/v1/archive?${query}`, { signal: controller.signal })
+      .then((response) => { if (!response.ok) throw new Error(`Open-Meteo ${response.status}`); return response.json(); })
+      .then((data: { hourly?: { temperature_2m?: number[]; relative_humidity_2m?: number[]; wind_speed_10m?: number[]; wind_direction_10m?: number[] } }) => {
+        const hourly = data.hourly;
+        if (!hourly?.temperature_2m?.length || !hourly.relative_humidity_2m?.length
+          || !hourly.wind_speed_10m?.length || !hourly.wind_direction_10m?.length) throw new Error('Série horaire incomplète');
+        const offset = incident.startHour + incident.startMinute / 60;
+        const series = hourly.temperature_2m.map((temperature, index) => ({
+          hourFromStart: index - offset, temperature,
+          humidity: hourly.relative_humidity_2m[index],
+          windKph: hourly.wind_speed_10m[index],
+          // Open-Meteo donne la provenance meteorologique ; FireOps stocke le cap de propagation.
+          windBearingDegrees: (hourly.wind_direction_10m[index] + 180) % 360,
+        }));
+        if (controller.signal.aborted) return;
+        weatherSeriesRef.current = series; setWeatherSeries(series); setWeatherSource('open-meteo');
+        const initial = series[Math.max(0, Math.ceil(offset))];
+        if (initial) {
+          const compass = COMPASS[Math.round(initial.windBearingDegrees / 45) % 8];
+          setWeather((current) => ({ ...current, temperature: Math.round(initial.temperature), humidity: Math.round(initial.humidity),
+            windSpeed: Math.round(initial.windKph), gusts: Math.max(current.gusts, Math.round(initial.windKph * 1.4)),
+            windBearing: initial.windBearingDegrees, windDirection: compass.from }));
+        }
+      })
+      .catch((error) => { if (error instanceof DOMException && error.name === 'AbortError') return; setWeatherSource('error'); });
+    return () => controller.abort();
+  }, [domain.lat, domain.lng, incident.endDate, incident.startDate, incident.startHour, incident.startMinute]);
+
+  useEffect(() => {
     const worker = new Worker('/simulation.worker.js');
     simulationWorker.current = worker;
     return () => {
@@ -497,7 +543,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         else reject(new Error(event.data.error || 'Erreur du moteur.'));
       };
       worker.addEventListener('message', onMessage);
-      worker.postMessage({ ...payload, landscape: landscapeRef.current, id: requestId });
+      worker.postMessage({ ...payload, landscape: landscapeRef.current, weatherSeries: weatherSeriesRef.current, id: requestId });
     });
   }, []);
 
@@ -579,7 +625,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       startHour: incident.startHour + incident.startMinute / 60,
       slopeDegrees: 7.4, deployments: committed, firebreaks: committedFirebreaks, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident, landscapeAsset]);
+  }, [applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident, landscapeAsset, weatherSeries]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
@@ -905,6 +951,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ windSpeed: { type: 'number', minimum: 0, maximum: 150 }, windDirection: { type: 'string', maxLength: 40 }, gusts: { type: 'number', minimum: 0, maximum: 200 } }, ['windSpeed','windDirection']),
         execute: (input) => {
           const next = { ...stateRef.current.weather, windSpeed: numberValue(input.windSpeed, 'windSpeed', 0, 150), windDirection: textValue(input.windDirection, 'windDirection', 40), gusts: input.gusts === undefined ? stateRef.current.weather.gusts : numberValue(input.gusts, 'gusts', 0, 200) };
+          weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
           setWeather(next); logTool('set_weather', 'Vent ' + next.windDirection + ' · ' + next.windSpeed + ' km/h'); return next;
         },
       },
@@ -965,6 +1012,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setAgentOpen(true);
     logTool('get_situation', 'Analyse du front et des zones menacées', 500);
     await new Promise((resolve) => window.setTimeout(resolve, 650));
+    weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
     setWeather((current) => ({ ...current, windDirection: 'Nord-ouest', windSpeed: 40, gusts: 58 }));
     logTool('set_weather', 'Vent nord-ouest · 40 km/h', 450);
     await new Promise((resolve) => window.setTimeout(resolve, 600));
@@ -1173,9 +1221,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           <Slider label="Indice de sécheresse" value={Math.round(weather.droughtIndex * 100)} min={0} max={100} unit="%" onChange={(value) => patchWeather({ droughtIndex: value / 100 })} />
           <div className="weather-presets">
             <span>PRÉRÉGLAGES</span>
-            <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { setWeather((current) => ({ ...current, ...preset.values })); logTool('set_weather', preset.label); }}>{preset.label}</button>)}</div>
+            <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual'); setWeather((current) => ({ ...current, ...preset.values })); logTool('set_weather', preset.label); }}>{preset.label}</button>)}</div>
           </div>
-          <p className="weather-note">Vent, direction, température, humidité et sécheresse entrent tous dans le calcul : ils fixent la teneur en eau du combustible fin, donc la vitesse du front.</p>
+          <p className={'weather-note weather-source ' + weatherSource}>{weatherSource === 'open-meteo' ? <><b>Série horaire réelle active.</b> Vent, température et humidité suivent l’archive <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open‑Meteo</a>. Modifier un réglage repasse en mode manuel.</> : weatherSource === 'loading' ? 'Chargement de la série météo horaire…' : weatherSource === 'error' ? 'Archive indisponible · réglages manuels conservés.' : 'Météo manuelle · les réglages restent constants hors cycle diurne.'}</p>
         </div>}
         {composition.length > 0 && <div className="cover-card">
           <span className="cover-head">COUVERT DOMINANT · {(REGION_LABEL[(terrain?.region) || 'gironde'])}</span>

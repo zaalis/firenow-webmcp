@@ -60,6 +60,12 @@ const nightRun = run({ ...diurnalCase, startHour: 0 });
 const dayRun = run({ ...diurnalCase, startHour: 12 });
 assert.ok(dayRun.totalBurnedHa > nightRun.totalBurnedHa * 3,
   `Le perimetre couvant doit fortement reduire la propagation nocturne: ${nightRun.totalBurnedHa} / ${dayRun.totalBurnedHa}`);
+const hourlyMidpoint = e.environmentAt({ startHour: 12, droughtIndex: 0.7, weatherSeries: [
+  { hourFromStart: 0, temperature: 20, humidity: 70, windKph: 10, windBearingDegrees: 90 },
+  { hourFromStart: 1, temperature: 30, humidity: 30, windKph: 30, windBearingDegrees: 180 },
+] }, 30);
+assert.equal(hourlyMidpoint.temperature, 25, 'La température horaire doit être interpolée au temps simulé, pas à l heure civile.');
+assert.equal(hourlyMidpoint.windKph, 20, 'Le vent horaire doit être interpolé continûment entre deux observations.');
 
 /* --- Mort du perimetre : etat 3 persistant, jamais re-ensemence ----------- */
 const edgeEngine = engine();
