@@ -7,8 +7,8 @@ import type { GeoJSONSource, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import {
   Bot, CarFront, Check, ChevronDown, CircleHelp, Command, Container as ContainerIcon,
   FireExtinguisher, Flame, Globe2, Helicopter, Layers3, LogOut, Map as MapIcon,
-  Pause, Plane, PlaneTakeoff, Play, Plus, RotateCcw, ShieldCheck, Sparkles,
-  TimerReset, Tractor, Truck, Undo2, Users, Wind, X, ChevronUp,
+  Pause, Plane, PlaneTakeoff, Play, Plus, RotateCcw, ShieldCheck,
+  Tractor, Truck, Undo2, Users, Wind, X, ChevronUp,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -34,7 +34,7 @@ type Plan = {
   movedFrom?: string[];
   comparison?: StrategyResult[];
 };
-type Activity = { id: string; tool: string; label: string; state: 'running' | 'done'; at: string };
+type Activity = { id: string; tool: string; label: string; state: 'done' | 'error'; at: string };
 type Ignition = { lng: number; lat: number; radiusM: number };
 type Suppression = {
   firelineIntensityKwM: number; meanIntensityKwM: number; activePerimeterM: number;
@@ -102,6 +102,25 @@ const REGION_LABEL: Record<string, string> = {
 };
 const FAMILLES: string[] = ['terrestre', 'aérien', 'génie'];
 const PARC_TOTAL = units.reduce((sum, unit) => sum + unit.count, 0);
+const TIMELINE_MAX_MINUTES = 12 * 60;
+const toolActivityLabel = (tool: string, result: unknown) => {
+  const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  if (tool === 'commit_plan') return value.approved === true ? 'Plan approuvé et appliqué' : 'Plan rejeté par l’opérateur';
+  if (tool === 'run_simulation') return `Simulation avancée de ${value.advancedMinutes} min`;
+  if (tool === 'set_time') return `Chronologie positionnée à H+${String(Math.floor(Number(value.minutesFromIgnition || 0) / 60)).padStart(2, '0')}:${String(Number(value.minutesFromIgnition || 0) % 60).padStart(2, '0')}`;
+  const labels: Record<string, string> = {
+    get_situation: 'Situation opérationnelle lue', list_units: 'Parc et moyens engagés lus',
+    get_fire_forecast: 'Projection T+1 h, T+3 h et T+6 h calculée', get_weather: 'Météo actuelle lue',
+    query_terrain: 'Terrain du secteur analysé', list_scenarios: 'Scénarios disponibles lus',
+    propose_plan: 'Plan provisoire ouvert', stage_deploy_units: 'Moyens prépositionnés dans le plan',
+    stage_assign_task: 'Mission ajoutée au plan provisoire', stage_firebreak: 'Ligne d’appui ajoutée au plan',
+    stage_tactical_burn: 'Brûlage tactique préparé, non allumé', stage_evacuation_zone: 'Zone d’évacuation préparée, ordre non transmis',
+    revert_plan: 'Dernier plan annulé', set_weather: 'Météo de simulation mise à jour',
+    ignite: 'Foyer d’exercice repositionné', compare_plans: 'Trois stratégies calculées par le moteur',
+    focus_region: 'Carte recentrée sur le scénario demandé', set_view_mode: 'Mode de carte appliqué',
+  };
+  return labels[tool] || 'Résultat vérifiable renvoyé';
+};
 const planDescriptions = [
   'Concentration des moyens sur le flanc nord et la lisière du village.',
   'Répartition mobile sur les deux flancs avec une réserve centrale.',
@@ -408,10 +427,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setToast(message);
     window.setTimeout(() => setToast(null), 3200);
   }, []);
-  const logTool = useCallback((tool: string, label: string, delay = 0) => {
-    const entry: Activity = { id: nextId(), tool, label, state: delay ? 'running' : 'done', at: atNow() };
+  const seekTimeline = useCallback((nextMinutes: number) => {
+    setRunning(false);
+    setMinutes(Math.max(0, Math.min(TIMELINE_MAX_MINUTES, Math.round(nextMinutes))));
+  }, []);
+  const logTool = useCallback((tool: string, label: string, state: Activity['state'] = 'done') => {
+    const entry: Activity = { id: nextId(), tool, label, state, at: atNow() };
     setActivities((current) => [entry, ...current].slice(0, 14));
-    if (delay) window.setTimeout(() => setActivities((current) => current.map((item) => item.id === entry.id ? { ...item, state: 'done' } : item)), delay);
   }, []);
   const scrollPanelByKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
@@ -431,9 +453,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const makePlan = useCallback((name: string, intention: string) => {
     const plan = emptyPlan(name, intention);
     setStagedPlan(plan);
-    logTool('propose_plan', 'Plan « ' + name + ' » ouvert');
     return plan;
-  }, [logTool]);
+  }, []);
   const stageUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged'>) => {
     const deployment = { ...unit, id: nextId(), staged: true };
     setStagedPlan((current) => {
@@ -451,14 +472,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       ...stagedPlan.deployments.map((item) => ({ ...item, staged: false })),
     ]);
     setCommittedFirebreaks((current) => [...current, ...stagedPlan.firebreaks]);
-    logTool('commit_plan', String(stagedPlan.deployments.reduce((sum, item) => sum + item.count, 0)) + ' moyens engagés');
     setStagedPlan(null);
     setReviewOpen(false);
     reviewResolver.current?.(true);
     reviewResolver.current = null;
     notify('Plan appliqué. Toutes les actions restent annulables.');
     return true;
-  }, [committed, committedFirebreaks, logTool, notify, stagedPlan]);
+  }, [committed, committedFirebreaks, notify, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
     reviewResolver.current?.(false);
@@ -475,10 +495,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reverted = true;
       return stack.slice(0, -1);
     });
-    logTool('revert_plan', 'Dernier plan annulé');
     notify('Dernier plan annulé.');
     return reverted;
-  }, [logTool, notify]);
+  }, [notify]);
 
   useEffect(() => {
     if (!running) return;
@@ -822,9 +841,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     })).sort((a, b) => a.burnedHa - b.burnedHa);
     setStagedPlan((plan) => ({ ...(plan || emptyPlan(results[0].name, 'Protéger le village après bascule du vent.')), comparison: results }));
     setComparisonOpen(true);
-    logTool('compare_plans', '3 stratégies calculées par le moteur', 800);
     return { horizonHours, strategies: results, recommended: results[0].name, model: 'Rothermel 1972 + Alexander 1985', workerCalls: engineRuns.length };
-  }, [logTool, runWorker]);
+  }, [runWorker]);
 
   const changeView = useCallback((mode: ViewMode) => {
     setViewMode(mode);
@@ -842,8 +860,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       map?.setProjection({ type: 'mercator' });
       map?.easeTo({ center: [(ignitionRef.current ?? defaultIgnition).lng, (ignitionRef.current ?? defaultIgnition).lat], zoom: 11.2, pitch: 0, bearing: 0, duration: 700 });
     }
-    logTool('set_view_mode', 'Vue ' + mode + ' activée');
-  }, [logTool]);
+  }, []);
 
   useEffect(() => {
     const mc = (document as Document & { modelContext?: ModelContextLike }).modelContext
@@ -868,7 +885,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: () => {
           const s = stateRef.current;
           const currentScenario = s.scenarios.find((item) => item.id === s.activeScenario);
-          logTool('get_situation', 'Situation opérationnelle lue');
           return { scenario: currentScenario ? { id: currentScenario.id, preset: currentScenario.preset, name: currentScenario.name } : null, incident: s.incident, minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate, weather: s.weather, engagedUnits: s.committed, calibrationStatus: 'not_performed' };
         },
       },
@@ -951,7 +967,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           if (resultingUnits > 50) throw new Error(`Ce lot porterait le plan à ${resultingUnits} moyens ; 50 maximum sont autorisés. Réduisez les valeurs « count » de ${resultingUnits - 50} au moins.`);
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
           setStagedPlan(nextPlan);
-          logTool('stage_deploy_units', String(requestedUnits) + ' moyens prépositionnés');
           return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1073,7 +1088,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: (input) => {
           const next = { ...stateRef.current.weather, windSpeed: numberValue(input.windSpeed, 'windSpeed', 0, 150), windDirection: textValue(input.windDirection, 'windDirection', 40), gusts: input.gusts === undefined ? stateRef.current.weather.gusts : numberValue(input.gusts, 'gusts', 0, 200) };
           weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
-          setWeather(next); logTool('set_weather', 'Vent ' + next.windDirection + ' · ' + next.windSpeed + ' km/h'); return next;
+          setWeather(next); return next;
         },
       },
       {
@@ -1095,7 +1110,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true,
           });
           applyEngineResult(engine);
-          logTool('ignite', 'Foyer place');
           return { ignited: true, ignition: engine.ignition, simulationOnly: true };
         },
       },
@@ -1126,7 +1140,21 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error(`Le mode « ${mode} » est inconnu. Utilisez 2D, 3D ou globe.`); changeView(mode); return { mode }; },
       },
     ];
-    Promise.all(defs.map(async (definition) => { await mc.registerTool(definition); registered.push(definition.name); }))
+    const definitionsWithJournal: ToolDefinition[] = defs.map((definition) => ({
+      ...definition,
+      execute: async (input, client) => {
+        try {
+          const result = await definition.execute(input, client);
+          logTool(definition.name, toolActivityLabel(definition.name, result));
+          return result;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Erreur inconnue';
+          logTool(definition.name, `Échec : ${message}`, 'error');
+          throw error;
+        }
+      },
+    }));
+    Promise.all(definitionsWithJournal.map(async (definition) => { await mc.registerTool(definition); registered.push(definition.name); }))
       .then(() => setToolStatus('available')).catch(() => setToolStatus('unavailable'));
     return () => {
       registered.forEach((name) => { try { void mc.unregisterTool?.(name); } catch { /* teardown */ } });
@@ -1134,27 +1162,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current = null;
     };
   }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, revertPlan, runWorker]);
-
-  const runAgentDemo = useCallback(async () => {
-    setAgentOpen(true);
-    logTool('get_situation', 'Analyse du front et des zones menacées', 500);
-    await new Promise((resolve) => window.setTimeout(resolve, 650));
-    weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
-    setWeather((current) => ({ ...current, windDirection: 'Nord-ouest', windSpeed: 40, gusts: 58 }));
-    logTool('set_weather', 'Vent nord-ouest · 40 km/h', 450);
-    await new Promise((resolve) => window.setTimeout(resolve, 600));
-    const plan = makePlan('Bouclier village', 'Bloquer le flanc nord, renforcer le secteur B et protéger Landiras Est avant la bascule du vent.');
-    const deployments: Deployment[] = [
-      { id: nextId(), type: 'CCF', count: 12, sector: 'B', mission: 'Tenir la lisière est', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09, staged: true },
-      { id: nextId(), type: 'DOZ', count: 3, sector: 'Nord', mission: 'Créer la ligne d’appui', lng: -0.449, lat: 44.596, radiusM: 700, capacity: 0.07, staged: true },
-      { id: nextId(), type: 'FPT', count: 6, sector: 'Village', mission: 'Protection des habitations', lng: -0.438, lat: 44.584, radiusM: 700, capacity: 0.06, staged: true },
-      { id: nextId(), type: 'HBE', count: 2, sector: 'Ouest', mission: 'Freiner la tête du feu', lng: -0.465, lat: 44.591, radiusM: 1500, capacity: 0.08, staged: true },
-    ];
-    setStagedPlan({ ...plan, deployments, firebreaks: [{ name: 'Ligne nord', sector: 'Nord', lengthKm: 4.2, coordinates: [[-0.474, 44.608], [-0.444, 44.612], [-0.421, 44.605]], widthM: 14, staffed: true }], evacuations: [{ name: 'Landiras Est', sector: 'Est', population: 186 }] });
-    logTool('stage_deploy_units', '23 moyens prépositionnés en fantôme', 700);
-    await new Promise((resolve) => window.setTimeout(resolve, 800));
-    await comparePlansWithWorker(['Bouclier village', 'Tenaille mobile', 'Sans renfort'], 6);
-  }, [comparePlansWithWorker, logTool, makePlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1203,7 +1210,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     return String(Math.floor(total / 60) % 24).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
   };
   const incidentClock = incident.dateLabel + ' · ' + clockAt(minutes);
-  const timelineMarks = [0, 120, 240, 360, 480].map((offset) => clockAt(offset));
+  const timelineMarks = [0, 120, 240, 360, 480, 600, 720].map((offset) => clockAt(offset));
+  const timelinePosition = Math.min(minutes, TIMELINE_MAX_MINUTES);
+  const timelineProgress = timelinePosition / TIMELINE_MAX_MINUTES * 100;
 
   return (
     <main className="ops-shell">
@@ -1255,7 +1264,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           </>}
         </div>
         <div className="top-actions">
-          <button className="demo-button" type="button" onClick={runAgentDemo}><Sparkles size={13} />Agent simulé</button>
+          <button className={'webmcp-status-button ' + toolStatus} type="button" onClick={() => setAgentOpen(true)} aria-expanded={agentOpen} aria-label="Ouvrir le journal WebMCP">
+            {toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}
+            <span>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'WebMCP en cours' : 'WebMCP indisponible'}</span>
+          </button>
           <span className={'status-chip ' + simState}><i />{simState === 'active' ? 'Simulation active' : simState === 'pause' ? 'Simulation en pause' : 'Aucun foyer'}</span>
           <div className="pop-anchor">
             <button className={'icon-button' + (helpOpen ? ' active' : '')} type="button" aria-label="Aide" aria-expanded={helpOpen} onClick={() => setHelpOpen((value) => !value)}><CircleHelp size={17} /></button>
@@ -1293,7 +1305,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         </div>
       </header>
 
-      {toolStatus === 'unavailable' && <section className="compat-banner glass-panel"><Bot size={16} /><span><strong>WebMCP non détecté.</strong> Activez le flag Chrome ou utilisez le navigateur intégré ChatGPT.</span><button type="button" onClick={runAgentDemo}>Tester l’agent simulé</button></section>}
+      {toolStatus === 'unavailable' && <section className="compat-banner glass-panel"><Bot size={16} /><span><strong>WebMCP non détecté.</strong> Activez le flag Chrome ou utilisez le navigateur intégré ChatGPT.</span></section>}
 
       <button className={'agent-banner glass-panel ' + toolStatus} type="button" onClick={() => setToolsOpen(true)}>
         <span className="agent-orb">{toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}</span>
@@ -1369,7 +1381,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           <Slider label="Indice de sécheresse" value={Math.round(weather.droughtIndex * 100)} min={0} max={100} unit="%" onChange={(value) => patchWeather({ droughtIndex: value / 100 })} />
           <div className="weather-presets">
             <span>PRÉRÉGLAGES</span>
-            <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual'); setWeather((current) => ({ ...current, ...preset.values })); logTool('set_weather', preset.label); }}>{preset.label}</button>)}</div>
+            <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual'); setWeather((current) => ({ ...current, ...preset.values })); }}>{preset.label}</button>)}</div>
           </div>
           <p className={'weather-note weather-source ' + weatherSource}>{weatherSource === 'open-meteo' ? <><b>Série horaire réelle active.</b> Vent, température et humidité suivent l’archive <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open‑Meteo</a>. Modifier un réglage repasse en mode manuel.</> : weatherSource === 'loading' ? 'Chargement de la série météo horaire…' : weatherSource === 'error' ? 'Archive indisponible · réglages manuels conservés.' : 'Météo manuelle · les réglages restent constants hors cycle diurne.'}</p>
         </div>}
@@ -1438,10 +1450,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       </nav>
 
       {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setStagedPlan(null); notify('Plan provisoire annulé. Aucune ressource n’a été engagée.'); }}>Annuler</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Appliquer</button></section>}
-      {!stagedPlan && ignition && <button className="ask-agent glass-panel" type="button" onClick={runAgentDemo}>
-        <Sparkles size={14} />Demander un plan à l’agent
-      </button>}
-      {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} actions de l’agent<ChevronDown size={13} /></button>}
+      {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} appel{activities.length > 1 ? 's' : ''} WebMCP<ChevronDown size={13} /></button>}
 
       <aside className="map-legend glass-panel" aria-label="Légende de la carte">
         <span><i className="lg-scar" />Surface parcourue</span>
@@ -1449,7 +1458,21 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-forecast" />Position projetée à +3 h</span>
       </aside>
       <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
-      <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels">{timelineMarks.map((mark) => <span key={mark}>{mark}</span>)}</div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
+      <section className="timeline glass-panel">
+        <div className="time-readout"><span>HEURE INCIDENT</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} depuis le départ</small></div>
+        <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Mettre la simulation en pause' : 'Lancer la simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
+        <div className="timeline-track">
+          <div className="timeline-scrubber-head"><span>CHRONOLOGIE · PAUSE À L’AJUSTEMENT</span><output htmlFor="incident-timeline">{timeLabel}</output></div>
+          <div className="timeline-scrubber-row">
+            <button type="button" onClick={() => seekTimeline(timelinePosition - 15)} aria-label="Reculer de 15 minutes">−15</button>
+            <label className="sr-only" htmlFor="incident-timeline">Temps de la simulation, de zéro à douze heures</label>
+            <input id="incident-timeline" className="timeline-scrubber" type="range" min="0" max={TIMELINE_MAX_MINUTES} step="5" value={timelinePosition} onChange={(event) => seekTimeline(Number(event.target.value))} style={{ background: `linear-gradient(90deg, var(--accent) 0%, var(--accent) ${timelineProgress}%, rgba(255,255,255,.14) ${timelineProgress}%, rgba(255,255,255,.14) 100%)` }} />
+            <button type="button" onClick={() => seekTimeline(timelinePosition + 15)} aria-label="Avancer de 15 minutes">+15</button>
+          </div>
+          <div className="time-labels">{timelineMarks.map((mark) => <span key={mark}>{mark}</span>)}</div>
+        </div>
+        <div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)} aria-label={`Vitesse de simulation actuelle multipliée par ${speed}. Changer la vitesse.`}>× {speed}</button></div>
+      </section>
 
       {toolsOpen && <Modal labelledBy="tool-catalog-title" onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead titleId="tool-catalog-title" icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
   <span className="connect-dot" />
@@ -1472,7 +1495,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
       {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}><section className="review-panel glass-panel"><ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Engager ${stagedCount} moyens ?` : 'Engager ce plan ?'} onClose={rejectPlan} /><p className="review-intention">« {stagedPlan.intention} »</p>{noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Comparaison de la surface simulée à six heures"><div className="decision-row"><span>Sans action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('fr-FR')} ha</strong></div><div className="decision-row selected"><span>Avec ce plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('fr-FR')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('fr-FR')} ha à T+6 h</p>}</div>}<div className="plan-contents"><p>{stagedUnitSummary || 'Aucun moyen supplémentaire'}</p>{stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} ligne{stagedPlan.firebreaks.length > 1 ? 's' : ''} d’appui · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('fr-FR')} km</p>}{stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('fr-FR')} personnes · ordre non transmis</p>}</div><p className="review-warning"><ShieldCheck size={13} />Modèle non calibré · outil d’entraînement</p><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Rejeter</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />{stagedCount > 0 ? `Engager ${stagedCount} moyens` : 'Engager ce plan'}</button></div></section></Modal>}
 
-      {agentOpen && <aside className="agent-drawer glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="OFFICIER D’ÉTAT-MAJOR" title="Agent simulé" onClose={() => setAgentOpen(false)} /><div className="agent-prompt"><span>DEMANDE</span><p>« Le vent passe au nord-ouest à 40 km/h. Propose-moi deux stratégies pour protéger le village. »</p></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Rejouez un plan complet sans dépendre du flag WebMCP.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <TimerReset size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div><button className="primary-button full-button" type="button" onClick={stagedPlan ? () => { setAgentOpen(false); setReviewOpen(true); } : runAgentDemo}><Sparkles size={14} />{stagedPlan ? 'Ouvrir la revue du plan' : 'Lancer le plan scripté'}</button></aside>}
+      {agentOpen && <aside className="agent-drawer glass-panel" aria-label="Journal des appels WebMCP"><ModalHead icon={<Bot size={18} />} eyebrow="APPELS DE L’AGENT" title="Journal WebMCP" onClose={() => setAgentOpen(false)} /><div className="agent-guidance"><span>ESSAYEZ DANS CHATGPT</span><ol><li>« Analyse la situation et propose-moi deux stratégies pour protéger Landiras Est. »</li><li>« Le vent passe au nord-ouest à 40 km/h. Recalcule et adapte le plan. »</li><li>« Compare le plan avec et sans les moyens aériens, puis soumets-moi le meilleur. »</li></ol></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Les appels WebMCP réels apparaîtront ici, avec leur outil et leur résultat. Ouvrez FireOps dans ChatGPT puis formulez une demande.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <X size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div></aside>}
       {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan appliqué · Annuler</button>}
       {toast && <div className="toast glass-panel" role="status"><Check size={15} />{toast}</div>}
     </main>

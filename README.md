@@ -15,7 +15,7 @@ FireOps n’appelle aucun modèle de langage. La page enregistre **21 outils mé
 
 `commit_plan` est le seul point d’arrêt du flux normal : il appelle `requestUserInteraction()` lorsque le client le fournit, ouvre la revue du plan et attend le choix humain. Les outils sont désenregistrés au démontage de la page, donc à la déconnexion. Les paramètres reçus de l’agent sont validés comme des entrées non fiables.
 
-Le panneau **Agent simulé** rejoue un scénario complet sans dépendre du flag WebMCP, pour la démonstration et les navigateurs non compatibles.
+Le journal **WebMCP** rend visibles les appels réellement exécutés par l’agent, avec l’outil appelé, son résultat et son horodatage. Il n’existe pas d’agent simulé dans la page.
 
 ## Le moteur
 
@@ -56,7 +56,7 @@ Prérequis : Node.js 22.13 ou plus récent.
     npm install
     npm run dev
 
-Ouvrir http://localhost:3000, créer un compte de test, puis utiliser **Agent simulé**. Les routes d’authentification sont servies par le même Worker local afin que les cookies restent same-origin.
+Ouvrir http://localhost:3000, créer un compte de test, puis ouvrir cette page dans ChatGPT ou un navigateur compatible WebMCP. Les routes d’authentification sont servies par le même Worker local afin que les cookies restent same-origin.
 
 ## Vérification
 

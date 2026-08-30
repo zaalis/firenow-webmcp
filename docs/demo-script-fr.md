@@ -20,7 +20,7 @@
 
 ## 1:00–1:28 — La demande
 
-**Écran :** cliquer « Agent simulé » ou envoyer dans ChatGPT : « Le vent passe au nord-ouest à 40 km/h. Propose-moi deux stratégies pour protéger le village. »
+**Écran :** envoyer dans ChatGPT : « Le vent passe au nord-ouest à 40 km/h. Propose-moi deux stratégies pour protéger le village. »
 
 **Voix :** « L’agent lit la situation, change la météo du scénario, interroge le terrain et construit librement son plan. Ces écritures sont provisoires : les véhicules, la ligne d’appui et la zone d’évacuation apparaissent en fantôme. Rien n’est encore engagé. »
 
