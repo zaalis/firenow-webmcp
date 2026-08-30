@@ -16,7 +16,7 @@
 
 **Écran :** ouvrir « Voir les outils ».
 
-**Voix :** « La page n’appelle jamais ChatGPT. Elle expose vingt outils WebMCP orientés métier. ChatGPT les découvre dans la page déjà authentifiée et partage exactement le même état que l’officier. Aucune clé API, aucun OAuth, aucun serveur MCP séparé. »
+**Voix :** « La page n’appelle jamais ChatGPT. Elle expose vingt et un outils WebMCP orientés métier. ChatGPT les découvre dans la page déjà authentifiée et partage exactement le même état que l’officier. Aucune clé API, aucun OAuth, aucun serveur MCP séparé. »
 
 ## 1:00–1:28 — La demande
 

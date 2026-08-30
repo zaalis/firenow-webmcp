@@ -257,16 +257,37 @@ const nextId = () => Math.random().toString(36).slice(2, 9);
 const atNow = () => new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const textValue = (value: unknown, field: string, max = 240) => {
-  if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(field + ' invalide.');
+  if (typeof value !== 'string') throw new Error(`Le champ « ${field} » doit être une chaîne de caractères non vide de ${max} caractères maximum.`);
+  if (!value.trim()) throw new Error(`Le champ « ${field} » ne peut pas être vide. Saisissez une valeur de ${max} caractères maximum.`);
+  if (value.length > max) throw new Error(`Le champ « ${field} » contient ${value.length} caractères ; ${max} maximum sont attendus. Raccourcissez la valeur.`);
   return value.trim();
 };
 const numberValue = (value: unknown, field: string, min: number, max: number) => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new Error(field + ' doit être compris entre ' + min + ' et ' + max + '.');
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Le champ « ${field} » doit être un nombre fini compris entre ${min} et ${max}.`);
+  if (value < min || value > max) throw new Error(`Le champ « ${field} » vaut ${value} ; une valeur comprise entre ${min} et ${max} est attendue.`);
   return value;
 };
 const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
+const summarizePlan = (plan: Plan) => ({
+  id: plan.id,
+  name: plan.name,
+  deploymentGroups: plan.deployments.length,
+  totalUnits: plan.deployments.reduce((sum, item) => sum + item.count, 0),
+  taskCount: plan.tasks.length,
+  firebreakCount: plan.firebreaks.length,
+  firebreakLengthKm: Number(plan.firebreaks.reduce((sum, item) => sum + item.lengthKm, 0).toFixed(2)),
+  evacuationZoneCount: plan.evacuations.length,
+  evacuationPopulation: plan.evacuations.reduce((sum, item) => sum + item.population, 0),
+});
+const scenarioPresets: { id: Scenario['preset']; name: string; kind: 'historical' | 'exercise' | 'free'; domain: Domain }[] = [
+  { id: 'landiras', name: 'Landiras · 12 juil. 2022', kind: 'historical', domain: LANDIRAS_DOMAIN },
+  { id: 'saumos', name: 'Saumos · 22 juil. 2026', kind: 'historical', domain: SAUMOS_DOMAIN },
+  { id: 'etoile', name: 'Marseille · Massif de l’Étoile', kind: 'exercise', domain: ETOILE_DOMAIN },
+  { id: 'bug', name: 'Bug Fire · 8 août 2026', kind: 'historical', domain: BUG_DOMAIN },
+  { id: 'blank', name: 'Simulation libre', kind: 'free', domain: LANDIRAS_DOMAIN },
+];
 
 const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 juil. 2022', 'landiras')];
 
@@ -332,11 +353,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [undoStack, setUndoStack] = useState<{ deployments: Deployment[]; firebreaks: Firebreak[] }[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident });
+  const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario });
 
   useEffect(() => {
-    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident };
-  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident]);
+    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario };
+  }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario]);
 
   useEffect(() => {
     let cancelled = false;
@@ -776,6 +797,12 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     }
     const registered: string[] = [];
     const readOnly = { readOnlyHint: true };
+    const mutating = { readOnlyHint: false };
+    const requireStagedPlan = () => {
+      const plan = stateRef.current.stagedPlan;
+      if (!plan) throw new Error('Aucun plan provisoire n’est ouvert. Appelez d’abord propose_plan, puis recommencez cette action.');
+      return plan;
+    };
     const defs: ToolDefinition[] = [
       {
         name: 'get_situation', title: 'Lire la situation opérationnelle',
@@ -783,8 +810,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: () => {
           const s = stateRef.current;
+          const currentScenario = s.scenarios.find((item) => item.id === s.activeScenario);
           logTool('get_situation', 'Situation opérationnelle lue');
-          return { incident: 'Landiras 2022', minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate, weather: s.weather, engagedUnits: s.committed, threatenedZones: ['Landiras Est', 'Guillos Nord'], calibrationStatus: 'not_performed' };
+          return { scenario: currentScenario ? { id: currentScenario.id, preset: currentScenario.preset, name: currentScenario.name } : null, incident: s.incident, minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate, weather: s.weather, engagedUnits: s.committed, calibrationStatus: 'not_performed' };
         },
       },
       {
@@ -816,13 +844,31 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {
         name: 'list_scenarios', title: 'Lister les scénarios', description: 'Liste les scénarios disponibles et leur statut de calibration.',
         inputSchema: schema({}), annotations: readOnly,
-        execute: () => ({ scenarios: [{ id: 'landiras-2022', name: 'Landiras I · Gironde', status: 'ready', calibrationStatus: 'not_performed' }] }),
+        execute: () => {
+          const s = stateRef.current;
+          return {
+            scenarios: scenarioPresets.map((preset) => {
+              const instances = s.scenarios.filter((item) => item.preset === preset.id);
+              return {
+                id: preset.id,
+                name: preset.name,
+                kind: preset.kind,
+                status: instances.some((item) => item.id === s.activeScenario) ? 'active' : 'available',
+                calibrationStatus: 'not_performed',
+                liveInstances: instances.map((item) => ({ id: item.id, name: item.name })),
+              };
+            }),
+          };
+        },
       },
       {
         name: 'propose_plan', title: 'Ouvrir un plan provisoire',
         description: 'Ouvre une couche de proposition fantôme. Ne modifie jamais la simulation active.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']),
-        execute: (input) => ({ staged: true, plan: makePlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300)) }),
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']), annotations: mutating,
+        execute: (input) => {
+          const plan = makePlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300));
+          return { staged: true, plan, planSummary: summarizePlan(plan), liveSimulationChanged: false };
+        },
       },
       {
         name: 'stage_deploy_units', title: 'Prépositionner des moyens',
@@ -832,37 +878,45 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
           lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
           radiusM: { type: 'number', minimum: 100, maximum: 5000 }, capacity: { type: 'number', minimum: 0, maximum: 0.35 },
-        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM', 'capacity']) } }, ['units']),
+        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM', 'capacity']) } }, ['units']), annotations: mutating,
         execute: (input) => {
-          if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('units doit contenir 1 à 50 groupes.');
-          const deployments = input.units.map((raw) => {
-            if (!raw || typeof raw !== 'object') throw new Error('Chaque moyen doit être un objet.');
+          const plan = requireStagedPlan();
+          if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Le champ « units » doit être un tableau contenant 1 à 50 groupes de moyens.');
+          const deployments = input.units.map((raw, index) => {
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`L’élément units[${index}] doit être un objet décrivant un groupe de moyens.`);
             const item = raw as Record<string, unknown>;
             const type = textValue(item.type, 'type', 3);
-            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error('Type de moyen inconnu.');
-            return stageUnit({ type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: numberValue(item.capacity, 'capacity', 0, 0.35) });
+            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error(`Le type « ${type} » n’est pas pris en charge ici. Utilisez CCF, FPT, HBE ou DOZ.`);
+            return { type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: numberValue(item.capacity, 'capacity', 0, 0.35), id: nextId(), staged: true };
           });
-          if (deployments.reduce((sum, item) => sum + item.count, 0) > 50) throw new Error('Un plan provisoire ne peut pas dépasser 50 moyens.');
-          logTool('stage_deploy_units', String(deployments.reduce((sum, item) => sum + item.count, 0)) + ' moyens prépositionnés');
-          return { staged: true, deployments, liveSimulationChanged: false };
+          const requestedUnits = deployments.reduce((sum, item) => sum + item.count, 0);
+          const resultingUnits = summarizePlan(plan).totalUnits + requestedUnits;
+          if (resultingUnits > 50) throw new Error(`Ce lot porterait le plan à ${resultingUnits} moyens ; 50 maximum sont autorisés. Réduisez les valeurs « count » de ${resultingUnits - 50} au moins.`);
+          const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
+          setStagedPlan(nextPlan);
+          logTool('stage_deploy_units', String(requestedUnits) + ' moyens prépositionnés');
+          return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_assign_task', title: 'Affecter une mission provisoire', description: 'Affecte une mission sans modifier la simulation active.',
-        inputSchema: schema({ unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']),
+        inputSchema: schema({ unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']), annotations: mutating,
         execute: (input) => {
+          const plan = requireStagedPlan();
           const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
-          setStagedPlan((plan) => plan ? { ...plan, tasks: [...plan.tasks, task] } : plan);
-          return { staged: true, task };
+          const nextPlan = { ...plan, tasks: [...plan.tasks, task] };
+          setStagedPlan(nextPlan);
+          return { staged: true, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_firebreak', title: 'Tracer une ligne d’appui', description: 'Ajoute une polyligne géographique provisoire. Après validation, elle devient une coupure persistante du moteur.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']),
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']), annotations: mutating,
         execute: (input) => {
-          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('coordinates doit contenir 2 à 64 points.');
-          const coordinates = input.coordinates.map((raw) => {
-            if (!Array.isArray(raw) || raw.length !== 2) throw new Error('Chaque point doit être [longitude, latitude].');
+          const plan = requireStagedPlan();
+          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Le champ « coordinates » doit contenir entre 2 et 64 points [longitude, latitude].');
+          const coordinates = input.coordinates.map((raw, index) => {
+            if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Le point coordinates[${index}] doit être exactement [longitude, latitude].`);
             return [numberValue(raw[0], 'longitude', -180, 180), numberValue(raw[1], 'latitude', -90, 90)] as [number, number];
           });
           const lengthKm = coordinates.slice(1).reduce((sum, point, index) => {
@@ -871,17 +925,19 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             return sum + Math.hypot((point[0] - previous[0]) * 111.32 * Math.cos(lat), (point[1] - previous[1]) * 111.32);
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: input.staffed !== false };
-          setStagedPlan((plan) => plan ? { ...plan, firebreaks: [...plan.firebreaks, line] } : plan);
-          return { staged: true, firebreak: line };
+          const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
+          setStagedPlan(nextPlan);
+          return { staged: true, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_tactical_burn', title: 'Préparer un brûlage tactique', description: 'Trace une ligne tenue et prépare l’allumage volontaire côté feu. Aucun allumage avant validation humaine.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']),
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']), annotations: mutating,
         execute: (input) => {
-          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('coordinates doit contenir 2 à 64 points.');
-          const coordinates = input.coordinates.map((raw) => {
-            if (!Array.isArray(raw) || raw.length !== 2) throw new Error('Chaque point doit être [longitude, latitude].');
+          const plan = requireStagedPlan();
+          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Le champ « coordinates » doit contenir entre 2 et 64 points [longitude, latitude].');
+          const coordinates = input.coordinates.map((raw, index) => {
+            if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Le point coordinates[${index}] doit être exactement [longitude, latitude].`);
             return [numberValue(raw[0], 'longitude', -180, 180), numberValue(raw[1], 'latitude', -90, 90)] as [number, number];
           });
           const lengthKm = coordinates.slice(1).reduce((sum, point, index) => {
@@ -890,18 +946,21 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             return sum + Math.hypot((point[0] - previous[0]) * 111.32 * Math.cos(lat), (point[1] - previous[1]) * 111.32);
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: true, tacticalBurn: true };
-          setStagedPlan((plan) => plan ? { ...plan, firebreaks: [...plan.firebreaks, line] } : plan);
-          return { staged: true, tacticalBurn: line, ignitionCommitted: false };
+          const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
+          setStagedPlan(nextPlan);
+          return { staged: true, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_evacuation_zone', title: 'Préparer une zone d’évacuation',
         description: 'Délimite une zone provisoire. Aucun ordre n’est transmis.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']),
+        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']), annotations: mutating,
         execute: (input) => {
+          const plan = requireStagedPlan();
           const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
-          setStagedPlan((plan) => plan ? { ...plan, evacuations: [...plan.evacuations, zone] } : plan);
-          return { staged: true, evacuationZone: zone, orderIssued: false };
+          const nextPlan = { ...plan, evacuations: [...plan.evacuations, zone] };
+          setStagedPlan(nextPlan);
+          return { staged: true, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
         },
       },
       {
@@ -909,7 +968,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         description: 'Ouvre la revue et demande une unique validation humaine pour tout le plan.',
         inputSchema: schema({}), annotations: { readOnlyHint: false },
         execute: async (_input, client) => {
-          if (!stateRef.current.stagedPlan) throw new Error('Aucun plan provisoire.');
+          if (!stateRef.current.stagedPlan) throw new Error('Aucun plan provisoire n’est ouvert. Appelez propose_plan et ajoutez les actions à examiner avant commit_plan.');
           const interaction = async () => new Promise<boolean>((resolve) => {
             reviewResolver.current = resolve;
             setReviewOpen(true);
@@ -920,11 +979,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'revert_plan', title: 'Annuler le dernier plan', description: 'Annule le dernier plan appliqué.',
-        inputSchema: schema({}), execute: () => ({ reverted: revertPlan() }),
+        inputSchema: schema({}), annotations: mutating, execute: () => ({ reverted: revertPlan() }),
       },
       {
         name: 'run_simulation', title: 'Avancer la simulation', description: 'Avance le moteur local de 5 à 360 minutes.',
-        inputSchema: schema({ minutes: { type: 'integer', minimum: 5, maximum: 360 } }, ['minutes']),
+        inputSchema: schema({ minutes: { type: 'integer', minimum: 5, maximum: 360 } }, ['minutes']), annotations: mutating,
         execute: async (input) => {
           const delta = numberValue(input.minutes, 'minutes', 5, 360);
           const targetMinutes = stateRef.current.minutes + delta;
@@ -944,7 +1003,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'set_time', title: 'Positionner l’heure', description: 'Positionne le scénario entre H+0 et H+24.',
-        inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']),
+        inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']), annotations: mutating,
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
           const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true });
@@ -953,7 +1012,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'set_weather', title: 'Modifier la météo', description: 'Modifie les paramètres météo de la simulation.',
-        inputSchema: schema({ windSpeed: { type: 'number', minimum: 0, maximum: 150 }, windDirection: { type: 'string', maxLength: 40 }, gusts: { type: 'number', minimum: 0, maximum: 200 } }, ['windSpeed','windDirection']),
+        inputSchema: schema({ windSpeed: { type: 'number', minimum: 0, maximum: 150 }, windDirection: { type: 'string', maxLength: 40 }, gusts: { type: 'number', minimum: 0, maximum: 200 } }, ['windSpeed','windDirection']), annotations: mutating,
         execute: (input) => {
           const next = { ...stateRef.current.weather, windSpeed: numberValue(input.windSpeed, 'windSpeed', 0, 150), windDirection: textValue(input.windDirection, 'windDirection', 40), gusts: input.gusts === undefined ? stateRef.current.weather.gusts : numberValue(input.gusts, 'gusts', 0, 200) };
           weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
@@ -963,7 +1022,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {
         name: 'ignite', title: 'Placer le foyer d’exercice',
         description: 'Deplace le point d’allumage du scenario d’entrainement et relance la simulation depuis ce point.',
-        inputSchema: schema({ lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 }, sector: { type: 'string', maxLength: 80 } }, ['lng','lat']),
+        inputSchema: schema({ lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 }, sector: { type: 'string', maxLength: 80 } }, ['lng','lat']), annotations: mutating,
         execute: async (input) => {
           const lng = numberValue(input.lng, 'lng', -180, 180);
           const lat = numberValue(input.lat, 'lat', -90, 90);
@@ -986,22 +1045,28 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {
         name: 'compare_plans', title: 'Comparer des stratégies',
         description: 'Simule 2 ou 3 stratégies et retourne un comparatif chiffré à T+6h.',
-        inputSchema: schema({ planNames: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 80 } }, horizonHours: { type: 'integer', enum: [1,3,6] } }, ['planNames']),
+        inputSchema: schema({ planNames: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 80 } }, horizonHours: { type: 'integer', enum: [1,3,6] } }, ['planNames']), annotations: readOnly,
         execute: async (input) => {
-          if (!Array.isArray(input.planNames) || input.planNames.length !== 3) throw new Error('Comparer exactement 3 plans.');
+          if (!Array.isArray(input.planNames) || input.planNames.length !== 3) throw new Error('Le champ « planNames » doit contenir exactement 3 noms de stratégies à comparer.');
           const names = input.planNames.map((name) => textValue(name, 'planName', 80));
           return comparePlansWithWorker(names, Number(input.horizonHours || 6));
         },
       },
       {
-        name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur le scénario Landiras.',
-        inputSchema: schema({ region: { type: 'string', enum: ['landiras'] } }, ['region']),
-        execute: (input) => { const region = textValue(input.region, 'region', 20); mapRef.current?.flyTo({ center: [(ignitionRef.current ?? defaultIgnition).lng, (ignitionRef.current ?? defaultIgnition).lat], zoom: 11.2, duration: 1000 }); return { focused: region }; },
+        name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur l’un des cinq scénarios disponibles sans changer la simulation active.',
+        inputSchema: schema({ scenarioId: { type: 'string', enum: ['landiras','saumos','etoile','bug','blank'] } }, ['scenarioId']), annotations: mutating,
+        execute: (input) => {
+          const scenarioId = textValue(input.scenarioId, 'scenarioId', 20) as Scenario['preset'];
+          const preset = scenarioPresets.find((item) => item.id === scenarioId);
+          if (!preset) throw new Error(`Le scénario « ${scenarioId} » est inconnu. Utilisez list_scenarios puis fournissez l’un des identifiants retournés.`);
+          mapRef.current?.flyTo({ center: [preset.domain.lng, preset.domain.lat], zoom: preset.domain.boxMetres > 35000 ? 10.1 : 11.2, duration: 1000 });
+          return { focused: true, scenarioId: preset.id, name: preset.name, center: { lng: preset.domain.lng, lat: preset.domain.lat }, activeScenarioChanged: false };
+        },
       },
       {
         name: 'set_view_mode', title: 'Changer le mode de carte', description: 'Bascule entre 2D, relief 3D et globe.',
-        inputSchema: schema({ mode: { type: 'string', enum: ['2D','3D','globe'] } }, ['mode']),
-        execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error('Mode inconnu.'); changeView(mode); return { mode }; },
+        inputSchema: schema({ mode: { type: 'string', enum: ['2D','3D','globe'] } }, ['mode']), annotations: mutating,
+        execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error(`Le mode « ${mode} » est inconnu. Utilisez 2D, 3D ou globe.`); changeView(mode); return { mode }; },
       },
     ];
     Promise.all(defs.map(async (definition) => { await mc.registerTool(definition); registered.push(definition.name); }))
@@ -1011,7 +1076,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, revertPlan, runWorker, stageUnit]);
+  }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, revertPlan, runWorker]);
 
   const runAgentDemo = useCallback(async () => {
     setAgentOpen(true);
@@ -1165,7 +1230,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
       <button className={'agent-banner glass-panel ' + toolStatus} type="button" onClick={() => setToolsOpen(true)}>
         <span className="agent-orb">{toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}</span>
-        <span className="agent-copy"><strong>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'Enregistrement des outils…' : 'Mode manuel disponible'}</strong><small>20 outils métier · session de la page</small></span>
+        <span className="agent-copy"><strong>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'Enregistrement des outils…' : 'Mode manuel disponible'}</strong><small>{toolNames.length} outils métier · session de la page</small></span>
         <span className="agent-link">Voir les outils</span>
       </button>
 
@@ -1307,7 +1372,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   <div>
     <strong>{toolStatus === 'available' ? 'Outils enregistrés dans cette page' : toolStatus === 'registering' ? 'Enregistrement en cours…' : 'API WebMCP absente de ce navigateur'}</strong>
     <span>{toolStatus === 'available'
-      ? 'Ouvrez cette page dans ChatGPT et demandez ce que vous voulez : l’agent découvre les 20 outils ci-dessous et agit sur la carte.'
+      ? `Ouvrez cette page dans ChatGPT et demandez ce que vous voulez : l’agent découvre les ${toolNames.length} outils ci-dessous et agit sur la carte.`
       : 'Ouvrez cette page dans l’app ChatGPT ou Chrome 149+. Sans l’API, tout reste utilisable à la main et l’agent simulé rejoue un plan complet.'}</span>
   </div>
 </div>
@@ -1317,7 +1382,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   <li><b>3</b><span>Parlez à ChatGPT en langage naturel. Il appelle les outils de la page, jamais l’inverse.</span></li>
   <li><b>4</b><span>Il construit un plan en fantôme sans vous interrompre, puis demande <em>une</em> validation pour tout engager.</span></li>
 </ol>
-<div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,11)],['Engagement',toolNames.slice(11,13)],['Simulation & carte',toolNames.slice(13)]].map(([label,names]) => <div key={String(label)}><h3>{String(label)}<span>{(names as string[]).length}</span></h3>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div>)}</div></section></Modal>}
+<div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,12)],['Engagement',toolNames.slice(12,14)],['Simulation & carte',toolNames.slice(14)]].map(([label,names]) => <div key={String(label)}><h3>{String(label)}<span>{(names as string[]).length}</span></h3>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div>)}</div></section></Modal>}
 
       {comparisonOpen && <Modal onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead icon={<Layers3 size={18} />} eyebrow="3 EXÉCUTIONS WORKER · T+6H" title="Comparaison des stratégies" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''}><header><div><small>{index === 0 ? 'SURFACE MINIMALE' : strategy.resources === 0 ? 'RÉFÉRENCE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Résultat calculé</span>}</header><p>{strategy.description}</p><dl><div><dt>Surface simulée</dt><dd>{strategy.burnedHa.toLocaleString('fr-FR')} ha</dd></div><div><dt>Vitesse de tête</dt><dd>{strategy.rateOfSpread.toLocaleString('fr-FR')} m/min</dd></div><div><dt>Moyens</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Modèle non calibré · résultats calculés localement</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Retenir le résultat minimal</button></div></section></Modal>}
 
