@@ -1158,6 +1158,16 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const ATTACK_LABEL: Record<string, string> = { directe: 'Attaque directe possible', 'moyens-lourds': 'Moyens lourds requis', indirect: 'Attaque directe inopérante' };
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
   const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
+  const stagedUnitSummary = Object.entries((stagedPlan?.deployments || []).reduce<Record<string, number>>((summary, unit) => {
+    summary[unit.type] = (summary[unit.type] || 0) + unit.count;
+    return summary;
+  }, {})).map(([type, count]) => `${count} ${type}`).join(' · ');
+  const noActionResult = stagedPlan?.comparison?.find((strategy) => strategy.resources === 0);
+  const selectedPlanResult = stagedPlan?.comparison?.find((strategy) => strategy.resources > 0);
+  const avoidedHa = noActionResult && selectedPlanResult ? Math.max(0, noActionResult.burnedHa - selectedPlanResult.burnedHa) : null;
+  const selectedImpactWidth = noActionResult && selectedPlanResult && noActionResult.burnedHa > 0
+    ? Math.max(4, Math.min(100, selectedPlanResult.burnedHa / noActionResult.burnedHa * 100))
+    : 100;
   const timeLabel = 'H+' + String(Math.floor(minutes / 60)).padStart(2,'0') + ':' + String(minutes % 60).padStart(2,'0');
   // Horloge de l incident : heure de depart reelle du scenario + temps simule.
   const clockAt = (offset: number) => {
@@ -1405,7 +1415,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel"><div className="time-readout"><span>HEURE INCIDENT</span><strong>{timeLabel}</strong></div><button className="play-button" type="button" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><div className="timeline-track"><div className="track-base"><i style={{ left: Math.min(94, minutes / 7.2) + '%' }} /><b style={{ left: '24%' }} /><b style={{ left: '58%' }} /><b style={{ left: '82%' }} /></div><div className="time-labels">{timelineMarks.map((mark) => <span key={mark}>{mark}</span>)}</div></div><div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)}>× {speed}</button></div></section>
 
-      {toolsOpen && <Modal onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
+      {toolsOpen && <Modal labelledBy="tool-catalog-title" onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead titleId="tool-catalog-title" icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
   <span className="connect-dot" />
   <div>
     <strong>{toolStatus === 'available' ? 'Outils enregistrés dans cette page' : toolStatus === 'registering' ? 'Enregistrement en cours…' : 'API WebMCP absente de ce navigateur'}</strong>
@@ -1420,11 +1430,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   <li><b>3</b><span>Parlez à ChatGPT en langage naturel. Il appelle les outils de la page, jamais l’inverse.</span></li>
   <li><b>4</b><span>Il construit un plan en fantôme sans vous interrompre, puis demande <em>une</em> validation pour tout engager.</span></li>
 </ol>
-<div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,12)],['Engagement',toolNames.slice(12,14)],['Simulation & carte',toolNames.slice(14)]].map(([label,names]) => <div key={String(label)}><h3>{String(label)}<span>{(names as string[]).length}</span></h3>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div>)}</div></section></Modal>}
+<div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,12)],['Engagement',toolNames.slice(12,14)],['Simulation & carte',toolNames.slice(14)]].map(([label,names]) => <details className="tool-group" open key={String(label)}><summary><span>{String(label)}</span><b>{(names as string[]).length}</b><ChevronDown size={13} /></summary><div>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div></details>)}</div></section></Modal>}
 
-      {comparisonOpen && <Modal onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead icon={<Layers3 size={18} />} eyebrow="3 EXÉCUTIONS WORKER · T+6H" title="Comparaison des stratégies" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''}><header><div><small>{index === 0 ? 'SURFACE MINIMALE' : strategy.resources === 0 ? 'RÉFÉRENCE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Résultat calculé</span>}</header><p>{strategy.description}</p><dl><div><dt>Surface simulée</dt><dd>{strategy.burnedHa.toLocaleString('fr-FR')} ha</dd></div><div><dt>Vitesse de tête</dt><dd>{strategy.rateOfSpread.toLocaleString('fr-FR')} m/min</dd></div><div><dt>Moyens</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Modèle non calibré · résultats calculés localement</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Retenir le résultat minimal</button></div></section></Modal>}
+      {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 EXÉCUTIONS WORKER · T+6H" title="Comparaison des stratégies" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Stratégie recommandée' : undefined}><header><div><small>{index === 0 ? 'SURFACE MINIMALE' : strategy.resources === 0 ? 'RÉFÉRENCE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Résultat calculé</span>}</header><p>{strategy.description}</p><dl><div><dt>Surface simulée</dt><dd>{strategy.burnedHa.toLocaleString('fr-FR')} ha</dd></div><div><dt>Vitesse de tête</dt><dd>{strategy.rateOfSpread.toLocaleString('fr-FR')} m/min</dd></div><div><dt>Moyens</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Modèle non calibré · résultats calculés localement</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Retenir le résultat minimal</button></div></section></Modal>}
 
-      {reviewOpen && stagedPlan && <Modal><section className="review-panel glass-panel"><ModalHead icon={<Command size={18} />} eyebrow="VALIDATION HUMAINE REQUISE" title="Revue du plan" onClose={rejectPlan} /><div className="intent-card"><small>INTENTION DE L’AGENT</small><p>« {stagedPlan.intention} »</p></div><div className="review-section"><h3>Modifications proposées</h3><ul>{stagedPlan.deployments.map((unit) => <li key={unit.id}><span>+{unit.count} {unit.type}</span><p>{unit.mission} · secteur {unit.sector}</p></li>)}{stagedPlan.firebreaks.map((line) => <li key={line.name}><span>+ Ligne d’appui {line.lengthKm} km</span><p>{line.name} · secteur {line.sector}</p></li>)}{stagedPlan.evacuations.map((zone) => <li key={zone.name}><span>+ Zone d’évacuation</span><p>{zone.name} · {zone.population} personnes · ordre non transmis</p></li>)}</ul></div>{stagedPlan.comparison?.[0] && <div className="impact-card"><div><small>RÉSULTAT CALCULÉ À T+6H</small><strong>{stagedPlan.comparison[0].burnedHa.toLocaleString('fr-FR')} ha<span>surface simulée · modèle non calibré</span></strong></div><div className="impact-bars"><span><i style={{ width: '100%' }} />Vitesse de tête <b>{stagedPlan.comparison[0].rateOfSpread.toLocaleString('fr-FR')} m/min</b></span><span><i style={{ width: '100%' }} />Moyens <b>{stagedPlan.comparison[0].resources}</b></span></div></div>}<details className="edit-details"><summary>Modifier avant d’appliquer <ChevronDown size={14} /></summary><p>Le plan reste éditable sur la carte avant validation.</p></details><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Rejeter</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />Appliquer le plan · {stagedCount} moyens</button></div><p className="review-legal"><ShieldCheck size={13} />Une seule validation engage ce lot. Chaque action reste annulable.</p></section></Modal>}
+      {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}><section className="review-panel glass-panel"><ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Engager ${stagedCount} moyens ?` : 'Engager ce plan ?'} onClose={rejectPlan} /><p className="review-intention">« {stagedPlan.intention} »</p>{noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Comparaison de la surface simulée à six heures"><div className="decision-row"><span>Sans action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('fr-FR')} ha</strong></div><div className="decision-row selected"><span>Avec ce plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('fr-FR')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('fr-FR')} ha à T+6 h</p>}</div>}<div className="plan-contents"><p>{stagedUnitSummary || 'Aucun moyen supplémentaire'}</p>{stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} ligne{stagedPlan.firebreaks.length > 1 ? 's' : ''} d’appui · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('fr-FR')} km</p>}{stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('fr-FR')} personnes · ordre non transmis</p>}</div><p className="review-warning"><ShieldCheck size={13} />Modèle non calibré · outil d’entraînement</p><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Rejeter</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />{stagedCount > 0 ? `Engager ${stagedCount} moyens` : 'Engager ce plan'}</button></div></section></Modal>}
 
       {agentOpen && <aside className="agent-drawer glass-panel"><ModalHead icon={<Bot size={18} />} eyebrow="OFFICIER D’ÉTAT-MAJOR" title="Agent simulé" onClose={() => setAgentOpen(false)} /><div className="agent-prompt"><span>DEMANDE</span><p>« Le vent passe au nord-ouest à 40 km/h. Propose-moi deux stratégies pour protéger le village. »</p></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Rejouez un plan complet sans dépendre du flag WebMCP.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <TimerReset size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div><button className="primary-button full-button" type="button" onClick={stagedPlan ? () => { setAgentOpen(false); setReviewOpen(true); } : runAgentDemo}><Sparkles size={14} />{stagedPlan ? 'Ouvrir la revue du plan' : 'Lancer le plan scripté'}</button></aside>}
       {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan appliqué · Annuler</button>}
@@ -1441,9 +1451,47 @@ function Slider({ label, value, min, max, unit, onChange }: { label: string; val
     </label>
   );
 }
-function Modal({ children, onClose }: { children: React.ReactNode; onClose?: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (onClose && event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => { if (onClose && event.key === 'Escape') onClose(); }}>{children}</div>;
+function Modal({ children, labelledBy, onClose }: { children: React.ReactNode; labelledBy: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), summary, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', handleKeyDown);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
+  return <div ref={dialogRef} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} onMouseDown={(event) => { if (event.target === event.currentTarget) closeRef.current(); }}>{children}</div>;
 }
-function ModalHead({ icon, eyebrow, title, onClose }: { icon: React.ReactNode; eyebrow: string; title: string; onClose: () => void }) {
-  return <div className="drawer-heading"><div><span className="drawer-icon">{icon}</span><div><small>{eyebrow}</small><h2>{title}</h2></div></div><button type="button" aria-label="Fermer" onClick={onClose}><X size={18} /></button></div>;
+function ModalHead({ icon, eyebrow, title, titleId, onClose }: { icon: React.ReactNode; eyebrow?: string; title: string; titleId?: string; onClose: () => void }) {
+  return <div className="drawer-heading"><div><span className="drawer-icon" aria-hidden="true">{icon}</span><div>{eyebrow && <small>{eyebrow}</small>}<h2 id={titleId}>{title}</h2></div></div><button type="button" aria-label="Fermer" onClick={onClose}><X size={18} /></button></div>;
 }
