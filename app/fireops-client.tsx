@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { GeoJSONSource, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import {
-  Bot, Check, ChevronDown, CircleHelp, Command, Flame, Globe2, Layers3,
-  LogOut, Map as MapIcon, Pause, Play, Plus, RotateCcw, ShieldCheck, Sparkles,
-  TimerReset, Undo2, Wind, X, ChevronUp,
+  Bot, CarFront, Check, ChevronDown, CircleHelp, Command, Container as ContainerIcon,
+  FireExtinguisher, Flame, Globe2, Helicopter, Layers3, LogOut, Map as MapIcon,
+  Pause, Plane, PlaneTakeoff, Play, Plus, RotateCcw, ShieldCheck, Sparkles,
+  TimerReset, Tractor, Truck, Undo2, Users, Wind, X, ChevronUp,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
@@ -58,27 +61,38 @@ type ModelContextLike = {
   unregisterTool?: (name: string) => Promise<void> | void;
 };
 
+type UnitFamily = 'terrestre' | 'aérien' | 'génie';
+type UnitCatalogue = { code: string; count: number; label: string; famille: UnitFamily; cuve: string; capacityLitres?: number };
+
 const initialWeather: Weather = {
   windSpeed: 22, windDirection: 'Nord-ouest', windBearing: 135, gusts: 38,
   temperature: 39, humidity: 19, droughtIndex: 0.95,
 };
 // Le parc reprend les caracteristiques constructeur portees par le moteur :
 // cuve, debit de pompe et duree de remplissage donnent le debit soutenu.
-const units = [
-  { code: 'VLHR', count: 14, label: 'Véhicules légers hors route', famille: 'terrestre', cuve: '600 L' },
-  { code: 'CCF',  count: 18, label: 'Camions-citernes feux de forêts', famille: 'terrestre', cuve: '4 000 L' },
-  { code: 'CCFS', count: 6,  label: 'Camions-citernes super', famille: 'terrestre', cuve: '8 000 L' },
-  { code: 'FPT',  count: 6,  label: 'Fourgons pompe-tonne', famille: 'terrestre', cuve: '3 000 L' },
-  { code: 'CCGC', count: 4,  label: 'Citernes grande capacité', famille: 'terrestre', cuve: '13 000 L' },
-  { code: 'HBE',  count: 2,  label: 'Hélicoptères bombardiers d’eau', famille: 'aérien', cuve: '1 000 L' },
-  { code: 'HELIT', count: 1, label: 'Hélicoptère lourd S-64', famille: 'aérien', cuve: '9 500 L' },
-  { code: 'AT8',  count: 4,  label: 'Air Tractor AT-802F', famille: 'aérien', cuve: '3 100 L' },
-  { code: 'CL4',  count: 4,  label: 'Canadair CL-415', famille: 'aérien', cuve: '6 137 L' },
-  { code: 'DASH', count: 2,  label: 'Dash-8 Q400MR', famille: 'aérien', cuve: '10 000 L' },
-  { code: 'A400', count: 1,  label: 'A400M (retardant)', famille: 'aérien', cuve: '20 000 L' },
+const units: UnitCatalogue[] = [
+  { code: 'VLHR', count: 14, label: 'Véhicules légers hors route', famille: 'terrestre', cuve: '600 L', capacityLitres: 600 },
+  { code: 'CCF',  count: 18, label: 'Camions-citernes feux de forêts', famille: 'terrestre', cuve: '4 000 L', capacityLitres: 4000 },
+  { code: 'CCFS', count: 6,  label: 'Camions-citernes super', famille: 'terrestre', cuve: '8 000 L', capacityLitres: 8000 },
+  { code: 'FPT',  count: 6,  label: 'Fourgons pompe-tonne', famille: 'terrestre', cuve: '3 000 L', capacityLitres: 3000 },
+  { code: 'CCGC', count: 4,  label: 'Citernes grande capacité', famille: 'terrestre', cuve: '13 000 L', capacityLitres: 13000 },
+  { code: 'HBE',  count: 2,  label: 'Hélicoptères bombardiers d’eau', famille: 'aérien', cuve: '1 000 L', capacityLitres: 1000 },
+  { code: 'HELIT', count: 1, label: 'Hélicoptère lourd S-64', famille: 'aérien', cuve: '9 500 L', capacityLitres: 9500 },
+  { code: 'AT8',  count: 4,  label: 'Air Tractor AT-802F', famille: 'aérien', cuve: '3 100 L', capacityLitres: 3100 },
+  { code: 'CL4',  count: 4,  label: 'Canadair CL-415', famille: 'aérien', cuve: '6 137 L', capacityLitres: 6137 },
+  { code: 'DASH', count: 2,  label: 'Dash-8 Q400MR', famille: 'aérien', cuve: '10 000 L', capacityLitres: 10000 },
+  { code: 'A400', count: 1,  label: 'A400M (retardant)', famille: 'aérien', cuve: '20 000 L', capacityLitres: 20000 },
   { code: 'DOZ',  count: 3,  label: 'Bulldozers', famille: 'génie', cuve: '320 m/h' },
   { code: 'CREW', count: 8,  label: 'Équipes au sol (20 sapeurs)', famille: 'génie', cuve: '90 m/h' },
 ];
+const UNIT_ICONS: Record<string, LucideIcon> = {
+  VLHR: CarFront, CCF: Truck, CCFS: Truck, FPT: FireExtinguisher, CCGC: ContainerIcon,
+  HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
+  A400: Plane, DOZ: Tractor, CREW: Users,
+};
+const unitFamilyClass = (family: UnitFamily) => family === 'aérien' ? 'aerien' : family === 'génie' ? 'genie' : 'terrestre';
+const unitCapacityLevel = (unit: UnitCatalogue) => unit.famille === 'génie' || (unit.capacityLitres || 0) > 9000
+  ? 3 : (unit.capacityLitres || 0) >= 3000 ? 2 : 1;
 const REGION_LABEL: Record<string, string> = {
   gironde: 'Landes de Gascogne',
   marseille: 'Provence calcaire',
@@ -296,6 +310,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
+  const markerRootsRef = useRef<Root[]>([]);
   const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
@@ -733,15 +748,22 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     let cancelled = false;
     import('maplibre-gl').then((maplibre) => {
       if (cancelled || !mapRef.current) return;
+      markerRootsRef.current.forEach((root) => root.unmount());
+      markerRootsRef.current = [];
       markersRef.current.forEach((marker) => marker.remove());
       const deployments = [...committed, ...(stagedPlan?.deployments || [])];
       markersRef.current = deployments.map((unit) => {
+        const catalogueUnit = units.find((item) => item.code === unit.type);
+        const UnitIcon = UNIT_ICONS[unit.type] || Truck;
+        const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.famille) : 'terrestre';
         const element = document.createElement('button');
         element.type = 'button';
-        element.className = 'unit-marker' + (unit.staged ? ' ghost' : '');
+        element.className = 'unit-marker fam-' + familyClass + (unit.staged ? ' ghost' : '');
         element.title = unit.type + ' × ' + unit.count + ' · ' + unit.mission;
         element.setAttribute('aria-label', element.title);
-        element.innerHTML = '<b>' + unit.type + '</b><span>' + String(unit.count).padStart(2, '0') + '</span>';
+        const markerRoot = createRoot(element);
+        markerRoot.render(<><UnitIcon size={16} strokeWidth={1.9} aria-hidden="true" /><b>{unit.type}</b><span>{String(unit.count).padStart(2, '0')}</span></>);
+        markerRootsRef.current.push(markerRoot);
         const marker = new maplibre.Marker({ element, draggable: true }).setLngLat([unit.lng, unit.lat]).addTo(mapRef.current!);
         marker.on('dragend', () => {
           const { lng, lat } = marker.getLngLat();
@@ -765,7 +787,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         return marker;
       });
     }).catch(() => undefined);
-    return () => { cancelled = true; markersRef.current.forEach((marker) => marker.remove()); markersRef.current = []; };
+    return () => {
+      cancelled = true;
+      markerRootsRef.current.forEach((root) => root.unmount());
+      markerRootsRef.current = [];
+      markersRef.current.forEach((marker) => marker.remove());
+      markersRef.current = [];
+    };
   }, [committed, mapReady, notify, stagedPlan?.deployments]);
 
   const comparePlansWithWorker = useCallback(async (names: string[], horizonHours: number) => {
@@ -1292,7 +1320,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           <p className="autonomy-note">Un engin à {autonomy} % ne tient que {autonomy} % de son débit théorique : carburant, relève des personnels et chaîne d’eau.</p>
           {FAMILLES.map((famille) => <div className="unit-group" key={famille}>
             <span className="unit-group-head">{famille}</span>
-            <div className="unit-list">{units.filter((unit) => unit.famille === famille).map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui', mission: 'Mission à préciser', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' ajouté. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code} key={unit.code}><span className={'unit-code fam-' + (unit.famille === 'aérien' ? 'aerien' : unit.famille === 'génie' ? 'genie' : 'terrestre')}>{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>{unit.cuve} · autonomie {autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
+            <div className="unit-list">{units.filter((unit) => unit.famille === famille).map((unit) => {
+              const UnitIcon = UNIT_ICONS[unit.code] || Truck;
+              const capacityLevel = unitCapacityLevel(unit);
+              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui', mission: 'Mission à préciser', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' ajouté. Aucune ressource engagée.'); }} aria-label={`Prépositionner ${unit.label} (${unit.code}), ${unit.cuve}`} key={unit.code}>
+                <span className={'unit-visual fam-' + unitFamilyClass(unit.famille)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
+                <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.cuve} · autonomie {autonomy} %</small></span>
+                <b>{String(unit.count).padStart(2,'0')}</b>
+              </button>;
+            })}</div>
           </div>)}
         </div>
         <div className="rail-footer panel-foot"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>

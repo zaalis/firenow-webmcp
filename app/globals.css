@@ -47,13 +47,17 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 
 .map-stage { position: absolute; inset: 0; overflow: hidden; background: var(--bg-1); }
 .unit-marker {
-  width: 42px; height: 42px; display: grid; place-items: center; padding: 0;
+  position: relative; width: 48px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 0;
   border-radius: 50%; background: var(--accent); color: var(--accent-ink); border: 2px solid rgba(255,255,255,.9);
   box-shadow: 0 0 0 10px rgba(255,255,255,.13), 0 6px 18px rgba(0,0,0,.28);
   font-family: "SF Mono", Consolas, monospace;
 }
-.unit-marker b { font-size: 9px; line-height: 1; }
-.unit-marker span { margin-top: -8px; color: rgba(8,9,10,.68); font-size: 8px; line-height: 1; }
+.unit-marker svg { flex: none; }
+.unit-marker b { font-size: 7px; line-height: 1; }
+.unit-marker span {
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; display: grid; place-items: center;
+  padding: 0 3px; border-radius: 999px; border: 2px solid var(--bg-0); background: var(--accent); color: var(--accent-ink); font-size: 7px; line-height: 1;
+}
 
 .topbar {
   position: absolute; z-index: 10; left: 18px; right: 18px; top: 16px; height: 66px;
@@ -107,20 +111,20 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .drag-hint { margin: 14px 0 10px; color: var(--faint); font-size: 10px; }
 .unit-list { display: flex; flex-direction: column; gap: 7px; }
 .unit-card {
-  width: 100%; min-height: 54px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+  width: 100%; min-height: 58px; display: grid; grid-template-columns: 40px minmax(0,1fr) auto; align-items: center; gap: 9px;
   padding: 7px 9px; cursor: grab; color: var(--text); text-align: left; border-radius: 12px;
   border: 1px solid rgba(255,255,255,.06); background: rgba(255,255,255,.045);
   transition: background .24s var(--ease), border-color .24s var(--ease);
 }
 .unit-card:hover { background: rgba(255,255,255,.09); border-color: var(--border-strong); }
-.unit-code {
-  width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px;
-  background: rgba(255,255,255,.10); border: 1px solid var(--border-strong); color: var(--text);
-  font: 700 10px/1 "SF Mono", Consolas, monospace;
-}
+.unit-visual { width: 40px; height: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--border); border-radius: 10px; }
+.capacity-gauge { width: 23px; height: 4px; display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; }
+.capacity-gauge i { border-radius: 1px; background: rgba(255,255,255,.14); }
+.capacity-gauge i.filled { background: currentColor; }
 .unit-copy { display: flex; min-width: 0; flex-direction: column; }
-.unit-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-.unit-copy small { margin-top: 3px; color: var(--faint); font-size: 8px; }
+.unit-copy strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 10px; line-height: 1.25; }
+.unit-copy small { margin-top: 4px; overflow: hidden; color: var(--faint); font-size: 7.5px; text-overflow: ellipsis; white-space: nowrap; }
+.unit-copy code { color: var(--muted); font: 700 7.5px/1 "SF Mono", Consolas, monospace; }
 .unit-card > b { font: 700 13px/1 "SF Mono", Consolas, monospace; }
 .panel-scroll {
   flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
@@ -210,8 +214,8 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   .topbar { grid-template-columns: 1fr auto; }
   .scenario-title,.status-chip { display: none; }
   .agent-banner { left: 14px; right: 14px; top: 91px; width: auto; }
-  .unit-list { display: grid; grid-template-columns: 1fr 1fr; }
-  .unit-card { min-height: 46px; }
+  .unit-list { display: grid; grid-template-columns: 1fr; }
+  .unit-card { min-height: 58px; }
   .timeline { left: 14px; right: 14px; bottom: 12px; height: 72px; grid-template-columns: 82px auto 1fr; padding: 9px 11px; gap: 9px; }
   .panel-tabs button { min-width: 82px; }
   .map-controls { display: flex; }
@@ -759,8 +763,11 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .review-legal svg { color: var(--ok); }
 .account-note svg { color: var(--ok); }
 
-/* Teinte par type d'engin : on distingue un porteur d'eau d'un engin de génie. */
-.unit-card .unit-code { border-color: var(--border-strong); }
+/* Teinte par famille : l'icone et la jauge portent le sens, sans fond plein. */
+.unit-visual.fam-terrestre,.unit-marker.fam-terrestre svg { color: var(--water); }
+.unit-visual.fam-aerien,.unit-marker.fam-aerien svg { color: #9FD8FF; }
+.unit-visual.fam-genie,.unit-marker.fam-genie svg { color: var(--earth); }
+.unit-marker.ghost svg { color: var(--agent); }
 
 /* ---------- Bloc hydraulique ---------- */
 .suppression-card {
@@ -832,10 +839,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .popover-head .preset-new { color: var(--fire-active); border-color: rgba(255,159,10,.38); background: rgba(255,159,10,.10); letter-spacing: .04em; }
 .popover-head .preset-new:hover { border-color: rgba(255,159,10,.62); background: rgba(255,159,10,.18); }
 
-/* Parc : pastille coloree par famille d engin. */
-.unit-code.fam-terrestre { color: var(--water); border-color: rgba(90,200,250,.42); background: rgba(90,200,250,.12); }
-.unit-code.fam-aerien    { color: #9FD8FF; border-color: rgba(159,216,255,.42); background: rgba(159,216,255,.12); }
-.unit-code.fam-genie     { color: var(--earth); border-color: rgba(217,160,91,.42); background: rgba(217,160,91,.12); }
 .unit-group { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
 .unit-group-head { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .13em; text-transform: uppercase; }
 
