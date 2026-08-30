@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { GeoJSONSource, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import {
   Bot, Check, ChevronDown, CircleHelp, Command, Flame, Globe2, Layers3,
@@ -345,6 +346,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [autonomy, setAutonomy] = useState(85);
   const [railOpen, setRailOpen] = useState(true);
   const [situationOpen, setSituationOpen] = useState(true);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<'resources' | 'situation' | null>(null);
   const [exposure, setExposure] = useState<Exposure | null>(null);
   const [composition, setComposition] = useState<{ nom: string; strate: string; part: number }[]>([]);
   const [landscapeAsset, setLandscapeAsset] = useState<LandscapeAsset | null>(null);
@@ -358,6 +361,17 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   useEffect(() => {
     stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario };
   }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario]);
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 900px)');
+    const syncViewport = () => {
+      setIsNarrowViewport(query.matches);
+      if (!query.matches) setMobilePanel(null);
+    };
+    syncViewport();
+    query.addEventListener('change', syncViewport);
+    return () => query.removeEventListener('change', syncViewport);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -383,6 +397,21 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     const entry: Activity = { id: nextId(), tool, label, state: delay ? 'running' : 'done', at: atNow() };
     setActivities((current) => [entry, ...current].slice(0, 14));
     if (delay) window.setTimeout(() => setActivities((current) => current.map((item) => item.id === entry.id ? { ...item, state: 'done' } : item)), delay);
+  }, []);
+  const scrollPanelByKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    const panel = event.currentTarget;
+    const page = Math.max(80, Math.round(panel.clientHeight * 0.8));
+    const target = event.key === 'ArrowDown' ? panel.scrollTop + 40
+      : event.key === 'ArrowUp' ? panel.scrollTop - 40
+        : event.key === 'PageDown' ? panel.scrollTop + page
+          : event.key === 'PageUp' ? panel.scrollTop - page
+            : event.key === 'Home' ? 0
+              : event.key === 'End' ? panel.scrollHeight
+                : null;
+    if (target === null) return;
+    event.preventDefault();
+    panel.scrollTo({ top: target, behavior: 'auto' });
   }, []);
   const makePlan = useCallback((name: string, intention: string) => {
     const plan = emptyPlan(name, intention);
@@ -1234,37 +1263,40 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span className="agent-link">Voir les outils</span>
       </button>
 
-      <aside className={'left-rail glass-panel' + (railOpen ? '' : ' collapsed')}>
+      <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
           <div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div>
           <span className="resource-count">{PARC_TOTAL}</span>
-          <button className="panel-toggle" type="button" aria-expanded={railOpen}
-            aria-label={railOpen ? 'Replier les moyens' : 'Déplier les moyens'}
-            onClick={() => setRailOpen((value) => !value)}><ChevronUp size={13} /></button>
+          <button className="panel-toggle" type="button" aria-expanded={isNarrowViewport ? mobilePanel === 'resources' : railOpen}
+            aria-label={(isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? 'Replier les moyens' : 'Déplier les moyens'}
+            onClick={() => isNarrowViewport ? setMobilePanel((current) => current === 'resources' ? null : 'resources') : setRailOpen((value) => !value)}><ChevronUp size={13} /></button>
         </div>
-        <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
-        <div className="autonomy-control">
-          <label htmlFor="autonomy">AUTONOMIE À L’ENGAGEMENT</label>
-          <input id="autonomy" type="range" min={20} max={100} step={5} value={autonomy}
-            onChange={(event) => setAutonomy(Number(event.target.value))} />
-          <b>{autonomy} %</b>
+        <div className="panel-scroll" tabIndex={0} role="region" aria-label="Moyens disponibles et autonomie à l’engagement" onKeyDown={scrollPanelByKeyboard}>
+          <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
+          <div className="autonomy-control">
+            <label htmlFor="autonomy">AUTONOMIE À L’ENGAGEMENT</label>
+            <input id="autonomy" type="range" min={20} max={100} step={5} value={autonomy}
+              onChange={(event) => setAutonomy(Number(event.target.value))} />
+            <b>{autonomy} %</b>
+          </div>
+          <p className="autonomy-note">Un engin à {autonomy} % ne tient que {autonomy} % de son débit théorique : carburant, relève des personnels et chaîne d’eau.</p>
+          {FAMILLES.map((famille) => <div className="unit-group" key={famille}>
+            <span className="unit-group-head">{famille}</span>
+            <div className="unit-list">{units.filter((unit) => unit.famille === famille).map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui', mission: 'Mission à préciser', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' ajouté. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code} key={unit.code}><span className={'unit-code fam-' + (unit.famille === 'aérien' ? 'aerien' : unit.famille === 'génie' ? 'genie' : 'terrestre')}>{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>{unit.cuve} · autonomie {autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
+          </div>)}
         </div>
-        <p className="autonomy-note">Un engin à {autonomy} % ne tient que {autonomy} % de son débit théorique : carburant, relève des personnels et chaîne d’eau.</p>
-        {FAMILLES.map((famille) => <div className="unit-group" key={famille}>
-          <span className="unit-group-head">{famille}</span>
-          <div className="unit-list">{units.filter((unit) => unit.famille === famille).map((unit) => <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui', mission: 'Mission à préciser', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' ajouté. Aucune ressource engagée.'); }} aria-label={'Prépositionner un ' + unit.code} key={unit.code}><span className={'unit-code fam-' + (unit.famille === 'aérien' ? 'aerien' : unit.famille === 'génie' ? 'genie' : 'terrestre')}>{unit.code}</span><span className="unit-copy"><strong>{unit.label}</strong><small>{unit.cuve} · autonomie {autonomy} %</small></span><b>{String(unit.count).padStart(2,'0')}</b></button>)}</div>
-        </div>)}
-        <div className="rail-footer"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
+        <div className="rail-footer panel-foot"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
       </aside>
 
-      <aside className={'situation-panel glass-panel' + (situationOpen ? '' : ' collapsed')}>
+      <aside id="situation-panel" className={'situation-panel glass-panel' + ((isNarrowViewport ? mobilePanel === 'situation' : situationOpen) ? '' : ' collapsed') + (mobilePanel === 'situation' ? ' mobile-open' : '')}>
         <div className="panel-heading">
           <div><span>{incidentClock}</span><strong>Situation opérationnelle</strong></div>
           <span className="beta-chip">BÊTA</span>
-          <button className="panel-toggle" type="button" aria-expanded={situationOpen}
-            aria-label={situationOpen ? 'Replier la situation' : 'Déplier la situation'}
-            onClick={() => setSituationOpen((value) => !value)}><ChevronUp size={13} /></button>
+          <button className="panel-toggle" type="button" aria-expanded={isNarrowViewport ? mobilePanel === 'situation' : situationOpen}
+            aria-label={(isNarrowViewport ? mobilePanel === 'situation' : situationOpen) ? 'Replier la situation' : 'Déplier la situation'}
+            onClick={() => isNarrowViewport ? setMobilePanel((current) => current === 'situation' ? null : 'situation') : setSituationOpen((value) => !value)}><ChevronUp size={13} /></button>
         </div>
+        <div className="panel-scroll" tabIndex={0} role="region" aria-label="Situation : météo, couvert, enjeux et extinction" onKeyDown={scrollPanelByKeyboard}>
         <div className="metric-grid"><div><span>Surface simulée</span><strong>{shownBurnedHa === null ? '—' : shownBurnedHa.toLocaleString('fr-FR')} <small>ha</small></strong><em>calcul worker</em></div><div><span>Vitesse de tête</span><strong>{shownFrontRate === null ? '—' : shownFrontRate.toLocaleString('fr-FR')} <small>m/min</small></strong><em>calcul Rothermel</em></div><div><span>Temps simulé</span><strong>{minutes} <small>min</small></strong><em>depuis l’allumage</em></div><div><span>Calibration</span><strong>—</strong><em>non réalisée</em></div></div>
         <button className={'weather-card' + (weatherOpen ? ' open' : '')} type="button" onClick={() => setWeatherOpen((value) => !value)} aria-expanded={weatherOpen}>
           <span className="weather-icon"><Wind size={18} /></span>
@@ -1350,8 +1382,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
                   : <>Au-delà de 4 000 kW/m aucun débit ne suffit : ligne d’appui ou attaque indirecte</>}
           </p>
         </div>}
-        <p className="model-disclaimer">Modèle Rothermel 1972 · outil d’entraînement · non calibré sur données historiques</p>
+        </div>
+        <p className="model-disclaimer panel-foot">Modèle Rothermel 1972 · outil d’entraînement · non calibré sur données historiques</p>
       </aside>
+
+      <nav className="panel-tabs glass-panel" aria-label="Panneaux de la carte">
+        <button type="button" className={mobilePanel === 'resources' ? 'active' : ''} aria-controls="resources-panel" aria-expanded={mobilePanel === 'resources'} onClick={() => setMobilePanel((current) => current === 'resources' ? null : 'resources')}>Moyens</button>
+        <button type="button" className={mobilePanel === 'situation' ? 'active' : ''} aria-controls="situation-panel" aria-expanded={mobilePanel === 'situation'} onClick={() => setMobilePanel((current) => current === 'situation' ? null : 'situation')}>Situation</button>
+      </nav>
 
       {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setStagedPlan(null); notify('Plan provisoire annulé. Aucune ressource n’a été engagée.'); }}>Annuler</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Appliquer</button></section>}
       {!stagedPlan && ignition && <button className="ask-agent glass-panel" type="button" onClick={runAgentDemo}>

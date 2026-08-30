@@ -93,9 +93,11 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .agent-banner span { margin-top: 2px; color: var(--muted); font-size: 9px; }
 .agent-banner button { cursor: pointer; border: 0; background: transparent; color: var(--text); font-size: 10px; font-weight: 650; }
 
-.left-rail,.situation-panel { position: absolute; z-index: 8; top: 96px; border-radius: 18px; }
-.left-rail { left: 18px; width: 270px; padding: 15px; }
-.situation-panel { right: 18px; width: 306px; padding: 16px; }
+.left-rail,.situation-panel {
+  position: absolute; z-index: 8; top: 96px; display: flex; flex-direction: column; border-radius: 18px;
+}
+.left-rail { left: 18px; bottom: 106px; width: 270px; padding: 15px 15px 0; }
+.situation-panel { right: 18px; bottom: 152px; width: 306px; padding: 16px 16px 0; }
 .panel-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .panel-heading > div { display: flex; flex-direction: column; }
 .panel-heading span { color: var(--muted); font-size: 9px; font-weight: 650; letter-spacing: .1em; }
@@ -120,6 +122,14 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .unit-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .unit-copy small { margin-top: 3px; color: var(--faint); font-size: 8px; }
 .unit-card > b { font: 700 13px/1 "SF Mono", Consolas, monospace; }
+.panel-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  scroll-padding-block: 8px; mask-image: linear-gradient(to bottom,#000 0,#000 calc(100% - 22px),transparent 100%);
+}
+.panel-scroll:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; border-radius: 10px; }
+.panel-scroll::-webkit-scrollbar { width: 6px; }
+.panel-scroll::-webkit-scrollbar-thumb { border-radius: 3px; background: rgba(255,255,255,.16); }
+.panel-foot { flex: none; padding-bottom: 15px; }
 .rail-footer { display: flex; justify-content: space-between; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border); color: var(--muted); font-size: 9px; }
 .rail-footer i { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); }
 
@@ -145,6 +155,7 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .weather-details small { color: var(--faint); font-size: 7px; }
 .weather-details b { font: 600 10px/1 "SF Mono", Consolas, monospace; }
 .model-disclaimer { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 8px; line-height: 1.45; }
+.panel-tabs { display: none; }
 
 .map-controls { position: absolute; z-index: 9; right: 18px; bottom: 107px; display: flex; gap: 3px; padding: 4px; border-radius: 12px; }
 .map-controls button { min-width: 46px; height: 31px; cursor: pointer; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 650; }
@@ -176,7 +187,20 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   *,*::before,*::after { animation-duration: .01ms!important; animation-iteration-count: 1!important; scroll-behavior: auto!important; }
 }
 @media (max-width: 900px) {
-  .situation-panel { display: none; }
+  .left-rail,.situation-panel {
+    left: 14px; right: 14px; top: auto; bottom: 154px; width: auto; height: min(62dvh,480px);
+    max-height: calc(100dvh - 250px); padding: 15px 15px 0; visibility: hidden; opacity: 0; pointer-events: none;
+    transform: translateY(24px); transition: transform .24s var(--ease), opacity .18s var(--ease), visibility 0s linear .24s;
+  }
+  .left-rail.mobile-open,.situation-panel.mobile-open { z-index: 11; visibility: visible; opacity: 1; pointer-events: auto; transform: none; transition-delay: 0s; }
+  .panel-tabs {
+    position: absolute; z-index: 10; left: 14px; bottom: 107px; display: flex; gap: 3px; padding: 4px; border-radius: 12px;
+  }
+  .panel-tabs button {
+    min-width: 88px; height: 31px; cursor: pointer; border: 0; border-radius: 9px;
+    background: transparent; color: var(--muted); font-size: 10px; font-weight: 650;
+  }
+  .panel-tabs button.active { background: var(--accent); color: var(--accent-ink); }
   .agent-banner { left: auto; right: 18px; transform: none; }
   .timeline { grid-template-columns: 100px auto 1fr; }
   .speed-control { display: none; }
@@ -186,12 +210,12 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   .topbar { grid-template-columns: 1fr auto; }
   .scenario-title,.status-chip { display: none; }
   .agent-banner { left: 14px; right: 14px; top: 91px; width: auto; }
-  .left-rail { left: 14px; right: 14px; top: auto; bottom: 98px; width: auto; max-height: 183px; }
   .unit-list { display: grid; grid-template-columns: 1fr 1fr; }
   .unit-card { min-height: 46px; }
-  .unit-copy small,.rail-footer,.drag-hint { display: none; }
   .timeline { left: 14px; right: 14px; bottom: 12px; height: 72px; grid-template-columns: 82px auto 1fr; padding: 9px 11px; gap: 9px; }
-  .map-controls { display: none; }
+  .panel-tabs button { min-width: 82px; }
+  .map-controls { display: flex; }
+  .map-controls button:nth-child(-n+2) { display: none; }
   .time-readout strong { font-size: 13px; }
 }
 
@@ -795,7 +819,7 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .front-split small { color: var(--faint); font-size: 9.5px; line-height: 1.45; }
 
 /* Legende carte : les pointilles etaient pris pour une probabilite. */
-.map-legend { position: absolute; z-index: 9; left: 18px; bottom: 107px;
+.map-legend { position: absolute; z-index: 9; left: 306px; bottom: 107px;
   display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border-radius: 10px; }
 .map-legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted);
   font: 650 8.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
@@ -863,8 +887,11 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .panel-toggle:hover { background: rgba(255,255,255,.12); color: var(--text); }
 .left-rail.collapsed .panel-toggle, .situation-panel.collapsed .panel-toggle { transform: rotate(180deg); }
 .left-rail.collapsed > :not(.panel-heading), .situation-panel.collapsed > :not(.panel-heading) { display: none; }
-.left-rail.collapsed, .situation-panel.collapsed { padding-bottom: 13px; }
+.left-rail.collapsed, .situation-panel.collapsed { bottom: auto; padding-bottom: 13px; }
 .left-rail.collapsed .panel-heading, .situation-panel.collapsed .panel-heading { margin-bottom: 0; border-bottom: 0; padding-bottom: 0; }
+@media (max-width: 900px) {
+  .left-rail.collapsed,.situation-panel.collapsed { bottom: 154px; }
+}
 
 /* Enjeux humains : ce que le feu a pris et ce qu'il menace. */
 .exposure-card { display: flex; flex-direction: column; gap: 7px; padding: 11px 13px;
