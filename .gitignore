@@ -39,3 +39,7 @@ next-env.d.ts
 
 # artefact de compilation TypeScript
 tsconfig.tsbuildinfo
+
+# journaux du serveur de dev local
+fireops-dev.log
+fireops-dev.err.log
