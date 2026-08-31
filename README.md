@@ -80,15 +80,33 @@ La suite `test-simulation.mjs` compte **48 assertions** : vitesses contre les fo
     drizzle/                    migration SQL
     public/
       simulation.worker.js      moteur de propagation
+      maplibre/                 worker MapLibre servi par l’application
       data/                     raster territorial Gironde pré-calculé
     scripts/
       test-simulation.mjs       suite de tests du moteur
       validate-fires.mjs        harnais de validation multi-feux
+      sync-maplibre-worker.mjs  copie du worker MapLibre dans public/
       build-gironde-landscape.mjs  génération du raster Gironde
       fetch-fire-weather.mjs    récupération des séries horaires
     validation-data/            périmètres de référence, météo, résultats
     design-system/fireops/      spécification visuelle
     docs/                       script de démonstration et texte de soumission
+
+## Worker MapLibre
+
+MapLibre déduit l’URL de son worker de son propre `import.meta.url`. Une fois le
+paquet groupé par Vite, cette URL désigne un fichier que le bundler n’émet pas :
+le worker répond 404, aucune source GeoJSON ne se charge et **plus aucune couche
+vectorielle n’est dessinée** — le feu disparaît, seuls les marqueurs DOM restent
+visibles. Le défaut n’apparaît qu’en production, `maplibre-gl` étant exclu de
+l’optimisation de dépendances en développement.
+
+L’application sert donc le worker officiel depuis `public/maplibre/` et appelle
+`setWorkerUrl('/maplibre/maplibre-gl-worker.mjs')` avant de créer la carte. Les
+deux fichiers copiés (`maplibre-gl-worker.mjs` et le module `maplibre-gl-shared.mjs`
+qu’il importe) sont versionnés pour ne dépendre d’aucune étape de déploiement, et
+`npm run sync:maplibre-worker` — déclenché automatiquement avant `dev` et `build` —
+les remet en phase après une mise à jour de `maplibre-gl`.
 
 ## Sources de données
 

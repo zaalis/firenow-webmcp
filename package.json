@@ -6,7 +6,10 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "sync:maplibre-worker": "node scripts/sync-maplibre-worker.mjs",
+    "predev": "npm run sync:maplibre-worker",
     "dev": "vinext dev",
+    "prebuild": "npm run sync:maplibre-worker",
     "build": "vinext build",
     "start": "vinext start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"

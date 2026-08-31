@@ -231,6 +231,12 @@ const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas';
 // (195 a 390 m par cellule) n a de toute facon plus rien a montrer.
 const BASEMAP_MAX_ZOOM = 16;
 const MAP_MAX_ZOOM = 17.5;
+// MapLibre deduit l'URL de son worker de son propre `import.meta.url`. Une fois
+// le paquet bundle, cette URL pointe vers un fichier que le bundler n'emet pas :
+// le worker repond 404, aucune source GeoJSON ne se charge et plus aucune couche
+// vectorielle n'est dessinee -- le feu disparait, seuls les marqueurs DOM restent.
+// On sert donc le worker officiel depuis public/ (scripts/sync-maplibre-worker.mjs).
+const MAPLIBRE_WORKER_URL = '/maplibre/maplibre-gl-worker.mjs';
 const BASEMAP_STYLE = {
   version: 8 as const,
   sources: {
@@ -513,6 +519,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     let cancelled = false;
     import('maplibre-gl').then((maplibre) => {
       if (cancelled || !mapNode.current) return;
+      maplibre.setWorkerUrl(MAPLIBRE_WORKER_URL);
       const map = new maplibre.Map({
         container: mapNode.current,
         style: BASEMAP_STYLE,
