@@ -59,6 +59,17 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; display: grid; place-items: center;
   padding: 0 3px; border-radius: 999px; border: 2px solid var(--bg-0); background: var(--accent); color: var(--accent-ink); font-size: 7px; line-height: 1;
 }
+.unit-cluster {
+  width: 54px; height: 54px; display: grid; place-content: center; gap: 3px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.32); border-radius: 50%; background: rgba(18,19,20,.92); color: var(--text);
+  box-shadow: 0 0 0 6px rgba(255,255,255,.07), 0 10px 26px rgba(0,0,0,.34);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  transition: border-color .2s var(--ease), background .2s var(--ease), box-shadow .2s var(--ease);
+}
+.unit-cluster:hover { border-color: rgba(255,255,255,.58); background: rgba(28,29,31,.97); box-shadow: 0 0 0 7px rgba(255,255,255,.09), 0 12px 30px rgba(0,0,0,.4); }
+.unit-cluster strong { font: 700 14px/1 "SF Mono", Consolas, monospace; }
+.unit-cluster small { color: var(--muted); font: 650 6.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .03em; text-transform: uppercase; }
+.unit-cluster.has-staged { border-style: dashed; border-color: rgba(191,122,240,.7); }
 
 .topbar {
   position: absolute; z-index: 10; left: 18px; right: 18px; top: 16px; height: 66px;

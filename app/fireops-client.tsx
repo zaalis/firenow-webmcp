@@ -765,55 +765,100 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let dispose: (() => void) | undefined;
     import('maplibre-gl').then((maplibre) => {
       if (cancelled || !mapRef.current) return;
-      markerRootsRef.current.forEach((root) => root.unmount());
-      markerRootsRef.current = [];
-      markersRef.current.forEach((marker) => marker.remove());
+      const map = mapRef.current;
       const deployments = [...committed, ...(stagedPlan?.deployments || [])];
-      markersRef.current = deployments.map((unit) => {
-        const catalogueUnit = units.find((item) => item.code === unit.type);
-        const UnitIcon = UNIT_ICONS[unit.type] || Truck;
-        const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.famille) : 'terrestre';
-        const element = document.createElement('button');
-        element.type = 'button';
-        element.className = 'unit-marker fam-' + familyClass + (unit.staged ? ' ghost' : '');
-        element.title = unit.type + ' × ' + unit.count + ' · ' + unit.mission;
-        element.setAttribute('aria-label', element.title);
-        const markerRoot = createRoot(element);
-        markerRoot.render(<><UnitIcon size={16} strokeWidth={1.9} aria-hidden="true" /><b>{unit.type}</b><span>{String(unit.count).padStart(2, '0')}</span></>);
-        markerRootsRef.current.push(markerRoot);
-        const marker = new maplibre.Marker({ element, draggable: true }).setLngLat([unit.lng, unit.lat]).addTo(mapRef.current!);
-        marker.on('dragend', () => {
-          const { lng, lat } = marker.getLngLat();
-          // Deplacer un moyen deja engage passe par le plan provisoire : la regle
-          // "une seule validation par lot" vaut aussi pour les gestes manuels.
-          if (unit.staged) {
-            setStagedPlan((plan) => plan
-              ? { ...plan, deployments: plan.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
-              : plan);
-          } else {
-            setStagedPlan((plan) => {
-              const base = plan || emptyPlan('Redéploiement manuel', 'Repositionner un moyen déjà engagé.');
-              const already = base.deployments.some((item) => item.id === unit.id);
-              return already
-                ? { ...base, deployments: base.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
-                : { ...base, deployments: [...base.deployments, { ...unit, lng, lat, staged: true }], movedFrom: [...(base.movedFrom || []), unit.id] };
-            });
-            notify(unit.type + ' repositionné dans le plan provisoire. Validez pour engager.');
-          }
+      const clearMarkers = () => {
+        markerRootsRef.current.forEach((root) => root.unmount());
+        markerRootsRef.current = [];
+        markersRef.current.forEach((marker) => marker.remove());
+        markersRef.current = [];
+      };
+      const renderMarkers = () => {
+        if (cancelled || !mapRef.current) return;
+        clearMarkers();
+        const zoom = map.getZoom();
+        const bucketSize = zoom < 5 ? 118 : zoom < 8 ? 94 : 76;
+        const buckets = new Map<string, Deployment[]>();
+        deployments.forEach((unit) => {
+          const point = map.project([unit.lng, unit.lat]);
+          const key = zoom >= 10.2 ? unit.id : `${Math.round(point.x / bucketSize)}:${Math.round(point.y / bucketSize)}`;
+          buckets.set(key, [...(buckets.get(key) || []), unit]);
         });
-        return marker;
-      });
+        markersRef.current = [...buckets.values()].map((group) => {
+          const center: [number, number] = [
+            group.reduce((sum, unit) => sum + unit.lng, 0) / group.length,
+            group.reduce((sum, unit) => sum + unit.lat, 0) / group.length,
+          ];
+          if (group.length > 1) {
+            const total = group.reduce((sum, unit) => sum + unit.count, 0);
+            const element = document.createElement('button');
+            element.type = 'button';
+            element.className = 'unit-cluster' + (group.some((unit) => unit.staged) ? ' has-staged' : '');
+            element.title = `${group.length} groupes · ${total} moyens. Cliquer pour rapprocher.`;
+            element.setAttribute('aria-label', element.title);
+            const markerRoot = createRoot(element);
+            markerRoot.render(<><strong>{total}</strong><small>{group.length} groupes</small></>);
+            markerRootsRef.current.push(markerRoot);
+            element.addEventListener('click', (event) => {
+              event.stopPropagation();
+              map.easeTo({ center, zoom: Math.min(11.2, zoom + 2.6), duration: 520 });
+            });
+            return new maplibre.Marker({ element }).setLngLat(center).addTo(map);
+          }
+          const unit = group[0];
+          const catalogueUnit = units.find((item) => item.code === unit.type);
+          const UnitIcon = UNIT_ICONS[unit.type] || Truck;
+          const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.famille) : 'terrestre';
+          const element = document.createElement('button');
+          element.type = 'button';
+          element.className = 'unit-marker fam-' + familyClass + (unit.staged ? ' ghost' : '');
+          element.title = unit.type + ' × ' + unit.count + ' · ' + unit.mission;
+          element.setAttribute('aria-label', element.title);
+          const markerRoot = createRoot(element);
+          markerRoot.render(<><UnitIcon size={16} strokeWidth={1.9} aria-hidden="true" /><b>{unit.type}</b><span>{String(unit.count).padStart(2, '0')}</span></>);
+          markerRootsRef.current.push(markerRoot);
+          const marker = new maplibre.Marker({ element, draggable: zoom >= 10.2 }).setLngLat([unit.lng, unit.lat]).addTo(map);
+          marker.on('dragend', () => {
+            const { lng, lat } = marker.getLngLat();
+            // Deplacer un moyen deja engage passe par le plan provisoire : la regle
+            // "une seule validation par lot" vaut aussi pour les gestes manuels.
+            if (unit.staged) {
+              setStagedPlan((plan) => plan
+                ? { ...plan, deployments: plan.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
+                : plan);
+            } else {
+              setStagedPlan((plan) => {
+                const base = plan || emptyPlan('Redéploiement manuel', 'Repositionner un moyen déjà engagé.');
+                const already = base.deployments.some((item) => item.id === unit.id);
+                return already
+                  ? { ...base, deployments: base.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
+                  : { ...base, deployments: [...base.deployments, { ...unit, lng, lat, staged: true }], movedFrom: [...(base.movedFrom || []), unit.id] };
+              });
+              notify(unit.type + ' repositionné dans le plan provisoire. Validez pour engager.');
+            }
+          });
+          return marker;
+        });
+      };
+      renderMarkers();
+      map.on('moveend', renderMarkers);
+      dispose = () => {
+        map.off('moveend', renderMarkers);
+        clearMarkers();
+      };
     }).catch(() => undefined);
     return () => {
       cancelled = true;
+      dispose?.();
       markerRootsRef.current.forEach((root) => root.unmount());
       markerRootsRef.current = [];
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
     };
-  }, [committed, mapReady, notify, stagedPlan?.deployments]);
+  }, [committed, mapReady, notify, stagedPlan?.deployments, viewMode]);
 
   const comparePlansWithWorker = useCallback(async (names: string[], horizonHours: number) => {
     if (names.length !== 3) throw new Error('compare_plans exige exactement trois stratégies.');
