@@ -1,5 +1,7 @@
 /* FireOps local wildfire engine: Rothermel (1972), Alexander (1985), 128 x 128 cellular grid. */
 const GRID_SIZE = 128;
+// Nombre maximal de foyers secondaires acceptes en plus du foyer principal.
+const MAX_EXTRA_IGNITIONS = 16;
 /* Le domaine etait fige sur Landiras en 25 km. Un feu comme Saumos 2026
  * (47 000 ha) deborde largement cette boite : centre et emprise sont donc
  * desormais choisis par le scenario, la grille restant a 128 x 128. */
@@ -545,38 +547,51 @@ function createState(origin) {
   // non combustibles apres l'injection des peuplements forestiers reels.
   if (terrain) applyTerrain(fuel, terrain);
   anthropic = landscapeResult.anthropic;
-  const point = origin && Number.isFinite(origin.lng) && Number.isFinite(origin.lat)
-    ? cellForLngLat(origin.lng, origin.lat)
-    : { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2) };
-  // Un allumage sur une cellule non combustible ne partirait jamais : on glisse vers la plus proche cellule qui brule.
-  let cell = point;
-  if (FUEL[fuel[indexOf(cell.x, cell.y)]].nonBurnable) {
-    search: for (let radius = 1; radius < GRID_SIZE; radius += 1) {
+  // Un allumage sur une cellule non combustible ne partirait jamais : on glisse
+  // vers la plus proche cellule qui brule.
+  const burnableCellNear = (start) => {
+    if (!FUEL[fuel[indexOf(start.x, start.y)]].nonBurnable) return start;
+    for (let radius = 1; radius < GRID_SIZE; radius += 1) {
       for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) {
-        const x = point.x + dx, y = point.y + dy;
+        const x = start.x + dx, y = start.y + dy;
         if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
-        if (!FUEL[fuel[indexOf(x, y)]].nonBurnable) { cell = { x, y }; break search; }
+        if (!FUEL[fuel[indexOf(x, y)]].nonBurnable) return { x, y };
       }
     }
-  }
-  // Un foyer initial peut couvrir un disque : l'operateur regle sa taille en glissant
+    return start;
+  };
+  // Un foyer peut couvrir un disque : l'operateur regle sa taille en glissant
   // sur la carte, plutot que via un champ numerique.
-  const radius = Math.max(0, Number(origin && origin.radiusM) || 0);
-  const reach = Math.min(GRID_SIZE, Math.ceil(radius / CELL_METERS));
-  let seeded = 0;
-  for (let dy = -reach; dy <= reach; dy += 1) for (let dx = -reach; dx <= reach; dx += 1) {
-    const x = cell.x + dx, y = cell.y + dy;
-    if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
-    if (Math.hypot(dx, dy) * CELL_METERS > radius) continue;
-    if (FUEL[fuel[indexOf(x, y)]].nonBurnable) continue;
-    arrival[indexOf(x, y)] = 0; seeded += 1;
-  }
-  if (!seeded) arrival[indexOf(cell.x, cell.y)] = 0;
-  const [lng, lat] = lngLatForCell(cell.x, cell.y);
+  const seedDisc = (spot) => {
+    const cell = burnableCellNear(spot && Number.isFinite(spot.lng) && Number.isFinite(spot.lat)
+      ? cellForLngLat(spot.lng, spot.lat)
+      : { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2) });
+    const radiusM = Math.max(0, Number(spot && spot.radiusM) || 0);
+    const reach = Math.min(GRID_SIZE, Math.ceil(radiusM / CELL_METERS));
+    let seeded = 0;
+    for (let dy = -reach; dy <= reach; dy += 1) for (let dx = -reach; dx <= reach; dx += 1) {
+      const x = cell.x + dx, y = cell.y + dy;
+      if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+      if (Math.hypot(dx, dy) * CELL_METERS > radiusM) continue;
+      if (FUEL[fuel[indexOf(x, y)]].nonBurnable) continue;
+      arrival[indexOf(x, y)] = 0; seeded += 1;
+    }
+    if (!seeded) arrival[indexOf(cell.x, cell.y)] = 0;
+    const [lng, lat] = lngLatForCell(cell.x, cell.y);
+    return { lng, lat, radiusM };
+  };
+  const primary = seedDisc(origin);
+  // Les foyers secondaires sont semes dans la meme grille : ils grandissent
+  // chacun de leur cote puis fusionnent s'ils se rejoignent, ce qui est le
+  // comportement reel d'un feu a plusieurs departs. Le contour sait deja rendre
+  // plusieurs anneaux disjoints (MultiPolygon), rien d'autre n'a a changer.
+  const extras = (Array.isArray(origin && origin.extraIgnitions) ? origin.extraIgnitions : [])
+    .slice(0, MAX_EXTRA_IGNITIONS)
+    .map(seedDisc);
   return {
     state, arrival, lowIntensitySince, constructedBreak, heldBreak, lineProgressM: {}, lineCellsBuilt: {},
     explicitLinesReady: false, tacticalBurnsReady: false,
-    fuel, currentMinutes: 0, ignition: { lng, lat, radiusM: radius },
+    fuel, currentMinutes: 0, ignition: primary, extraIgnitions: extras,
     infra: anthropic && anthropic.infra, people: anthropic && anthropic.people,
     network: anthropic && anthropic.spec,
     slope: landscapeResult.slope, aspect: landscapeResult.aspect,
@@ -1139,7 +1154,7 @@ function extinguishedEdgeGeoJSON(sim) {
   feature.properties = { source: 'FireOps cellular simulation', layer: 'lisiere-eteinte' };
   return feature;
 }
-function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),constructedBreak:sim.constructedBreak.slice(),heldBreak:sim.heldBreak.slice(),lineProgressM:{...sim.lineProgressM},lineCellsBuilt:{...sim.lineCellsBuilt},explicitLinesReady:sim.explicitLinesReady,tacticalBurnsReady:sim.tacticalBurnsReady,fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,infra:sim.infra,people:sim.people,network:sim.network,slope:sim.slope,aspect:sim.aspect,landscapeSources:sim.landscapeSources,landscapeAppliedCells:sim.landscapeAppliedCells};}
+function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),constructedBreak:sim.constructedBreak.slice(),heldBreak:sim.heldBreak.slice(),lineProgressM:{...sim.lineProgressM},lineCellsBuilt:{...sim.lineCellsBuilt},explicitLinesReady:sim.explicitLinesReady,tacticalBurnsReady:sim.tacticalBurnsReady,fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,extraIgnitions:sim.extraIgnitions,infra:sim.infra,people:sim.people,network:sim.network,slope:sim.slope,aspect:sim.aspect,landscapeSources:sim.landscapeSources,landscapeAppliedCells:sim.landscapeAppliedCells};}
 /* ---------------------------------------------------------------------------
  * Analyse du front.
  *
@@ -1265,7 +1280,7 @@ function resultFor(sim, input, spread) {
   return {
     model: 'Rothermel 1972 cellular grid', shape: 'Alexander 1985 directional ellipse',
     gridSize: GRID_SIZE, gridMeters: Number(CELL_METERS.toFixed(2)), boxMetres: BOX_METERS,
-    ignition: sim.ignition || IGNITION, bounds: BOUNDS, simulationMinutes: sim.currentMinutes,
+    ignition: sim.ignition || IGNITION, extraIgnitions: sim.extraIgnitions || [], bounds: BOUNDS, simulationMinutes: sim.currentMinutes,
     rateOfSpreadMetersPerMinute: Number(headRos.toFixed(2)),
     fuelMoisture: Number(input.moisture.toFixed(3)),
     region: (input.terrain && input.terrain.region) || 'gironde',
@@ -1303,7 +1318,7 @@ let scenario=null;
 function simulate(input){input={...input};
 // Changer de domaine invalide la grille persistante : on repart du foyer.
 const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOMAIN_KEY=key;if(domainChanged)scenario=null;
-const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),terrain:input.terrain,landscape:input.landscape}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
+const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),extraIgnitions:input.extraIgnitions,terrain:input.terrain,landscape:input.landscape}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread,lastEnvironment=environmentAt(input,sim.currentMinutes);{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);lastEnvironment=environmentAt(input,cursor);spread=propagate(sim,lastEnvironment,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,lastEnvironment,spread);result.diurnal={hourOfDay:Number(lastEnvironment.hourOfDay.toFixed(2)),daylightFactor:Number(lastEnvironment.daylightFactor.toFixed(3)),wafScale:Number(lastEnvironment.wafScale.toFixed(3)),activeFraction:Number(lastEnvironment.activeFraction.toFixed(3))};if(input.includeForecast){const forecast=cloneState(sim);let projected=spread,forecastCursor=target,forecastEnvironment=lastEnvironment;while(forecastCursor<target+180){forecastCursor=Math.min(target+180,forecastCursor+STEP);forecastEnvironment=environmentAt(input,forecastCursor);projected=propagate(forecast,forecastEnvironment,forecastCursor);}result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
 self.__fireopsTest={buildInfrastructure,decodeLandscape,landscapeIndexAt,localFireInput,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,crossingDelayMinutes,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};

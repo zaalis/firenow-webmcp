@@ -237,6 +237,9 @@ const MAP_MAX_ZOOM = 17.5;
 // vectorielle n'est dessinee -- le feu disparait, seuls les marqueurs DOM restent.
 // On sert donc le worker officiel depuis public/ (scripts/sync-maplibre-worker.mjs).
 const MAPLIBRE_WORKER_URL = '/maplibre/maplibre-gl-worker.mjs';
+// Foyers secondaires acceptes en plus du foyer principal. Le moteur applique la
+// meme borne de son cote : la carte et la simulation ne peuvent pas diverger.
+const MAX_EXTRA_IGNITIONS = 11;
 const BASEMAP_STYLE = {
   version: 8 as const,
   sources: {
@@ -344,6 +347,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [mapReady, setMapReady] = useState(false);
   const [ignition, setIgnition] = useState<Ignition | null>(defaultIgnition);
   const [additionalIgnitions, setAdditionalIgnitions] = useState<Ignition[]>([]);
+  const extraIgnitionsRef = useRef<Ignition[]>([]);
   const [pickingIgnition, setPickingIgnition] = useState(false);
   const [draftIgnition, setDraftIgnition] = useState<Ignition | null>(null);
   const ignitionRef = useRef<Ignition | null>(defaultIgnition);
@@ -430,6 +434,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const patchWeather = useCallback((patch: Partial<Weather>) => {
     weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
     setWeather((current) => ({ ...current, ...patch }));
+  }, []);
+  // Les foyers secondaires sont lus par les outils WebMCP hors rendu React : on
+  // tient une ref a jour en meme temps que l'etat, comme pour le foyer principal.
+  const applyExtraIgnitions = useCallback((next: Ignition[] | ((current: Ignition[]) => Ignition[])) => {
+    const value = typeof next === 'function' ? next(extraIgnitionsRef.current) : next;
+    extraIgnitionsRef.current = value;
+    setAdditionalIgnitions(value);
   }, []);
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -572,8 +583,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         anchor = null;
         setDraftIgnition(null);
         if (ignitionRef.current) {
-          setAdditionalIgnitions((current) => [...current, placed].slice(0, 11));
-          notify('Foyer secondaire ajouté. Les foyers restent distincts sur la carte.');
+          applyExtraIgnitions((current) => [...current, placed].slice(0, MAX_EXTRA_IGNITIONS));
+          notify('Foyer secondaire allumé. La propagation repart de chaque foyer.');
         } else {
           setIgnition(placed); ignitionRef.current = placed;
           notify('Foyer principal placé.');
@@ -583,7 +594,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       mapRef.current = map;
     }).catch(() => undefined);
     return () => { cancelled = true; setMapReady(false); mapRef.current?.remove(); mapRef.current = null; };
-  }, [notify]);
+  }, [applyExtraIgnitions, notify]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -727,14 +738,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     // les valeurs affichees etant derivees plus bas.
     if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
     runWorker({
-      type: 'simulate', ignitionLngLat: ignition, reset: true, targetMinutes: minutes,
+      type: 'simulate', ignitionLngLat: ignition, extraIgnitions: additionalIgnitions, reset: true, targetMinutes: minutes,
       temperature: weather.temperature, humidity: weather.humidity, droughtIndex: weather.droughtIndex,
       plumeDriven: weather.plumeDriven === true, domain, terrain,
       windKph: weather.windSpeed, windDirection: weather.windDirection, windBearingDegrees: weather.windBearing,
       startHour: incident.startHour + incident.startMinute / 60,
       slopeDegrees: 7.4, deployments: committed, firebreaks: committedFirebreaks, includeForecast: true,
     }).then(applyEngineResult).catch(() => undefined);
-  }, [applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident, landscapeAsset, weatherSeries]);
+  }, [additionalIgnitions, applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident, landscapeAsset, weatherSeries]);
 
   // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
   const switchScenario = useCallback((id: string) => {
@@ -746,12 +757,12 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     if (!target) return;
     setActiveScenario(id);
     setIgnition(target.ignition); ignitionRef.current = target.ignition;
-    setAdditionalIgnitions([]);
+    applyExtraIgnitions([]);
     setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed); setCommittedFirebreaks(target.firebreaks);
     setDomain(target.domain); setTerrain(target.terrain); setIncident(target.incident);
     mapRef.current?.jumpTo({ center: [target.domain.lng, target.domain.lat], zoom: target.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(false);
-  }, [activeScenario, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, weather]);
+  }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, weather]);
 
   const createScenario = useCallback((preset: 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
     setRunning(false);
@@ -766,7 +777,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       : item).concat(created));
     setActiveScenario(created.id);
     setIgnition(created.ignition); ignitionRef.current = created.ignition;
-    setAdditionalIgnitions([]);
+    applyExtraIgnitions([]);
     setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed); setCommittedFirebreaks(created.firebreaks);
     setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
@@ -778,7 +789,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       blank: 'Nouvelle simulation. Placez le point de départ du feu.',
     };
     notify(NOTES[preset]);
-  }, [activeScenario, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
+  }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
 
   // La liste affichee derive de l'etat vivant pour la simulation ouverte.
   const scenarioList = scenarios.map((item) => item.id === activeScenario
@@ -891,7 +902,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     ];
     const engineRuns = await Promise.all(placementSets.map((deployments) => {
       return runWorker({
-        type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: horizonHours * 60,
+        type: 'simulate', ignitionLngLat: ignitionRef.current, extraIgnitions: extraIgnitionsRef.current, independent: true, targetMinutes: horizonHours * 60,
         temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
         droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
         plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain,
@@ -992,7 +1003,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
-            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks });
+            const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, extraIgnitions: extraIgnitionsRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks });
             return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
@@ -1153,7 +1164,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           const delta = numberValue(input.minutes, 'minutes', 5, 360);
           const targetMinutes = stateRef.current.minutes + delta;
           const engine = await runWorker({
-            type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes, moisture: 0.08,
+            type: 'simulate', ignitionLngLat: ignitionRef.current, extraIgnitions: extraIgnitionsRef.current, reset: true, targetMinutes, moisture: 0.08,
             windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection,
             temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
             droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing,
@@ -1171,7 +1182,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']), annotations: mutating,
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
-          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true });
+          const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, extraIgnitions: extraIgnitionsRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true });
           applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, engine };
         },
       },
@@ -1192,10 +1203,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           const lng = numberValue(input.lng, 'lng', -180, 180);
           const lat = numberValue(input.lat, 'lat', -90, 90);
           setIgnition({ lng, lat });
-          setAdditionalIgnitions([]);
+          applyExtraIgnitions([]);
           ignitionRef.current = { lng, lat };
           const engine = await runWorker({
-            type: 'simulate', ignitionLngLat: { lng, lat }, reset: true, targetMinutes: stateRef.current.minutes,
+            type: 'simulate', ignitionLngLat: { lng, lat }, extraIgnitions: [], reset: true, targetMinutes: stateRef.current.minutes,
             temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
             droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed,
             windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing,
@@ -1255,7 +1266,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker]);
+  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1543,7 +1554,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Front en flammes</span>
         <span><i className="lg-forecast" />Position projetée à +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Ajouter un foyer"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setAdditionalIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Ajouter un foyer"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel">
         <div className="time-readout"><span>HEURE INCIDENT</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} depuis le départ</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Mettre la simulation en pause' : 'Lancer la simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
