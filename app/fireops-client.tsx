@@ -1351,7 +1351,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           </>}
         </div>
         <div className="top-actions">
-          <button className={'webmcp-status-button ' + toolStatus} type="button" onClick={() => setAgentOpen(true)} aria-expanded={agentOpen} aria-label="Ouvrir le journal WebMCP">
+          <button className={'webmcp-status-button ' + toolStatus} type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} aria-label="Voir les outils WebMCP">
             {toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}
             <span>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'WebMCP en cours' : 'WebMCP indisponible'}</span>
           </button>
@@ -1391,14 +1391,6 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           </div>
         </div>
       </header>
-
-      {toolStatus === 'unavailable' && <section className="compat-banner glass-panel"><Bot size={16} /><span><strong>WebMCP non détecté.</strong> Activez le flag Chrome ou utilisez le navigateur intégré ChatGPT.</span></section>}
-
-      <button className={'agent-banner glass-panel ' + toolStatus} type="button" onClick={() => setToolsOpen(true)}>
-        <span className="agent-orb">{toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}</span>
-        <span className="agent-copy"><strong>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'Enregistrement des outils…' : 'Mode manuel disponible'}</strong><small>{toolNames.length} outils métier · session de la page</small></span>
-        <span className="agent-link">Voir les outils</span>
-      </button>
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
@@ -1567,7 +1559,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     <strong>{toolStatus === 'available' ? 'Outils enregistrés dans cette page' : toolStatus === 'registering' ? 'Enregistrement en cours…' : 'API WebMCP absente de ce navigateur'}</strong>
     <span>{toolStatus === 'available'
       ? `Ouvrez cette page dans ChatGPT et demandez ce que vous voulez : l’agent découvre les ${toolNames.length} outils ci-dessous et agit sur la carte.`
-      : 'Ouvrez cette page dans l’app ChatGPT ou Chrome 149+. Sans l’API, tout reste utilisable à la main et l’agent simulé rejoue un plan complet.'}</span>
+      : 'Ouvrez cette page dans l’app ChatGPT ou un navigateur compatible WebMCP. Sans l’API, toutes les commandes restent utilisables à la main.'}</span>
   </div>
 </div>
 <ol className="connect-steps">

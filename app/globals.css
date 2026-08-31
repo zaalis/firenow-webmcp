@@ -95,19 +95,9 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 }
 .status-chip i { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px rgba(255,255,255,.55); }
 .icon-button,.avatar-button { width: 36px; height: 36px; cursor: pointer; border: 1px solid var(--border); border-radius: 11px; background: rgba(255,255,255,.05); color: var(--text); }
+.icon-button { display: inline-grid; place-items: center; padding: 0; line-height: 0; }
+.icon-button svg { display: block; }
 .avatar-button { border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 700; }
-
-.agent-banner {
-  position: absolute; z-index: 9; top: 96px; left: 50%; transform: translateX(-50%);
-  width: 360px; min-height: 55px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
-  padding: 9px 10px; border-radius: 15px;
-}
-.agent-orb { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.10); border: 1px solid var(--border-strong); }
-.agent-orb i { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px rgba(255,255,255,.5); }
-.agent-banner div { display: flex; flex-direction: column; }
-.agent-banner strong { font-size: 11px; }
-.agent-banner span { margin-top: 2px; color: var(--muted); font-size: 9px; }
-.agent-banner button { cursor: pointer; border: 0; background: transparent; color: var(--text); font-size: 10px; font-weight: 650; }
 
 .left-rail,.situation-panel {
   position: absolute; z-index: 8; top: 96px; display: flex; flex-direction: column; border-radius: 18px;
@@ -222,7 +212,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
     background: transparent; color: var(--muted); font-size: 10px; font-weight: 650;
   }
   .panel-tabs button.active { background: var(--accent); color: var(--accent-ink); }
-  .agent-banner { left: auto; right: 18px; transform: none; }
   .timeline { grid-template-columns: 132px auto 1fr; }
   .speed-control { display: none; }
 }
@@ -230,7 +219,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   .ops-shell { min-height: 640px; }
   .topbar { grid-template-columns: 1fr auto; }
   .scenario-title,.status-chip { display: none; }
-  .agent-banner { left: 14px; right: 14px; top: 91px; width: auto; }
   .unit-list { display: grid; grid-template-columns: 1fr; }
   .unit-card { min-height: 58px; }
   .timeline { left: 14px; right: 14px; bottom: 12px; height: 82px; grid-template-columns: 92px auto 1fr; padding: 9px 11px; gap: 9px; }
@@ -274,20 +262,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .webmcp-status-button.available { border-color: rgba(48,209,88,.42); background: rgba(48,209,88,.12); }
 .webmcp-status-button.available svg { color: var(--ok); }
 .webmcp-status-button:hover { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.28); }
-.agent-banner { cursor: pointer; color: var(--text); text-align: left; }
-.agent-banner .agent-orb { margin: 0; color: var(--text); }
-.agent-banner.available .agent-orb { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-.agent-copy { min-width: 0; display: flex; flex-direction: column; margin: 0!important; color: var(--text)!important; letter-spacing: 0!important; }
-.agent-copy strong { font-size: 11px; }
-.agent-copy small { margin-top: 2px; color: var(--muted); font-size: 9px; }
-.agent-link { margin: 0!important; color: var(--text)!important; font-size: 10px!important; font-weight: 650; letter-spacing: 0!important; white-space: nowrap; }
-.compat-banner {
-  position: absolute; z-index: 11; left: 50%; bottom: 106px; transform: translateX(-50%);
-  max-width: 620px; min-height: 42px; display: flex; align-items: center; gap: 9px; padding: 8px 10px 8px 12px; border-radius: 13px;
-}
-.compat-banner > svg { flex: 0 0 auto; color: var(--text); }
-.compat-banner span { color: var(--muted); font-size: 9px; }
-.compat-banner strong { color: var(--text); }
 
 .proposal-bar {
   position: absolute; z-index: 12; left: 306px; right: 342px; bottom: 106px; min-height: 58px;
@@ -441,10 +415,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 @media (max-width: 620px) {
   .webmcp-status-button { padding: 0 9px; }
   .webmcp-status-button span { font-size: 9px; }
-  .agent-banner { top: 91px; }
-  .compat-banner { left: 14px; right: 14px; bottom: 286px; transform: none; }
-  .compat-banner span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .compat-banner button { display: none; }
   .proposal-bar { left: 14px; right: 14px; bottom: 287px; grid-template-columns: auto 1fr auto; }
   .proposal-bar .secondary-button,.proposal-summary { display: none; }
   .proposal-bar .primary-button { font-size: 0; width: 36px; padding: 0; }
@@ -776,9 +746,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .modal-backdrop > section, .agent-drawer { background: var(--panel-solid); }
 
 /* ---------- Accents sémantiques ---------- */
-.agent-banner .agent-orb { color: var(--agent); border-color: rgba(191,122,240,.38); background: rgba(191,122,240,.14); }
-.agent-banner.available .agent-orb { color: var(--ok); border-color: rgba(48,209,88,.38); background: rgba(48,209,88,.14); }
-.agent-banner .agent-link { color: var(--agent); }
 .drawer-icon { color: var(--agent); }
 .proposal-bar { border-left: 2px solid var(--agent); }
 .proposal-icon { color: var(--agent); background: rgba(191,122,240,.14); border-color: rgba(191,122,240,.34); }
