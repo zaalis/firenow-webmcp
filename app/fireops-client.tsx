@@ -334,6 +334,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
+  const [modelContextReady, setModelContextReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [ignition, setIgnition] = useState<Ignition | null>(defaultIgnition);
   const [additionalIgnitions, setAdditionalIgnitions] = useState<Ignition[]>([]);
@@ -922,12 +923,38 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, []);
 
   useEffect(() => {
+    let stopped = false;
+    const detectModelContext = () => {
+      const modelContext = (document as Document & { modelContext?: ModelContextLike }).modelContext
+        || (navigator as Navigator & { modelContext?: ModelContextLike }).modelContext;
+      if (!modelContext || typeof modelContext.registerTool !== 'function') return false;
+      if (!stopped) {
+        setToolStatus('registering');
+        setModelContextReady(true);
+      }
+      return true;
+    };
+    if (detectModelContext()) return () => { stopped = true; };
+    const unavailableTimer = window.setTimeout(() => {
+      if (!stopped) setToolStatus('unavailable');
+    }, 3000);
+    const detector = window.setInterval(() => {
+      if (!detectModelContext()) return;
+      window.clearInterval(detector);
+      window.clearTimeout(unavailableTimer);
+    }, 250);
+    return () => {
+      stopped = true;
+      window.clearInterval(detector);
+      window.clearTimeout(unavailableTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!modelContextReady) return;
     const mc = (document as Document & { modelContext?: ModelContextLike }).modelContext
       || (navigator as Navigator & { modelContext?: ModelContextLike }).modelContext;
-    if (!mc || typeof mc.registerTool !== 'function') {
-      queueMicrotask(() => setToolStatus('unavailable'));
-      return;
-    }
+    if (!mc || typeof mc.registerTool !== 'function') return;
     const registered: string[] = [];
     const readOnly = { readOnlyHint: true };
     const mutating = { readOnlyHint: false };
@@ -1221,7 +1248,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, revertPlan, runWorker]);
+  }, [applyEngineResult, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
