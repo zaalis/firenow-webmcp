@@ -617,17 +617,18 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     });
     fetch(`https://archive-api.open-meteo.com/v1/archive?${query}`, { signal: controller.signal })
       .then((response) => { if (!response.ok) throw new Error(`Open-Meteo ${response.status}`); return response.json(); })
-      .then((data: { hourly?: { temperature_2m?: number[]; relative_humidity_2m?: number[]; wind_speed_10m?: number[]; wind_direction_10m?: number[] } }) => {
-        const hourly = data.hourly;
-        if (!hourly?.temperature_2m?.length || !hourly.relative_humidity_2m?.length
-          || !hourly.wind_speed_10m?.length || !hourly.wind_direction_10m?.length) throw new Error('Série horaire incomplète');
+      .then((payload) => {
+        const hourly = (payload as { hourly?: { temperature_2m?: number[]; relative_humidity_2m?: number[]; wind_speed_10m?: number[]; wind_direction_10m?: number[] } }).hourly;
+        const temperatures = hourly?.temperature_2m, humidities = hourly?.relative_humidity_2m;
+        const winds = hourly?.wind_speed_10m, bearings = hourly?.wind_direction_10m;
+        if (!temperatures?.length || !humidities?.length || !winds?.length || !bearings?.length) throw new Error('Série horaire incomplète');
         const offset = incident.startHour + incident.startMinute / 60;
-        const series = hourly.temperature_2m.map((temperature, index) => ({
+        const series = temperatures.map((temperature, index) => ({
           hourFromStart: index - offset, temperature,
-          humidity: hourly.relative_humidity_2m[index],
-          windKph: hourly.wind_speed_10m[index],
+          humidity: humidities[index],
+          windKph: winds[index],
           // Open-Meteo donne la provenance meteorologique ; FireOps stocke le cap de propagation.
-          windBearingDegrees: (hourly.wind_direction_10m[index] + 180) % 360,
+          windBearingDegrees: (bearings[index] + 180) % 360,
         }));
         if (controller.signal.aborted) return;
         weatherSeriesRef.current = series; setWeatherSeries(series); setWeatherSource('open-meteo');
@@ -1227,9 +1228,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: async (input) => {
           const lng = numberValue(input.lng, 'lng', -180, 180);
           const lat = numberValue(input.lat, 'lat', -90, 90);
-          setIgnition({ lng, lat });
+          const placed = { lng, lat, radiusM: 0 };
+          setIgnition(placed);
           applyExtraIgnitions([]);
-          ignitionRef.current = { lng, lat };
+          ignitionRef.current = placed;
           const engine = await runWorker({
             type: 'simulate', ignitionLngLat: { lng, lat }, extraIgnitions: [], reset: true, targetMinutes: stateRef.current.minutes,
             temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity,
