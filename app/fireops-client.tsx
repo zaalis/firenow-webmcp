@@ -240,6 +240,9 @@ const MAPLIBRE_WORKER_URL = '/maplibre/maplibre-gl-worker.mjs';
 // Foyers secondaires acceptes en plus du foyer principal. Le moteur applique la
 // meme borne de son cote : la carte et la simulation ne peuvent pas diverger.
 const MAX_EXTRA_IGNITIONS = 11;
+// Zoom a partir duquel chaque moyen retrouve son marqueur propre et redevient
+// deplacable ; en dessous les moyens sont regroupes.
+const UNIT_CLUSTER_ZOOM = 10.2;
 const BASEMAP_STYLE = {
   version: 8 as const,
   sources: {
@@ -337,8 +340,11 @@ const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 juil. 2022', 
 export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
-  const markersRef = useRef<Marker[]>([]);
-  const markerRootsRef = useRef<Root[]>([]);
+  // Les marqueurs sont indexes par une cle qui decrit leur contenu : tant que la
+  // cle ne bouge pas, on reutilise le marqueur et sa racine React au lieu de les
+  // detruire. Sans cela chaque deplacement de carte les recreait tous, et ils
+  // clignotaient en pastilles blanches le temps du rendu React.
+  const markersRef = useRef<globalThis.Map<string, { marker: Marker; root: Root }>>(new globalThis.Map());
   const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
@@ -803,45 +809,57 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       if (cancelled || !mapRef.current) return;
       const map = mapRef.current;
       const deployments = [...committed, ...(stagedPlan?.deployments || [])];
-      const clearMarkers = () => {
-        markerRootsRef.current.forEach((root) => root.unmount());
-        markerRootsRef.current = [];
-        markersRef.current.forEach((marker) => marker.remove());
-        markersRef.current = [];
-      };
       const renderMarkers = () => {
         if (cancelled || !mapRef.current) return;
-        clearMarkers();
         const zoom = map.getZoom();
+        // Au-dela du seuil chaque moyen s'affiche seul ; en dessous on regroupe
+        // par paves d'ecran, dont la taille suit le zoom.
         const bucketSize = zoom < 5 ? 118 : zoom < 8 ? 94 : 76;
-        const buckets = new Map<string, Deployment[]>();
+        const buckets = new globalThis.Map<string, Deployment[]>();
         deployments.forEach((unit) => {
           const point = map.project([unit.lng, unit.lat]);
-          const key = zoom >= 10.2 ? unit.id : `${Math.round(point.x / bucketSize)}:${Math.round(point.y / bucketSize)}`;
-          buckets.set(key, [...(buckets.get(key) || []), unit]);
+          const bucket = zoom >= UNIT_CLUSTER_ZOOM ? unit.id : `${Math.round(point.x / bucketSize)}:${Math.round(point.y / bucketSize)}`;
+          buckets.set(bucket, [...(buckets.get(bucket) || []), unit]);
         });
-        markersRef.current = [...buckets.values()].map((group) => {
+        const wanted = new Set<string>();
+        [...buckets.values()].forEach((group) => {
           const center: [number, number] = [
             group.reduce((sum, unit) => sum + unit.lng, 0) / group.length,
             group.reduce((sum, unit) => sum + unit.lat, 0) / group.length,
           ];
           if (group.length > 1) {
             const total = group.reduce((sum, unit) => sum + unit.count, 0);
+            const staged = group.some((unit) => unit.staged);
+            // La cle porte tout ce qui est dessine : un regroupement de meme
+            // composition garde son marqueur au lieu d'etre redessine.
+            const key = 'c|' + group.map((unit) => unit.id).sort().join(',') + '|' + total + '|' + staged;
+            wanted.add(key);
+            const existing = markersRef.current.get(key);
+            if (existing) { existing.marker.setLngLat(center); return; }
             const element = document.createElement('button');
             element.type = 'button';
-            element.className = 'unit-cluster' + (group.some((unit) => unit.staged) ? ' has-staged' : '');
+            element.className = 'unit-cluster' + (staged ? ' has-staged' : '');
             element.title = `${group.length} groupes · ${total} moyens. Cliquer pour rapprocher.`;
             element.setAttribute('aria-label', element.title);
-            const markerRoot = createRoot(element);
-            markerRoot.render(<><strong>{total}</strong><small>{group.length} groupes</small></>);
-            markerRootsRef.current.push(markerRoot);
+            const root = createRoot(element);
+            root.render(<><strong>{total}</strong><small>{group.length} groupes</small></>);
             element.addEventListener('click', (event) => {
               event.stopPropagation();
-              map.easeTo({ center, zoom: Math.min(11.2, zoom + 2.6), duration: 520 });
+              // Le zoom est relu au clic : le marqueur survit aux deplacements.
+              map.easeTo({ center, zoom: Math.min(11.2, map.getZoom() + 2.6), duration: 520 });
             });
-            return new maplibre.Marker({ element }).setLngLat(center).addTo(map);
+            markersRef.current.set(key, { marker: new maplibre.Marker({ element }).setLngLat(center).addTo(map), root });
+            return;
           }
           const unit = group[0];
+          const key = 'u|' + unit.id + '|' + unit.type + '|' + unit.count + '|' + unit.staged;
+          wanted.add(key);
+          const kept = markersRef.current.get(key);
+          if (kept) {
+            kept.marker.setLngLat([unit.lng, unit.lat]);
+            kept.marker.setDraggable(zoom >= UNIT_CLUSTER_ZOOM);
+            return;
+          }
           const catalogueUnit = units.find((item) => item.code === unit.type);
           const UnitIcon = UNIT_ICONS[unit.type] || Truck;
           const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.famille) : 'terrestre';
@@ -850,10 +868,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           element.className = 'unit-marker fam-' + familyClass + (unit.staged ? ' ghost' : '');
           element.title = unit.type + ' × ' + unit.count + ' · ' + unit.mission;
           element.setAttribute('aria-label', element.title);
-          const markerRoot = createRoot(element);
-          markerRoot.render(<><UnitIcon size={16} strokeWidth={1.9} aria-hidden="true" /><b>{unit.type}</b><span>{String(unit.count).padStart(2, '0')}</span></>);
-          markerRootsRef.current.push(markerRoot);
-          const marker = new maplibre.Marker({ element, draggable: zoom >= 10.2 }).setLngLat([unit.lng, unit.lat]).addTo(map);
+          const root = createRoot(element);
+          root.render(<><UnitIcon size={16} strokeWidth={1.9} aria-hidden="true" /><b>{unit.type}</b><span>{String(unit.count).padStart(2, '0')}</span></>);
+          const marker = new maplibre.Marker({ element, draggable: zoom >= UNIT_CLUSTER_ZOOM }).setLngLat([unit.lng, unit.lat]).addTo(map);
           marker.on('dragend', () => {
             const { lng, lat } = marker.getLngLat();
             // Deplacer un moyen deja engage passe par le plan provisoire : la regle
@@ -873,25 +890,33 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
               notify(unit.type + ' repositionné dans le plan provisoire. Validez pour engager.');
             }
           });
-          return marker;
+          markersRef.current.set(key, { marker, root });
+        });
+        // Ne restent que les marqueurs encore voulus : les autres partent avec
+        // leur racine React, sans toucher a ceux qui n'ont pas change.
+        markersRef.current.forEach((entry, key) => {
+          if (wanted.has(key)) return;
+          entry.marker.remove();
+          entry.root.unmount();
+          markersRef.current.delete(key);
         });
       };
       renderMarkers();
       map.on('moveend', renderMarkers);
-      dispose = () => {
-        map.off('moveend', renderMarkers);
-        clearMarkers();
-      };
+      dispose = () => map.off('moveend', renderMarkers);
     }).catch(() => undefined);
-    return () => {
-      cancelled = true;
-      dispose?.();
-      markerRootsRef.current.forEach((root) => root.unmount());
-      markerRootsRef.current = [];
-      markersRef.current.forEach((marker) => marker.remove());
-      markersRef.current = [];
-    };
+    return () => { cancelled = true; dispose?.(); };
   }, [committed, mapReady, notify, stagedPlan?.deployments, viewMode]);
+
+  // Les marqueurs survivent aux rendus : seule la destruction du composant les
+  // retire pour de bon.
+  useEffect(() => {
+    const markers = markersRef.current;
+    return () => {
+      markers.forEach((entry) => { entry.marker.remove(); entry.root.unmount(); });
+      markers.clear();
+    };
+  }, []);
 
   const comparePlansWithWorker = useCallback(async (names: string[], horizonHours: number) => {
     if (names.length !== 3) throw new Error('compare_plans exige exactement trois stratégies.');
