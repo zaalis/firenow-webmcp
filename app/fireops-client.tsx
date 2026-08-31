@@ -336,6 +336,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
   const [mapReady, setMapReady] = useState(false);
   const [ignition, setIgnition] = useState<Ignition | null>(defaultIgnition);
+  const [additionalIgnitions, setAdditionalIgnitions] = useState<Ignition[]>([]);
   const [pickingIgnition, setPickingIgnition] = useState(false);
   const [draftIgnition, setDraftIgnition] = useState<Ignition | null>(null);
   const ignitionRef = useRef<Ignition | null>(defaultIgnition);
@@ -562,13 +563,19 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         const placed = { ...anchor, radiusM };
         anchor = null;
         setDraftIgnition(null);
-        setIgnition(placed); ignitionRef.current = placed;
+        if (ignitionRef.current) {
+          setAdditionalIgnitions((current) => [...current, placed].slice(0, 11));
+          notify('Foyer secondaire ajouté. Les foyers restent distincts sur la carte.');
+        } else {
+          setIgnition(placed); ignitionRef.current = placed;
+          notify('Foyer principal placé.');
+        }
         setPickingIgnition(false);
       });
       mapRef.current = map;
     }).catch(() => undefined);
     return () => { cancelled = true; setMapReady(false); mapRef.current?.remove(); mapRef.current = null; };
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -656,26 +663,31 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const shown = draftIgnition ?? ignition;
-    if (!shown) return;
-    let marker: Marker | null = null;
+    const shownIgnitions = [...(ignition ? [ignition] : []), ...additionalIgnitions, ...(draftIgnition ? [draftIgnition] : [])];
+    if (shownIgnitions.length === 0) return;
+    const ignitionMarkers: Marker[] = [];
     let cancelled = false;
     import('maplibre-gl').then((maplibre) => {
       if (cancelled || !mapRef.current) return;
-      const node = document.createElement('div');
-      node.className = 'ignition-marker';
-      node.title = 'Point de départ du feu';
-      if (shown.radiusM > 0) {
-        const halo = document.createElement('i');
-        const metresPerPixel = 40075016.686 * Math.cos(shown.lat * Math.PI / 180) / (256 * Math.pow(2, mapRef.current.getZoom()));
-        const diameter = Math.max(13, (shown.radiusM * 2) / metresPerPixel);
-        halo.style.width = diameter + 'px'; halo.style.height = diameter + 'px';
-        node.appendChild(halo);
-      }
-      marker = new maplibre.Marker({ element: node }).setLngLat([shown.lng, shown.lat]).addTo(mapRef.current);
+      shownIgnitions.forEach((shown, index) => {
+        const node = document.createElement('div');
+        node.className = 'ignition-marker' + (index === 0 ? ' primary' : ' secondary');
+        node.dataset.label = String(index + 1);
+        node.title = index === 0 ? 'Foyer principal' : `Foyer secondaire ${index}`;
+        node.setAttribute('role', 'img');
+        node.setAttribute('aria-label', node.title);
+        if (shown.radiusM > 0) {
+          const halo = document.createElement('i');
+          const metresPerPixel = 40075016.686 * Math.cos(shown.lat * Math.PI / 180) / (256 * Math.pow(2, mapRef.current!.getZoom()));
+          const diameter = Math.max(13, (shown.radiusM * 2) / metresPerPixel);
+          halo.style.width = diameter + 'px'; halo.style.height = diameter + 'px';
+          node.appendChild(halo);
+        }
+        ignitionMarkers.push(new maplibre.Marker({ element: node }).setLngLat([shown.lng, shown.lat]).addTo(mapRef.current!));
+      });
     }).catch(() => undefined);
-    return () => { cancelled = true; marker?.remove(); };
-  }, [ignition, draftIgnition, mapReady, viewMode]);
+    return () => { cancelled = true; ignitionMarkers.forEach((marker) => marker.remove()); };
+  }, [additionalIgnitions, ignition, draftIgnition, mapReady, viewMode]);
 
   useEffect(() => {
     const fireSource = mapRef.current?.getSource('fire') as GeoJSONSource | undefined;
@@ -726,6 +738,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     if (!target) return;
     setActiveScenario(id);
     setIgnition(target.ignition); ignitionRef.current = target.ignition;
+    setAdditionalIgnitions([]);
     setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed); setCommittedFirebreaks(target.firebreaks);
     setDomain(target.domain); setTerrain(target.terrain); setIncident(target.incident);
     mapRef.current?.jumpTo({ center: [target.domain.lng, target.domain.lat], zoom: target.domain.boxMetres > 35000 ? 10.1 : 11.2 });
@@ -745,6 +758,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       : item).concat(created));
     setActiveScenario(created.id);
     setIgnition(created.ignition); ignitionRef.current = created.ignition;
+    setAdditionalIgnitions([]);
     setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed); setCommittedFirebreaks(created.firebreaks);
     setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
@@ -1144,6 +1158,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           const lng = numberValue(input.lng, 'lng', -180, 180);
           const lat = numberValue(input.lat, 'lat', -90, 90);
           setIgnition({ lng, lat });
+          setAdditionalIgnitions([]);
           ignitionRef.current = { lng, lat };
           const engine = await runWorker({
             type: 'simulate', ignitionLngLat: { lng, lat }, reset: true, targetMinutes: stateRef.current.minutes,
@@ -1274,7 +1289,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <button className="primary-button" type="button" onClick={() => setPickingIgnition(true)}><Flame size={14} />Placer le foyer</button>
       </div>}
 
-      {pickingIgnition && <div className="pick-hint glass-panel"><Flame size={13} /><span>Cliquez pour placer le foyer — <b>maintenez et glissez</b> pour l’agrandir{draftIgnition && draftIgnition.radiusM > 0 ? ' · rayon ' + Math.round(draftIgnition.radiusM) + ' m' : ''}</span><button type="button" onClick={() => { setPickingIgnition(false); setDraftIgnition(null); }}>Annuler</button></div>}
+      {pickingIgnition && <div className="pick-hint glass-panel"><Flame size={13} /><span>Cliquez pour ajouter un foyer — <b>maintenez et glissez</b> pour l’agrandir · {ignition ? 1 + additionalIgnitions.length : 0} actif{(ignition ? 1 + additionalIgnitions.length : 0) > 1 ? 's' : ''}{draftIgnition && draftIgnition.radiusM > 0 ? ' · rayon ' + Math.round(draftIgnition.radiusM) + ' m' : ''}</span><button type="button" onClick={() => { setPickingIgnition(false); setDraftIgnition(null); }}>Annuler</button></div>}
 
       <header className="topbar glass-panel">
         <div className="brand-block"><span className="brand-mark"><Flame size={18} /></span><div><strong>FireOps</strong><span>Centre de commandement</span></div></div>
@@ -1502,7 +1517,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Front en flammes</span>
         <span><i className="lg-forecast" />Position projetée à +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Placer le point de depart du feu"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Ajouter un foyer"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; setAdditionalIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel">
         <div className="time-readout"><span>HEURE INCIDENT</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} depuis le départ</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Mettre la simulation en pause' : 'Lancer la simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>

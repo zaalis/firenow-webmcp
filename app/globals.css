@@ -523,9 +523,16 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 }
 
 .ignition-marker {
-  width: 13px; height: 13px; border-radius: 50%; cursor: pointer;
+  width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
   background: var(--fire-extreme); border: 2px solid #fff;
   box-shadow: 0 0 0 4px rgba(255,59,48,.28), 0 0 12px rgba(255,59,48,.6);
+  color: #fff; display: grid; place-items: center;
+  font: 750 8px/1 "SF Mono", Consolas, monospace;
+}
+.ignition-marker::after { content: attr(data-label); position: relative; z-index: 1; }
+.ignition-marker.secondary {
+  background: #ff7a20;
+  box-shadow: 0 0 0 4px rgba(255,122,32,.23), 0 0 10px rgba(255,122,32,.5);
 }
 .pick-hint {
   position: absolute; z-index: 20; left: 50%; top: 96px; transform: translateX(-50%);
