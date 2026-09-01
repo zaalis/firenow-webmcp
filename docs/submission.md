@@ -10,7 +10,9 @@ FireNow exposes twenty-one tools designed around operational intent rather than 
 
 The page calls no language model. The agent operates inside the authenticated page, shares its session cookie, and the tools disappear at sign-out. Parameters received from the agent are validated as untrusted input.
 
-Because `document.modelContext` does not yet exist in a mainstream browser, the page provides its own model context when the browser has none — without ever replacing a native implementation. The tools are therefore genuinely callable today, in Chrome: from an agent that runs JavaScript in the tab (`window.__WEBMCP__.callTool`), from an extension content script over a same-origin `postMessage` channel, or from a native WebMCP client the day one exists.
+Because `document.modelContext` does not yet exist in a mainstream browser, the page provides its own model context when the browser has none — without ever replacing a native implementation. The tools are therefore genuinely callable today, in Chrome: from a native WebMCP client the day one exists, from an agent that evaluates JavaScript in the tab (`window.__WEBMCP__.callTool`), and from an extension content script — which runs in an isolated world and reaches neither of those — over a same-origin `postMessage` channel or a `webmcp:call` DOM event.
+
+All of those are JavaScript, and the agent most people will actually point at this page has none of them: ChatGPT drives a tab through screenshots and the accessibility tree. It reads "21 WebMCP tools live" in the header and can call nothing. So the tools are also published **in the DOM**, in an agent bridge under the header: the directive, the catalogue with signatures and descriptions, a form that takes a tool name and JSON arguments, and a result pane — plus invocation by navigation, `/?tool=NAME&args=JSON`, for an agent whose only verb is opening a URL. Both routes run the same `callTool`, with the same validation, the same log and the same single human approval on `commit_plan`, which is the one tool the URL route refuses.
 
 ## The engine, and what it does not claim to be
 

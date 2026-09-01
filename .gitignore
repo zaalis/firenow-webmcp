@@ -37,10 +37,10 @@ next-env.d.ts
 /outputs/
 /work/
 
-# artefact de compilation TypeScript
+# TypeScript build artefact
 tsconfig.tsbuildinfo
 
-# journaux du serveur de dev local
+# local dev server logs
 firenow-dev.log
 firenow-dev.err.log
 fireops-dev.log

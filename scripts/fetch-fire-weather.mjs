@@ -21,7 +21,7 @@ const weatherSeries = hourly.temperature_2m.map((temperature, index) => ({
   temperature,
   humidity: hourly.relative_humidity_2m[index],
   windKph: hourly.wind_speed_10m[index],
-  // L'API expose la provenance meteorologique ; le moteur attend le cap du front pousse par le vent.
+  // The API reports where the wind comes from; the engine wants the bearing the front is pushed along.
   windBearingDegrees: (hourly.wind_direction_10m[index] + 180) % 360,
 }));
 process.stdout.write(`${JSON.stringify({

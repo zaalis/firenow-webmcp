@@ -840,7 +840,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 /* ---------- Simulation state, top bar ---------- */
 .status-chip.active i { background: #30D158; box-shadow: 0 0 0 3px rgba(48,209,88,.18); animation: sim-pulse 2s ease-in-out infinite; }
 .status-chip.pause i { background: var(--fire-active); box-shadow: 0 0 0 3px rgba(255,159,10,.16); animation: none; }
-.status-chip.vierge i { background: var(--faint); box-shadow: none; animation: none; }
+.status-chip.blank i { background: var(--faint); box-shadow: none; animation: none; }
 .icon-button.active,.avatar-button.active { background: rgba(255,255,255,.16); border-color: var(--border-strong); }
 
 /* ---------- Aide ---------- */
@@ -953,7 +953,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .weather-source a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
 .weather-source.error { color: #b8b8b8; }
 
-/* ---------- Carte vierge ---------- */
+/* ---------- Carte blank ---------- */
 .blank-cta {
   position: absolute; z-index: 15; left: 50%; top: 50%; transform: translate(-50%,-50%);
   width: 296px; padding: 20px; border-radius: 20px; text-align: center;
@@ -1030,20 +1030,20 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
   border: 1px solid var(--border); border-left: 2px solid var(--water); border-radius: 14px;
   background: rgba(90,200,250,.045);
 }
-.suppression-card.maitrise, .suppression-card.eteint { border-left-color: var(--ok); background: rgba(48,209,88,.05); }
-.suppression-card.libre { border-left-color: var(--fire-extreme); background: rgba(255,59,48,.05); }
+.suppression-card.controlled, .suppression-card.out { border-left-color: var(--ok); background: rgba(48,209,88,.05); }
+.suppression-card.spreading { border-left-color: var(--fire-extreme); background: rgba(255,59,48,.05); }
 .supp-head { display: flex; align-items: center; gap: 7px; }
 .supp-head strong { font-size: 11px; font-weight: 650; }
 .supp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--water); }
-.supp-dot.maitrise,.supp-dot.eteint { background: var(--ok); box-shadow: 0 0 0 3px rgba(48,209,88,.18); }
-.supp-dot.contenu { background: var(--fire-active); box-shadow: 0 0 0 3px rgba(255,159,10,.16); }
-.supp-dot.libre { background: var(--fire-extreme); box-shadow: 0 0 0 3px rgba(255,59,48,.18); }
+.supp-dot.controlled,.supp-dot.out { background: var(--ok); box-shadow: 0 0 0 3px rgba(48,209,88,.18); }
+.supp-dot.contained { background: var(--fire-active); box-shadow: 0 0 0 3px rgba(255,159,10,.16); }
+.supp-dot.spreading { background: var(--fire-extreme); box-shadow: 0 0 0 3px rgba(255,59,48,.18); }
 .supp-mode {
   margin-left: auto; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border);
   color: var(--muted); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .05em;
 }
-.supp-mode.directe { color: var(--ok); border-color: rgba(48,209,88,.30); }
-.supp-mode.moyens-lourds { color: var(--fire-active); border-color: rgba(255,159,10,.30); }
+.supp-mode.direct { color: var(--ok); border-color: rgba(48,209,88,.30); }
+.supp-mode.heavy-units { color: var(--fire-active); border-color: rgba(255,159,10,.30); }
 .supp-mode.indirect { color: var(--fire-extreme); border-color: rgba(255,59,48,.32); }
 .supp-gauge { position: relative; height: 4px; border-radius: 999px; background: rgba(255,255,255,.10); overflow: hidden; }
 .supp-gauge i {
@@ -1058,7 +1058,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .supp-grid b { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
 /* Front breakdown: head, flanks, rear. The bar shows why the
-   besoin en eau est bien inferieur a l'intensite de tete. */
+   water requirement is far below what the head intensity would suggest. */
 .front-split { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .front-bars { display: flex; gap: 2px; height: 5px; }
 .front-bars i { border-radius: 2px; }
@@ -1155,7 +1155,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .exposure-grid b.danger { color: var(--fire-extreme); }
 .exposure-card small { color: var(--faint); font-size: 9.5px; line-height: 1.45; }
 
-/* Annulation d'un plan provisoire : contour rouge, jamais plein. */
+/* Discarding a draft plan: a red outline, never a filled button. */
 .danger-button {
   padding: 8px 14px; cursor: pointer; white-space: nowrap;
   border: 1px solid rgba(255,59,48,.55); border-radius: 999px; color: var(--fire-extreme);
@@ -1165,7 +1165,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .danger-button:hover { border-color: var(--fire-extreme); background: rgba(255,59,48,.12); }
 
 /* On a narrow screen the header tightens and the popover anchor used to leave the
-   cadre : on l accroche alors a la fenetre plutot qu au bouton. */
+   frame, so it is anchored to the window rather than to the button. */
 @media (max-width: 620px) {
   .scenario-pop {
     position: fixed; top: 84px; left: 12px; right: 12px; width: auto;
@@ -1233,3 +1233,100 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 @media (prefers-reduced-motion: reduce) {
   .tour, .tour-hole, .tour-card { transition: none; }
 }
+
+/* --- Agent bridge --------------------------------------------------------
+ * The DOM transport for the WebMCP tools. It sits directly under the header
+ * because an agent reads the page from the top, and the directive is the first
+ * thing it must find. Collapsed it is one line; the tool names stay in the DOM
+ * even when the line is visually clipped, so an agent that only reads text
+ * still learns what this page can do. */
+.agent-bridge {
+  position: absolute; z-index: 13; left: 306px; right: 342px; top: 90px;
+  border-radius: 14px; border-color: rgba(191,122,240,.30); background: var(--panel-hi);
+}
+.agent-bridge.open {
+  /* Bounded rather than stretched to the timeline: the map has to stay
+     readable behind an open bridge. */
+  max-height: min(430px, calc(100vh - 230px)); display: flex; flex-direction: column;
+}
+.bridge-bar {
+  display: grid; grid-template-columns: auto minmax(120px,1fr) minmax(0,1.1fr) auto; align-items: center; gap: 11px;
+  width: 100%; min-height: 46px; padding: 7px 10px; cursor: pointer; border: 0; border-radius: 14px;
+  background: transparent; color: var(--text); text-align: left;
+}
+.bridge-icon {
+  width: 30px; height: 30px; display: grid; place-items: center; flex: none;
+  border-radius: 9px; border: 1px solid rgba(191,122,240,.34); background: rgba(191,122,240,.12); color: var(--agent);
+}
+.bridge-headline { display: flex; flex-direction: column; min-width: 0; }
+.bridge-headline small { color: var(--agent); font: 700 7px/1 "SF Mono", Consolas, monospace; letter-spacing: .09em; }
+.bridge-headline strong { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+.bridge-tools {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--faint); font: 500 8px/1.4 "SF Mono", Consolas, monospace;
+}
+.bridge-caret { color: var(--muted); transition: transform .24s var(--ease); }
+.agent-bridge.open .bridge-caret { transform: rotate(180deg); }
+.bridge-body {
+  display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto;
+  padding: 0 12px 12px; border-top: 1px solid var(--border);
+}
+.bridge-directive { margin: 10px 0 0; color: #d6d6da; font-size: 9.5px; line-height: 1.55; }
+.bridge-directive.faint { margin-top: 0; color: var(--muted); }
+.bridge-directive code { padding: 1px 4px; border-radius: 4px; background: rgba(255,255,255,.07); font-size: 9px; }
+.bridge-form { display: grid; grid-template-columns: minmax(150px,auto) minmax(0,1fr) auto; align-items: end; gap: 9px; }
+.bridge-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bridge-field span { color: var(--faint); font: 700 7px/1 "SF Mono", Consolas, monospace; letter-spacing: .08em; }
+.bridge-field select, .bridge-field textarea {
+  width: 100%; padding: 7px 8px; border: 1px solid var(--border-strong); border-radius: 9px;
+  background: rgba(255,255,255,.05); color: var(--text); font: 500 10px/1.45 "SF Mono", Consolas, monospace; resize: vertical;
+}
+.bridge-field select:focus-visible, .bridge-field textarea:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
+.bridge-run { min-height: 38px; }
+.bridge-result { display: flex; flex-direction: column; gap: 4px; }
+.bridge-result > span { color: var(--faint); font: 700 7px/1 "SF Mono", Consolas, monospace; letter-spacing: .08em; }
+.bridge-result pre {
+  max-height: 220px; margin: 0; overflow: auto; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px;
+  background: rgba(0,0,0,.32); color: #c9c9ce; font: 500 9.5px/1.55 "SF Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+}
+.bridge-catalogue summary {
+  display: flex; align-items: center; gap: 8px; min-height: 30px; cursor: pointer; list-style: none;
+  color: var(--muted); font-size: 9px; font-weight: 650;
+}
+.bridge-catalogue summary::-webkit-details-marker { display: none; }
+.bridge-catalogue summary b {
+  min-width: 20px; padding: 2px 5px; border-radius: 999px; background: rgba(255,255,255,.09); color: var(--text);
+  font-size: 8px; text-align: center;
+}
+.bridge-catalogue ul { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; }
+.bridge-catalogue li { padding: 8px 0; border-top: 1px solid rgba(255,255,255,.055); }
+.bridge-catalogue code { color: var(--agent); font: 650 9.5px/1 "SF Mono", Consolas, monospace; }
+.bridge-signature { margin-left: 8px; color: var(--faint); font: 500 8.5px/1 "SF Mono", Consolas, monospace; }
+.bridge-catalogue p { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+/* Narrow: the tool names drop to their own row rather than out of the page.
+   Hiding them would take the catalogue out of the DOM at exactly the widths an
+   agent's browser window tends to use. */
+@media (max-width: 1180px) {
+  .bridge-bar { grid-template-columns: auto minmax(0,1fr) auto; grid-template-areas: "icon headline caret" "tools tools tools"; }
+  .bridge-icon { grid-area: icon; }
+  .bridge-headline { grid-area: headline; }
+  .bridge-caret { grid-area: caret; }
+  .bridge-tools { grid-area: tools; padding-bottom: 2px; }
+}
+@media (max-width: 900px) {
+  .agent-bridge { left: 12px; right: 12px; top: 82px; }
+  .agent-bridge.open { max-height: calc(100vh - 200px); }
+  .bridge-form { grid-template-columns: minmax(0,1fr); }
+}
+@media (pointer: coarse) { .bridge-bar { min-height: 52px; } }
+
+/* The same directive as the console's agent bridge, at the front door: an
+   agent reads the top of the page before it reads anything else. */
+.agent-directive-line {
+  display: flex; align-items: flex-start; gap: 9px; max-width: 1180px; margin: 0 auto; padding: 9px 24px 0;
+  color: var(--muted); font-size: 10.5px; line-height: 1.55;
+}
+.agent-directive-line svg { flex: none; margin-top: 2px; color: var(--agent); }
+.agent-directive-line b { color: var(--text); }
+.agent-directive-line code { padding: 1px 4px; border-radius: 4px; background: rgba(255,255,255,.07); font-family: "SF Mono", Consolas, monospace; font-size: 10px; }
+@media (max-width: 620px) { .agent-directive-line { padding: 8px 16px 0; font-size: 10px; } }
