@@ -11,6 +11,7 @@ import {
   Tractor, Truck, Undo2, Users, Wind, X, ChevronUp,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import Tour, { type TourStep } from './tour';
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
@@ -57,9 +58,10 @@ type ToolDefinition = {
   execute: (input: Record<string, unknown>, client?: ToolClient) => unknown | Promise<unknown>;
 };
 type ModelContextLike = {
-  registerTool: (tool: ToolDefinition) => Promise<void> | void;
+  registerTool: (tool: ToolDefinition, options?: { signal?: AbortSignal }) => Promise<void> | void;
   unregisterTool?: (name: string) => Promise<void> | void;
 };
+type WebMcpBridge = { mode: 'native' | 'polyfill'; version: string };
 
 type UnitFamily = 'terrestre' | 'aérien' | 'génie';
 type UnitCatalogue = { code: string; count: number; label: string; famille: UnitFamily; cuve: string; capacityLitres?: number };
@@ -103,6 +105,7 @@ const REGION_LABEL: Record<string, string> = {
 const FAMILLES: string[] = ['terrestre', 'aérien', 'génie'];
 const PARC_TOTAL = units.reduce((sum, unit) => sum + unit.count, 0);
 const TIMELINE_MAX_MINUTES = 12 * 60;
+const TOUR_KEY = 'fireops.tour.v1';
 const toolActivityLabel = (tool: string, result: unknown) => {
   const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
   if (tool === 'commit_plan') return value.approved === true ? 'Plan approuvé et appliqué' : 'Plan rejeté par l’opérateur';
@@ -313,6 +316,38 @@ const numberValue = (value: unknown, field: string, min: number, max: number) =>
   if (value < min || value > max) throw new Error(`Le champ « ${field} » vaut ${value} ; une valeur comprise entre ${min} et ${max} est attendue.`);
   return value;
 };
+// « Nord-ouest » decrit d'ou vient le vent ; le moteur veut le cap vers lequel
+// il pousse. Sans cette conversion, set_weather changeait l'etiquette sans
+// jamais devier le front.
+const normalizeCompass = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[\s_]+/g, '-').trim();
+const bearingFromProvenance = (provenance: string) => {
+  const wanted = normalizeCompass(provenance);
+  const point = COMPASS.find((entry) => normalizeCompass(entry.from) === wanted);
+  return point ? point.bearing : null;
+};
+// Un agent ne peut rien faire d'un polygone de contour : il paie le contexte
+// sans pouvoir le dessiner. Les outils ne renvoient que les grandeurs lisibles.
+const engineDigest = (engine: Record<string, unknown>) => {
+  const suppression = engine.suppression as Suppression | undefined;
+  return {
+    burnedHa: engine.totalBurnedHa,
+    rateOfSpreadMetersPerMinute: engine.rateOfSpreadMetersPerMinute,
+    forecastBurnedHa: engine.forecastBurnedHa,
+    spotFires: engine.spotFires,
+    perimeterBounds: engine.bounds,
+    exposure: engine.exposure,
+    suppression: suppression && {
+      status: suppression.status, attackMode: suppression.attackMode, attackViable: suppression.attackViable,
+      firelineIntensityKwM: suppression.firelineIntensityKwM, requiredFlowLpm: suppression.requiredFlowLpm,
+      deployedFlowLpm: suppression.deployedFlowLpm, containmentMinutes: suppression.containmentMinutes,
+      headM: suppression.headM, flankM: suppression.flankM, rearM: suppression.rearM,
+    },
+    calibrationStatus: 'not_performed',
+  };
+};
+// Demonter une racine React depuis un nettoyage d'effet se fait pendant que
+// React rend encore : on repousse le demontage hors de la phase de rendu.
+const unmountLater = (root: Root) => { queueMicrotask(() => root.unmount()); };
 const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
@@ -349,6 +384,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
+  const [toolTransport, setToolTransport] = useState<'native' | 'polyfill'>('polyfill');
   const [modelContextReady, setModelContextReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [ignition, setIgnition] = useState<Ignition | null>(defaultIgnition);
@@ -374,6 +410,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [activeScenario, setActiveScenario] = useState<string>(() => initialScenarios[0].id);
   const [accountOpen, setAccountOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
   const [weatherOpen, setWeatherOpen] = useState(false);
   const [scenarioOpen, setScenarioOpen] = useState(false);
   const [burnedHa, setBurnedHa] = useState<number | null>(null);
@@ -898,7 +935,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         markersRef.current.forEach((entry, key) => {
           if (wanted.has(key)) return;
           entry.marker.remove();
-          entry.root.unmount();
+          unmountLater(entry.root);
           markersRef.current.delete(key);
         });
       };
@@ -914,7 +951,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   useEffect(() => {
     const markers = markersRef.current;
     return () => {
-      markers.forEach((entry) => { entry.marker.remove(); entry.root.unmount(); });
+      markers.forEach((entry) => { entry.marker.remove(); unmountLater(entry.root); });
       markers.clear();
     };
   }, []);
@@ -973,6 +1010,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         || (navigator as Navigator & { modelContext?: ModelContextLike }).modelContext;
       if (!modelContext || typeof modelContext.registerTool !== 'function') return false;
       if (!stopped) {
+        const bridge = (window as Window & { __WEBMCP__?: WebMcpBridge }).__WEBMCP__;
+        setToolTransport(bridge?.mode === 'native' ? 'native' : 'polyfill');
         setToolStatus('registering');
         setModelContextReady(true);
       }
@@ -1030,7 +1069,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
             const result = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, extraIgnitions: extraIgnitionsRef.current, independent: true, targetMinutes: hours * 60, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windBearingDegrees: stateRef.current.weather.windBearing, plumeDriven: stateRef.current.weather.plumeDriven === true, domain: stateRef.current.domain, terrain: stateRef.current.terrain, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks });
-            return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterGeoJSON: result.perimeterGeoJSON };
+            return { horizon: 'T+' + hours + 'h', burnedHa: result.totalBurnedHa, rateOfSpreadMetersPerMinute: result.rateOfSpreadMetersPerMinute, perimeterBounds: result.bounds };
           }));
           return { model: 'Rothermel 1972 + Alexander 1985', projections, calibrationStatus: 'not_performed' };
         },
@@ -1200,7 +1239,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           });
           applyEngineResult(engine);
           setMinutes(targetMinutes);
-          return { advancedMinutes: delta, totalMinutes: targetMinutes, burnedHa: engine.totalBurnedHa, worker: 'local-browser', engine };
+          return { advancedMinutes: delta, totalMinutes: targetMinutes, worker: 'local-browser', ...engineDigest(engine) };
         },
       },
       {
@@ -1209,14 +1248,32 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
           const engine = await runWorker({ type: 'simulate', ignitionLngLat: ignitionRef.current, extraIgnitions: extraIgnitionsRef.current, reset: true, targetMinutes: value, temperature: stateRef.current.weather.temperature, humidity: stateRef.current.weather.humidity, droughtIndex: stateRef.current.weather.droughtIndex, windKph: stateRef.current.weather.windSpeed, windDirection: stateRef.current.weather.windDirection, windBearingDegrees: stateRef.current.weather.windBearing, domain: stateRef.current.domain, terrain: stateRef.current.terrain, startHour: stateRef.current.incident.startHour + stateRef.current.incident.startMinute / 60, slopeDegrees: 7.4, deployments: stateRef.current.committed, firebreaks: stateRef.current.committedFirebreaks, includeForecast: true });
-          applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, engine };
+          applyEngineResult(engine); setMinutes(value); return { minutesFromIgnition: value, ...engineDigest(engine) };
         },
       },
       {
-        name: 'set_weather', title: 'Modifier la météo', description: 'Modifie les paramètres météo de la simulation.',
-        inputSchema: schema({ windSpeed: { type: 'number', minimum: 0, maximum: 150 }, windDirection: { type: 'string', maxLength: 40 }, gusts: { type: 'number', minimum: 0, maximum: 200 } }, ['windSpeed','windDirection']), annotations: mutating,
+        name: 'set_weather', title: 'Modifier la météo',
+        description: 'Modifie la météo de la simulation. windDirection est la provenance du vent (Nord, Nord-est, Est, Sud-est, Sud, Sud-ouest, Ouest, Nord-ouest) ; le cap de propagation en est déduit.',
+        inputSchema: schema({
+          windSpeed: { type: 'number', minimum: 0, maximum: 150 },
+          windDirection: { type: 'string', enum: COMPASS.map((point) => point.from), maxLength: 40 },
+          gusts: { type: 'number', minimum: 0, maximum: 200 },
+          humidity: { type: 'number', minimum: 5, maximum: 95 },
+          temperature: { type: 'number', minimum: -5, maximum: 48 },
+        }, ['windSpeed','windDirection']), annotations: mutating,
         execute: (input) => {
-          const next = { ...stateRef.current.weather, windSpeed: numberValue(input.windSpeed, 'windSpeed', 0, 150), windDirection: textValue(input.windDirection, 'windDirection', 40), gusts: input.gusts === undefined ? stateRef.current.weather.gusts : numberValue(input.gusts, 'gusts', 0, 200) };
+          const windDirection = textValue(input.windDirection, 'windDirection', 40);
+          const windBearing = bearingFromProvenance(windDirection);
+          if (windBearing === null) throw new Error(`Provenance de vent inconnue : « ${windDirection} ». Valeurs acceptées : ${COMPASS.map((point) => point.from).join(', ')}.`);
+          const current = stateRef.current.weather;
+          const next = {
+            ...current,
+            windSpeed: numberValue(input.windSpeed, 'windSpeed', 0, 150),
+            windDirection, windBearing,
+            gusts: input.gusts === undefined ? current.gusts : numberValue(input.gusts, 'gusts', 0, 200),
+            humidity: input.humidity === undefined ? current.humidity : numberValue(input.humidity, 'humidity', 5, 95),
+            temperature: input.temperature === undefined ? current.temperature : numberValue(input.temperature, 'temperature', -5, 48),
+          };
           weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
           setWeather(next); return next;
         },
@@ -1286,9 +1343,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         }
       },
     }));
-    Promise.all(definitionsWithJournal.map(async (definition) => { await mc.registerTool(definition); registered.push(definition.name); }))
-      .then(() => setToolStatus('available')).catch(() => setToolStatus('unavailable'));
+    const teardown = new AbortController();
+    Promise.all(definitionsWithJournal.map(async (definition) => {
+      await mc.registerTool(definition, { signal: teardown.signal });
+      registered.push(definition.name);
+    })).then(() => setToolStatus('available')).catch(() => setToolStatus('unavailable'));
     return () => {
+      // `signal` est le retrait prevu par la specification ; `unregisterTool`
+      // ne sert que de repli pour les implementations qui ne l'honorent pas.
+      teardown.abort();
       registered.forEach((name) => { try { void mc.unregisterTool?.(name); } catch { /* teardown */ } });
       reviewResolver.current?.(false);
       reviewResolver.current = null;
@@ -1315,6 +1378,59 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     });
     window.location.reload();
   };
+  // Tutoriel de premiere ouverture. Les panneaux replies sont deplies avant la
+  // mesure, sinon la lumiere tomberait sur un element de largeur nulle.
+  const openPanel = useCallback((panel: 'resources' | 'situation') => {
+    if (isNarrowViewport) { setMobilePanel(panel); return; }
+    if (panel === 'resources') setRailOpen(true); else setSituationOpen(true);
+  }, [isNarrowViewport]);
+  const tourSteps: TourStep[] = [
+    {
+      id: 'scenario', target: '[data-tour="scenario"]',
+      title: 'Choisissez la simulation',
+      body: 'Chaque simulation garde son foyer, sa météo et ses moyens. Landiras et Saumos rejouent des feux de Gironde, l’Étoile est un exercice, et la simulation vierge part d’une carte nue.',
+    },
+    {
+      id: 'moyens', target: '#resources-panel',
+      title: 'Engagez le parc',
+      body: 'Treize types d’engins, avec cuve et débit constructeur. Cliquez pour prépositionner un moyen, ou glissez-le sur la carte. Rien n’est engagé tant que vous n’avez pas validé le plan.',
+      before: () => openPanel('resources'),
+    },
+    {
+      id: 'situation', target: '#situation-panel',
+      title: 'Lisez le feu',
+      body: 'Surface parcourue, vitesse de tête, débit nécessaire face au débit déployé, habitants menacés. Ouvrez la carte météo pour changer le vent : le moteur recalcule aussitôt.',
+      before: () => openPanel('situation'),
+    },
+    {
+      id: 'carte', target: '[data-tour="carte"]',
+      title: 'Placez le foyer, changez de vue',
+      body: '« Foyer » ajoute un départ de feu — maintenez et glissez pour l’agrandir. 2D, 3D et globe changent la projection sans rien perdre de la simulation en cours.',
+    },
+    {
+      id: 'chronologie', target: '[data-tour="chronologie"]',
+      title: 'Faites avancer l’heure',
+      body: 'Le bouton lance ou met en pause la simulation. Le curseur la déplace de H+0 à H+12, et le multiplicateur règle la vitesse du temps simulé.',
+    },
+    {
+      id: 'webmcp', target: '[data-tour="webmcp"]',
+      title: 'Laissez l’agent travailler',
+      body: 'Ce bouton indique les 21 outils que la page expose à un agent. Ouvrez-le pour voir le catalogue, puis demandez à votre agent d’analyser la situation : il prépare un plan complet, et vous seul l’engagez.',
+    },
+  ];
+  const finishTour = useCallback((completed: boolean) => {
+    setTourOpen(false);
+    try { window.localStorage.setItem(TOUR_KEY, 'done'); } catch { /* stockage indisponible */ }
+    if (completed) notify('Tutoriel terminé. Vous pouvez le relancer depuis l’aide.');
+  }, [notify]);
+  useEffect(() => {
+    let seen = true;
+    try { seen = window.localStorage.getItem(TOUR_KEY) === 'done'; } catch { /* stockage indisponible */ }
+    if (seen) return;
+    const timer = window.setTimeout(() => setTourOpen(true), 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const activeName = scenarioList.find((item) => item.id === activeScenario)?.name || 'Simulation';
   const activeIsBlank = !ignition;
   const simState: 'active' | 'pause' | 'vierge' = !ignition ? 'vierge' : running ? 'active' : 'pause';
@@ -1365,7 +1481,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
       <header className="topbar glass-panel">
         <div className="brand-block"><span className="brand-mark"><Flame size={18} /></span><div><strong>FireOps</strong><span>Centre de commandement</span></div></div>
-        <div className="scenario-picker">
+        <div className="scenario-picker" data-tour="scenario">
           <button className={'scenario-title' + (scenarioOpen ? ' open' : '')} type="button" onClick={() => setScenarioOpen((value) => !value)} aria-expanded={scenarioOpen}>
             <span>{activeIsBlank ? 'SIMULATION LIBRE' : incident.ref}</span>
             <strong>{activeName}<ChevronDown size={13} /></strong>
@@ -1396,9 +1512,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           </>}
         </div>
         <div className="top-actions">
-          <button className={'webmcp-status-button ' + toolStatus} type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} aria-label="Voir les outils WebMCP">
+          <button className={'webmcp-status-button ' + toolStatus} data-tour="webmcp" type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} aria-label="Voir les outils WebMCP">
             {toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}
-            <span>{toolStatus === 'available' ? 'Agent WebMCP prêt' : toolStatus === 'registering' ? 'WebMCP en cours' : 'WebMCP indisponible'}</span>
+            <span>{toolStatus === 'available' ? `${toolNames.length} outils WebMCP actifs` : toolStatus === 'registering' ? 'WebMCP en cours' : 'WebMCP indisponible'}</span>
           </button>
           <span className={'status-chip ' + simState}><i />{simState === 'active' ? 'Simulation active' : simState === 'pause' ? 'Simulation en pause' : 'Aucun foyer'}</span>
           <div className="pop-anchor">
@@ -1414,6 +1530,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
                   <div><dt>Contour plein / pointillé</dt><dd>Le trait plein est la situation actuelle. Le pointillé est la projection à T+3 h si rien ne change.</dd></div>
                   <div><dt>Calibration</dt><dd>Non réalisée. Aucun écart n’a été mesuré contre un incendie réel : les chiffres sont un ordre de grandeur d’entraînement, pas une prévision.</dd></div>
                 </dl>
+                <button className="help-tour-button" type="button" onClick={() => { setHelpOpen(false); setTourOpen(true); }}><Command size={13} />Revoir le tutoriel</button>
               </div>
             </>}
           </div>
@@ -1424,10 +1541,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
               <div className="popover account-pop glass-panel">
                 <div className="account-head"><span className="account-avatar">{userEmail.slice(0,2).toUpperCase()}</span><div><strong>{userEmail}</strong><small>Session opérateur</small></div></div>
                 <dl className="account-facts">
-                  <div><dt>Session</dt><dd>Opaque, côté serveur</dd></div>
-                  <div><dt>Mot de passe</dt><dd>Argon2id · 64 Mo</dd></div>
-                  <div><dt>Cookie</dt><dd>HttpOnly · SameSite</dd></div>
                   <div><dt>Simulations</dt><dd>{scenarioList.length}</dd></div>
+                  <div><dt>Moyens engagés</dt><dd>{committedCount}</dd></div>
                 </dl>
                 <p className="account-note"><ShieldCheck size={12} />L’agent WebMCP agit dans cette session. Aucune clé n’est exposée.</p>
                 <button className="account-signout" type="button" onClick={signOut}><LogOut size={13} />Se déconnecter</button>
@@ -1581,8 +1696,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Front en flammes</span>
         <span><i className="lg-forecast" />Position projetée à +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Ajouter un foyer"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
-      <section className="timeline glass-panel">
+      <nav className="map-controls glass-panel" data-tour="carte" aria-label="Carte : foyer et projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Ajouter un foyer"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <section className="timeline glass-panel" data-tour="chronologie">
         <div className="time-readout"><span>HEURE INCIDENT</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} depuis le départ</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Mettre la simulation en pause' : 'Lancer la simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
         <div className="timeline-track">
@@ -1601,18 +1716,27 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {toolsOpen && <Modal labelledBy="tool-catalog-title" onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead titleId="tool-catalog-title" icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
   <span className="connect-dot" />
   <div>
-    <strong>{toolStatus === 'available' ? 'Outils enregistrés dans cette page' : toolStatus === 'registering' ? 'Enregistrement en cours…' : 'API WebMCP absente de ce navigateur'}</strong>
+    <strong>{toolStatus === 'available'
+      ? toolTransport === 'native' ? 'API WebMCP native · outils enregistrés' : 'Pont WebMCP actif · outils enregistrés'
+      : toolStatus === 'registering' ? 'Enregistrement en cours…' : 'Aucun contexte de modèle dans cet onglet'}</strong>
     <span>{toolStatus === 'available'
-      ? `Ouvrez cette page dans ChatGPT et demandez ce que vous voulez : l’agent découvre les ${toolNames.length} outils ci-dessous et agit sur la carte.`
-      : 'Ouvrez cette page dans l’app ChatGPT ou un navigateur compatible WebMCP. Sans l’API, toutes les commandes restent utilisables à la main.'}</span>
+      ? toolTransport === 'native'
+        ? `Ce navigateur expose document.modelContext. Les ${toolNames.length} outils ci-dessous y sont enregistrés et visibles par l’agent.`
+        : `Ce navigateur n’a pas encore l’API native : la page fournit son propre contexte de modèle. Les ${toolNames.length} outils sont enregistrés sur document.modelContext et appelables via window.__WEBMCP__.`
+      : 'Rechargez la page. Si le problème persiste, un bloqueur de scripts empêche le chargement de /webmcp.js.'}</span>
   </div>
 </div>
 <ol className="connect-steps">
-  <li><b>1</b><span>Ouvrez cette page dans l’app ChatGPT (ou Chrome 149+ avec le flag WebMCP).</span></li>
+  <li><b>1</b><span>Ouvrez cet onglet avec un agent : app ChatGPT, extension de navigateur, ou Chrome avec le flag WebMCP.</span></li>
   <li><b>2</b><span>Restez connecté : l’agent hérite de votre session, il n’y a ni clé API ni OAuth.</span></li>
-  <li><b>3</b><span>Parlez à ChatGPT en langage naturel. Il appelle les outils de la page, jamais l’inverse.</span></li>
+  <li><b>3</b><span>Demandez en langage naturel. L’agent appelle les outils de la page, jamais l’inverse.</span></li>
   <li><b>4</b><span>Il construit un plan en fantôme sans vous interrompre, puis demande <em>une</em> validation pour tout engager.</span></li>
 </ol>
+<div className="bridge-probe">
+  <span>VÉRIFIER DEPUIS LA CONSOLE DU NAVIGATEUR</span>
+  <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
+  <small>{toolTransport === 'native' ? 'document.modelContext est fourni par le navigateur.' : 'document.modelContext est fourni par la page via /webmcp.js.'}</small>
+</div>
 <div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,12)],['Engagement',toolNames.slice(12,14)],['Simulation & carte',toolNames.slice(14)]].map(([label,names]) => <details className="tool-group" open key={String(label)}><summary><span>{String(label)}</span><b>{(names as string[]).length}</b><ChevronDown size={13} /></summary><div>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div></details>)}</div></section></Modal>}
 
       {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 EXÉCUTIONS WORKER · T+6H" title="Comparaison des stratégies" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Stratégie recommandée' : undefined}><header><div><small>{index === 0 ? 'SURFACE MINIMALE' : strategy.resources === 0 ? 'RÉFÉRENCE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Résultat calculé</span>}</header><p>{strategy.description}</p><dl><div><dt>Surface simulée</dt><dd>{strategy.burnedHa.toLocaleString('fr-FR')} ha</dd></div><div><dt>Vitesse de tête</dt><dd>{strategy.rateOfSpread.toLocaleString('fr-FR')} m/min</dd></div><div><dt>Moyens</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Modèle non calibré · résultats calculés localement</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Retenir le résultat minimal</button></div></section></Modal>}
@@ -1621,6 +1745,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
       {agentOpen && <aside className="agent-drawer glass-panel" aria-label="Journal des appels WebMCP"><ModalHead icon={<Bot size={18} />} eyebrow="APPELS DE L’AGENT" title="Journal WebMCP" onClose={() => setAgentOpen(false)} /><div className="agent-guidance"><span>ESSAYEZ DANS CHATGPT</span><ol><li>« Analyse la situation et propose-moi deux stratégies pour protéger Landiras Est. »</li><li>« Le vent passe au nord-ouest à 40 km/h. Recalcule et adapte le plan. »</li><li>« Compare le plan avec et sans les moyens aériens, puis soumets-moi le meilleur. »</li></ol></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Les appels WebMCP réels apparaîtront ici, avec leur outil et leur résultat. Ouvrez FireOps dans ChatGPT puis formulez une demande.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <X size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div></aside>}
       {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan appliqué · Annuler</button>}
+      {tourOpen && <Tour steps={tourSteps} onFinish={finishTour} />}
       {toast && <div className="toast glass-panel" role="status"><Check size={15} />{toast}</div>}
     </main>
   );
