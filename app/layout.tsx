@@ -27,7 +27,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr">
-      <body>{children}</body>
+      <body>
+        {/* Le pont WebMCP doit exister avant l'hydratation : les outils de la
+            page s'enregistrent dessus des le premier rendu client, et un agent
+            injecte au chargement du document doit le trouver deja pose. Le
+            differer rouvrirait la course que ce fichier existe pour fermer. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/webmcp.js" />
+        {children}
+      </body>
     </html>
   );
 }
