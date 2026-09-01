@@ -17,6 +17,25 @@ FireOps n’appelle aucun modèle de langage. La page enregistre **21 outils mé
 
 Le journal **WebMCP** rend visibles les appels réellement exécutés par l’agent, avec l’outil appelé, son résultat et son horodatage. Il n’existe pas d’agent simulé dans la page.
 
+### Le pont de compatibilité
+
+`document.modelContext` n’existe aujourd’hui que dans des canaux expérimentaux. Sans lui, la page n’exposait aucun outil et l’en-tête affichait « WebMCP indisponible » dans un Chrome ordinaire — donc dans la quasi-totalité des navigateurs qui ouvriront cette page.
+
+`public/webmcp.js`, chargé avant l’hydratation, corrige cela. Il **ne remplace jamais une implémentation native** : il la détecte et s’y range. En son absence, il fournit un contexte de modèle conforme à la forme de la spécification — `registerTool(tool, { signal })`, `getTools()`, événement `toolchange`, plus `provideContext()` pour la forme historique — et publie une entrée unique :
+
+    // Depuis la console du navigateur, ou depuis un agent qui exécute du JS.
+    window.__WEBMCP__.mode              // 'native' ou 'polyfill'
+    window.__WEBMCP__.listTools()       // les 21 outils avec leur schéma
+    await window.__WEBMCP__.callTool('get_situation', {})
+
+Trois surfaces de découverte sont exposées, pour trois familles d’agents :
+
+- `document.modelContext` et `navigator.modelContext`, pour un client WebMCP natif ;
+- `window.__WEBMCP__`, pour un agent qui exécute du JavaScript dans l’onglet ;
+- un canal `postMessage` **de même origine uniquement**, pour un content script d’extension, et un manifeste `<script type="application/json" id="webmcp-manifest">` pour un agent qui lit le DOM.
+
+Le désenregistrement suit la spécification : les outils sont enregistrés avec un `AbortSignal` que le démontage du composant déclenche.
+
 ## Le moteur
 
 Automate cellulaire 128 × 128, propagation par file de priorité, sous-pas de 15 minutes, exécuté dans un Web Worker.
@@ -56,7 +75,9 @@ Prérequis : Node.js 22.13 ou plus récent.
     npm install
     npm run dev
 
-Ouvrir http://localhost:3000, créer un compte de test, puis ouvrir cette page dans ChatGPT ou un navigateur compatible WebMCP. Les routes d’authentification sont servies par le même Worker local afin que les cookies restent same-origin.
+Ouvrir http://localhost:3000. La racine sert la page de présentation ; la section « Accès » ouvre la console. Un tutoriel de six étapes se lance à la première ouverture et reste relançable depuis l’aide.
+
+Les routes d’authentification sont servies par le même Worker local afin que les cookies restent same-origin.
 
 ## Vérification
 
@@ -65,20 +86,29 @@ Ouvrir http://localhost:3000, créer un compte de test, puis ouvrir cette page d
     node scripts/test-simulation.mjs
     node scripts/validate-fires.mjs
 
+Dans le navigateur, une fois la console ouverte, la barre d’en-tête doit afficher « 21 outils WebMCP actifs ». Le contrôle direct :
+
+    window.__WEBMCP__.listTools().length          // 21
+    await window.__WEBMCP__.callTool('get_situation', {})
+
 La suite `test-simulation.mjs` compte **48 assertions** : vitesses contre les fourchettes publiées, composition régionale, ancrage géographique du paysage, géométrie des contours, effet de la météo, réponse de l’extinction, autonomie, comportement du maillage DFCI et robustesse numérique.
 
 ## Architecture
 
     app/
       fireops-client.tsx        carte, état, revue et outils WebMCP
+      landing.tsx               page de présentation publique
       login-client.tsx          authentification humaine
+      tour.tsx                  tutoriel en surbrillance, six étapes
       globals.css               système visuel
       api/auth/*                CSRF, inscription, connexion, déconnexion
     db/
-      auth.ts                   Argon2id, sessions, limitation de débit
+      auth.ts                   inscription, connexion, sessions, limitation de débit
       schema.ts                 schéma D1
     drizzle/                    migration SQL
     public/
+      webmcp.js                 pont WebMCP chargé avant l’hydratation
+      media/                    photographies du domaine public
       simulation.worker.js      moteur de propagation
       maplibre/                 worker MapLibre servi par l’application
       data/                     raster territorial Gironde pré-calculé
@@ -132,7 +162,8 @@ les remet en phase après une mise à jour de `maplibre-gl`.
 - Le relief est échantillonné à 90 m ; le MNT à 30 m demande désormais une acceptation de licence authentifiée.
 - Aucun périmètre vectoriel exploitable n’a été trouvé pour Saumos 2026 : le score de forme n’est disponible que pour 2022.
 - Les ordres d’évacuation ne sont jamais transmis à un système externe.
-- Tests WebMCP en conditions réelles, test mobile terrain et validation métier par des sapeurs-pompiers non réalisés.
+- Le pont fournit le contexte de modèle quand le navigateur n’en a pas ; l’interopérabilité avec un client WebMCP natif n’a pas pu être vérifiée faute d’implémentation stable à tester.
+- Test mobile terrain et validation métier par des sapeurs-pompiers non réalisés.
 - Le fond cartographique est servi jusqu’au niveau de zoom 16 ; au-delà la dernière tuile est étirée.
 - Le bundle MapLibre dépasse l’avertissement de 500 kB et gagnerait à être découpé.
 

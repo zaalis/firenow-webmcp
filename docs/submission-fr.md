@@ -10,6 +10,8 @@ FireOps expose vingt et un outils pensés par intention métier plutôt que comm
 
 La page n’appelle aucun LLM. L’agent opère dans la page authentifiée, partage son cookie de session, et les outils disparaissent à la déconnexion. Les paramètres reçus de l’agent sont validés comme des entrées non fiables.
 
+Comme `document.modelContext` n’existe pas encore dans un navigateur courant, la page fournit son propre contexte de modèle quand le navigateur n’en a pas — sans jamais remplacer une implémentation native. Les outils sont donc réellement appelables aujourd’hui, dans Chrome, depuis un agent qui exécute du JavaScript dans l’onglet (`window.__WEBMCP__.callTool`), depuis un content script d’extension par `postMessage` de même origine, ou depuis un client WebMCP natif le jour où il existe.
+
 ## Le moteur, et ce qu’il ne prétend pas être
 
 Automate cellulaire 128 × 128 dans un Web Worker : Rothermel à deux classes sans coefficient d’ajustement par espèce, modèles de combustible standard d’Anderson et de Scott & Burgan, registre de 35 espèces réelles sur 5 régions écologiques, intensité de Byram, ellipse d’Alexander, sautes de braises, maillage DFCI du massif landais, et enjeux humains.
@@ -24,7 +26,7 @@ L’objectif n’est pas de prédire un incendie, mais de permettre de tester ra
 
 ## Technologie
 
-WebMCP impératif, React/Vite via Vinext, MapLibre GL sur fond raster Esri, Web Worker, Cloudflare D1, Argon2id, cookies opaques, Lucide.
+WebMCP impératif, React/Vite via Vinext, MapLibre GL sur fond raster Esri, Web Worker, Cloudflare D1, Lucide.
 
 ## Statut
 
