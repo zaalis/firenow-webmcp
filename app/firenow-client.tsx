@@ -11,7 +11,7 @@ import {
   Tractor, Truck, Undo2, Users, Wind, X, ChevronUp,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import Tour, { type TourStep } from './tour';
+import Tour, { TOUR_PENDING_KEY, type TourStep } from './tour';
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
@@ -49,7 +49,7 @@ type Scenario = {
   ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[]; firebreaks: Firebreak[];
   domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
-// L en-tete affichait la date de Landiras quel que soit le scenario ouvert.
+// The header used to show the Landiras date whatever scenario was open.
 type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number; startDate?: string; endDate?: string };
 type ToolClient = { requestUserInteraction?: <T>(handler: () => Promise<T>) => Promise<T> };
 type ToolDefinition = {
@@ -63,94 +63,94 @@ type ModelContextLike = {
 };
 type WebMcpBridge = { mode: 'native' | 'polyfill'; version: string };
 
-type UnitFamily = 'terrestre' | 'aérien' | 'génie';
-type UnitCatalogue = { code: string; count: number; label: string; famille: UnitFamily; cuve: string; capacityLitres?: number };
+type UnitFamily = 'ground' | 'air' | 'engineering';
+type UnitCatalogue = { code: string; count: number; label: string; family: UnitFamily; tank: string; capacityLitres?: number };
 
 const initialWeather: Weather = {
-  windSpeed: 22, windDirection: 'Nord-ouest', windBearing: 135, gusts: 38,
+  windSpeed: 22, windDirection: 'North-west', windBearing: 135, gusts: 38,
   temperature: 39, humidity: 19, droughtIndex: 0.95,
 };
-// Le parc reprend les caracteristiques constructeur portees par le moteur :
-// cuve, debit de pompe et duree de remplissage donnent le debit soutenu.
+// The fleet carries the manufacturer figures the engine works from: tank,
+// pump rate and refill time together give the flow a unit can actually hold.
 const units: UnitCatalogue[] = [
-  { code: 'VLHR', count: 14, label: 'Véhicules légers hors route', famille: 'terrestre', cuve: '600 L', capacityLitres: 600 },
-  { code: 'CCF',  count: 18, label: 'Camions-citernes feux de forêts', famille: 'terrestre', cuve: '4 000 L', capacityLitres: 4000 },
-  { code: 'CCFS', count: 6,  label: 'Camions-citernes super', famille: 'terrestre', cuve: '8 000 L', capacityLitres: 8000 },
-  { code: 'FPT',  count: 6,  label: 'Fourgons pompe-tonne', famille: 'terrestre', cuve: '3 000 L', capacityLitres: 3000 },
-  { code: 'CCGC', count: 4,  label: 'Citernes grande capacité', famille: 'terrestre', cuve: '13 000 L', capacityLitres: 13000 },
-  { code: 'HBE',  count: 2,  label: 'Hélicoptères bombardiers d’eau', famille: 'aérien', cuve: '1 000 L', capacityLitres: 1000 },
-  { code: 'HELIT', count: 1, label: 'Hélicoptère lourd S-64', famille: 'aérien', cuve: '9 500 L', capacityLitres: 9500 },
-  { code: 'AT8',  count: 4,  label: 'Air Tractor AT-802F', famille: 'aérien', cuve: '3 100 L', capacityLitres: 3100 },
-  { code: 'CL4',  count: 4,  label: 'Canadair CL-415', famille: 'aérien', cuve: '6 137 L', capacityLitres: 6137 },
-  { code: 'DASH', count: 2,  label: 'Dash-8 Q400MR', famille: 'aérien', cuve: '10 000 L', capacityLitres: 10000 },
-  { code: 'A400', count: 1,  label: 'A400M (retardant)', famille: 'aérien', cuve: '20 000 L', capacityLitres: 20000 },
-  { code: 'DOZ',  count: 3,  label: 'Bulldozers', famille: 'génie', cuve: '320 m/h' },
-  { code: 'CREW', count: 8,  label: 'Équipes au sol (20 sapeurs)', famille: 'génie', cuve: '90 m/h' },
+  { code: 'VLHR', count: 14, label: 'Light off-road wildland units', family: 'ground', tank: '600 L', capacityLitres: 600 },
+  { code: 'CCF',  count: 18, label: 'Wildland fire engines', family: 'ground', tank: '4,000 L', capacityLitres: 4000 },
+  { code: 'CCFS', count: 6,  label: 'Heavy wildland engines', family: 'ground', tank: '8,000 L', capacityLitres: 8000 },
+  { code: 'FPT',  count: 6,  label: 'Structure pumpers', family: 'ground', tank: '3,000 L', capacityLitres: 3000 },
+  { code: 'CCGC', count: 4,  label: 'Large water tenders', family: 'ground', tank: '13,000 L', capacityLitres: 13000 },
+  { code: 'HBE',  count: 2,  label: 'Water-dropping helicopters', family: 'air', tank: '1,000 L', capacityLitres: 1000 },
+  { code: 'HELIT', count: 1, label: 'Heavy helicopter S-64', family: 'air', tank: '9,500 L', capacityLitres: 9500 },
+  { code: 'AT8',  count: 4,  label: 'Air Tractor AT-802F', family: 'air', tank: '3,100 L', capacityLitres: 3100 },
+  { code: 'CL4',  count: 4,  label: 'Canadair CL-415', family: 'air', tank: '6,137 L', capacityLitres: 6137 },
+  { code: 'DASH', count: 2,  label: 'Dash-8 Q400MR', family: 'air', tank: '10,000 L', capacityLitres: 10000 },
+  { code: 'A400', count: 1,  label: 'A400M (retardant)', family: 'air', tank: '20,000 L', capacityLitres: 20000 },
+  { code: 'DOZ',  count: 3,  label: 'Bulldozers', family: 'engineering', tank: '320 m/h' },
+  { code: 'CREW', count: 8,  label: 'Hand crews (20 firefighters)', family: 'engineering', tank: '90 m/h' },
 ];
 const UNIT_ICONS: Record<string, LucideIcon> = {
   VLHR: CarFront, CCF: Truck, CCFS: Truck, FPT: FireExtinguisher, CCGC: ContainerIcon,
   HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
   A400: Plane, DOZ: Tractor, CREW: Users,
 };
-const unitFamilyClass = (family: UnitFamily) => family === 'aérien' ? 'aerien' : family === 'génie' ? 'genie' : 'terrestre';
-const unitCapacityLevel = (unit: UnitCatalogue) => unit.famille === 'génie' || (unit.capacityLitres || 0) > 9000
+const unitFamilyClass = (family: UnitFamily) => family === 'air' ? 'aerien' : family === 'engineering' ? 'genie' : 'terrestre';
+const unitCapacityLevel = (unit: UnitCatalogue) => unit.family === 'engineering' || (unit.capacityLitres || 0) > 9000
   ? 3 : (unit.capacityLitres || 0) >= 3000 ? 2 : 1;
 const REGION_LABEL: Record<string, string> = {
-  gironde: 'Landes de Gascogne',
-  marseille: 'Provence calcaire',
-  'california-basin': 'Grand Bassin · steppe à armoise',
-  'california-chaparral': 'Chaparral cismontain',
-  'california-sierra': 'Sierra Nevada · forêt montagnarde',
+  gironde: 'Landes de Gascogne pine forest',
+  marseille: 'Provence limestone garrigue',
+  'california-basin': 'Great Basin · sagebrush steppe',
+  'california-chaparral': 'Cismontane chaparral',
+  'california-sierra': 'Sierra Nevada · montane forest',
 };
-const FAMILLES: string[] = ['terrestre', 'aérien', 'génie'];
-const PARC_TOTAL = units.reduce((sum, unit) => sum + unit.count, 0);
+const FAMILIES: UnitFamily[] = ['ground', 'air', 'engineering'];
+const FAMILY_LABEL: Record<UnitFamily, string> = { ground: 'Ground', air: 'Air', engineering: 'Engineering' };
+const FLEET_TOTAL = units.reduce((sum, unit) => sum + unit.count, 0);
 const TIMELINE_MAX_MINUTES = 12 * 60;
-const TOUR_KEY = 'fireops.tour.v1';
 const toolActivityLabel = (tool: string, result: unknown) => {
   const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
-  if (tool === 'commit_plan') return value.approved === true ? 'Plan approuvé et appliqué' : 'Plan rejeté par l’opérateur';
-  if (tool === 'run_simulation') return `Simulation avancée de ${value.advancedMinutes} min`;
-  if (tool === 'set_time') return `Chronologie positionnée à H+${String(Math.floor(Number(value.minutesFromIgnition || 0) / 60)).padStart(2, '0')}:${String(Number(value.minutesFromIgnition || 0) % 60).padStart(2, '0')}`;
+  if (tool === 'commit_plan') return value.approved === true ? 'Plan approved and applied' : 'Plan rejected by the operator';
+  if (tool === 'run_simulation') return `Simulation advanced by ${value.advancedMinutes} min`;
+  if (tool === 'set_time') return `Timeline set to H+${String(Math.floor(Number(value.minutesFromIgnition || 0) / 60)).padStart(2, '0')}:${String(Number(value.minutesFromIgnition || 0) % 60).padStart(2, '0')}`;
   const labels: Record<string, string> = {
-    get_situation: 'Situation opérationnelle lue', list_units: 'Parc et moyens engagés lus',
-    get_fire_forecast: 'Projection T+1 h, T+3 h et T+6 h calculée', get_weather: 'Météo actuelle lue',
-    query_terrain: 'Terrain du secteur analysé', list_scenarios: 'Scénarios disponibles lus',
-    propose_plan: 'Plan provisoire ouvert', stage_deploy_units: 'Moyens prépositionnés dans le plan',
-    stage_assign_task: 'Mission ajoutée au plan provisoire', stage_firebreak: 'Ligne d’appui ajoutée au plan',
-    stage_tactical_burn: 'Brûlage tactique préparé, non allumé', stage_evacuation_zone: 'Zone d’évacuation préparée, ordre non transmis',
-    revert_plan: 'Dernier plan annulé', set_weather: 'Météo de simulation mise à jour',
-    ignite: 'Foyer d’exercice repositionné', compare_plans: 'Trois stratégies calculées par le moteur',
-    focus_region: 'Carte recentrée sur le scénario demandé', set_view_mode: 'Mode de carte appliqué',
+    get_situation: 'Operational situation read', list_units: 'Fleet and committed units read',
+    get_fire_forecast: 'T+1 h, T+3 h and T+6 h projection computed', get_weather: 'Current weather read',
+    query_terrain: 'Sector terrain analysed', list_scenarios: 'Available scenarios read',
+    propose_plan: 'Draft plan opened', stage_deploy_units: 'Units staged in the plan',
+    stage_assign_task: 'Task added to the draft plan', stage_firebreak: 'Control line added to the plan',
+    stage_tactical_burn: 'Tactical burn prepared, not ignited', stage_evacuation_zone: 'Evacuation zone prepared, no order sent',
+    revert_plan: 'Last plan reverted', set_weather: 'Simulation weather updated',
+    ignite: 'Exercise ignition repositioned', compare_plans: 'Three strategies computed by the engine',
+    focus_region: 'Map recentred on the requested scenario', set_view_mode: 'Map mode applied',
   };
-  return labels[tool] || 'Résultat vérifiable renvoyé';
+  return labels[tool] || 'Verifiable result returned';
 };
 const planDescriptions = [
-  'Concentration des moyens sur le flanc nord et la lisière du village.',
-  'Répartition mobile sur les deux flancs avec une réserve centrale.',
-  'Projection de référence sans nouveau moyen engagé.',
+  'Units massed on the north flank and the village edge.',
+  'Mobile split across both flanks with a central reserve.',
+  'Reference projection with no additional unit committed.',
 ];
 const defaultIgnition: Ignition = { lng: -0.4540519, lat: 44.5897472, radiusM: 0 };
 const landirasUnits = (): Deployment[] => [
-  { id: 'ccf22', type: 'CCF', count: 22, sector: 'Flanc nord-est', mission: 'Tenue du flanc gauche', lng: -0.4159, lat: 44.6088, radiusM: 2200, capacity: 0.09 },
+  { id: 'ccf22', type: 'CCF', count: 22, sector: 'North-east flank', mission: 'Tenue du flanc gauche', lng: -0.4159, lat: 44.6088, radiusM: 2200, capacity: 0.09 },
   { id: 'ccf18', type: 'CCF', count: 18, sector: 'Flanc sud-ouest', mission: 'Tenue du flanc droit', lng: -0.4922, lat: 44.5707, radiusM: 2200, capacity: 0.09 },
-  { id: 'fpt08', type: 'FPT', count: 8, sector: 'Sud-est', mission: 'Défense des habitations', lng: -0.4139, lat: 44.5611, radiusM: 1600, capacity: 0.06 },
-  { id: 'cl404', type: 'CL4', count: 4, sector: 'Tête', mission: 'Largages sur la tête de feu', lng: -0.4272, lat: 44.5707, radiusM: 2600, capacity: 0.08 },
-  { id: 'hbe02', type: 'HBE', count: 2, sector: 'Flanc nord-est', mission: 'Appui héliporté', lng: -0.4362, lat: 44.6025, radiusM: 1800, capacity: 0.08 },
-  { id: 'doz04', type: 'DOZ', count: 4, sector: 'Sud-est', mission: 'Ligne d’appui DFCI', lng: -0.4050, lat: 44.5548, radiusM: 2000, capacity: 0.05 },
+  { id: 'fpt08', type: 'FPT', count: 8, sector: 'South-east', mission: 'Structure defence', lng: -0.4139, lat: 44.5611, radiusM: 1600, capacity: 0.06 },
+  { id: 'cl404', type: 'CL4', count: 4, sector: 'Head', mission: 'Drops on the fire head', lng: -0.4272, lat: 44.5707, radiusM: 2600, capacity: 0.08 },
+  { id: 'hbe02', type: 'HBE', count: 2, sector: 'North-east flank', mission: 'Helicopter support', lng: -0.4362, lat: 44.6025, radiusM: 1800, capacity: 0.08 },
+  { id: 'doz04', type: 'DOZ', count: 4, sector: 'South-east', mission: 'DFCI control line', lng: -0.4050, lat: 44.5548, radiusM: 2000, capacity: 0.05 },
 ];
 const LANDIRAS_DOMAIN: Domain = { lng: -0.4540519, lat: 44.5897472, boxMetres: 25000 };
-// Saumos (44,921 N / -0,987 O). Le feu part vers le sud-ouest puis l'ouest :
-// il faut une emprise de 50 km pour contenir les 47 000 ha parcourus.
+// Saumos (44.921 N / -0.987 W). The fire runs south-west then west, so a
+// 50 km window is needed to hold the 47,000 ha it eventually burned.
 const SAUMOS_IGNITION: Ignition = { lng: -0.987, lat: 44.921, radiusM: 0 };
 const SAUMOS_DOMAIN: Domain = { lng: -1.10, lat: 44.80, boxMetres: 50000 };
-// Sans le trait de cote ni les plans d'eau, la simulation propage le feu sur
-// l'Atlantique et toute comparaison avec l'evenement reel perd son sens.
+// Without the coastline and the water bodies the simulation spreads fire over
+// the Atlantic, and any comparison with the real event stops meaning anything.
 const SAUMOS_TERRAIN: Terrain = {
   region: 'gironde',
   oceanWestOfLng: -1.205,
   water: [
-    { lng: -1.135, lat: 44.990, radiusM: 3200 },  // étang de Lacanau
-    { lng: -1.130, lat: 44.680, radiusM: 7000 },  // bassin d’Arcachon
+    { lng: -1.135, lat: 44.990, radiusM: 3200 },  // Lacanau lake
+    { lng: -1.130, lat: 44.680, radiusM: 7000 },  // Arcachon bay
   ],
   urban: [
     { lng: -1.078, lat: 44.980, radiusM: 1500 },  // Lacanau
@@ -158,8 +158,8 @@ const SAUMOS_TERRAIN: Terrain = {
     { lng: -0.987, lat: 44.921, radiusM: 700 },   // Saumos
   ],
 };
-// Massif de l'Etoile, au nord-est de Marseille. Mistral de nord-ouest,
-// garrigue et pin d'Alep : le contraste avec les Landes est maximal.
+// Etoile massif, north-east of Marseille. North-west mistral, garrigue and
+// Aleppo pine: the sharpest available contrast with the Landes.
 const ETOILE_IGNITION: Ignition = { lng: 5.4474, lat: 43.3170, radiusM: 0 };
 const ETOILE_DOMAIN: Domain = { lng: 5.4474, lat: 43.3170, boxMetres: 25000 };
 const ETOILE_TERRAIN: Terrain = {
@@ -175,13 +175,13 @@ const etoileWeather = (): Weather => ({
   temperature: 34, humidity: 24, droughtIndex: 0.88,
 });
 const etoileUnits = (): Deployment[] => [
-  { id: 'eccf1', type: 'CCF', count: 20, sector: 'Lisière urbaine', mission: 'Défense des habitations', lng: 5.4130, lat: 43.3050, radiusM: 2400, capacity: 0.09, autonomy: 90 },
-  { id: 'ecl41', type: 'CL4', count: 4, sector: 'Tête', mission: 'Largages sur la tête', lng: 5.4900, lat: 43.2960, radiusM: 3000, capacity: 0.08, autonomy: 80 },
-  { id: 'ehbe1', type: 'HBE', count: 3, sector: 'Flanc est', mission: 'Appui héliporté', lng: 5.4980, lat: 43.3300, radiusM: 2200, capacity: 0.08, autonomy: 75 },
-  { id: 'ecrw1', type: 'CREW', count: 6, sector: 'Crêtes', mission: 'Ligne d’appui sur crête', lng: 5.4600, lat: 43.3400, radiusM: 2000, capacity: 0.05, autonomy: 85 },
+  { id: 'eccf1', type: 'CCF', count: 20, sector: 'Urban edge', mission: 'Structure defence', lng: 5.4130, lat: 43.3050, radiusM: 2400, capacity: 0.09, autonomy: 90 },
+  { id: 'ecl41', type: 'CL4', count: 4, sector: 'Head', mission: 'Drops on the head', lng: 5.4900, lat: 43.2960, radiusM: 3000, capacity: 0.08, autonomy: 80 },
+  { id: 'ehbe1', type: 'HBE', count: 3, sector: 'East flank', mission: 'Helicopter support', lng: 5.4980, lat: 43.3300, radiusM: 2200, capacity: 0.08, autonomy: 75 },
+  { id: 'ecrw1', type: 'CREW', count: 6, sector: 'Ridgelines', mission: 'Ridgeline control line', lng: 5.4600, lat: 43.3400, radiusM: 2000, capacity: 0.05, autonomy: 85 },
 ];
 
-// Bug Fire : Long Valley, comte de Lassen. Sagebrush, herbe et pinyon-genevrier,
+// Bug Fire: Long Valley, Lassen County. Sagebrush, grass and pinyon-juniper,
 // vent d'ouest soutenu (Washoe Zephyr), moyens tres legers.
 const BUG_IGNITION: Ignition = { lng: -120.0366, lat: 39.7229, radiusM: 0 };
 const BUG_DOMAIN: Domain = { lng: -119.90, lat: 39.72, boxMetres: 50000 };
@@ -191,30 +191,30 @@ const bugWeather = (): Weather => ({
   temperature: 38, humidity: 12, droughtIndex: 0.92,
 });
 const bugUnits = (): Deployment[] => [
-  { id: 'bccf1', type: 'CCF', count: 12, sector: 'Flanc sud', mission: 'Tenue du flanc', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
-  { id: 'bdoz1', type: 'DOZ', count: 4, sector: 'Est', mission: 'Ligne d’appui', lng: -119.9700, lat: 39.7420, radiusM: 4000, capacity: 0.05, autonomy: 70 },
-  { id: 'bhbe1', type: 'HBE', count: 2, sector: 'Tête', mission: 'Appui héliporté', lng: -119.9800, lat: 39.7229, radiusM: 4000, capacity: 0.08, autonomy: 60 },
+  { id: 'bccf1', type: 'CCF', count: 12, sector: 'South flank', mission: 'Tenue du flanc', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
+  { id: 'bdoz1', type: 'DOZ', count: 4, sector: 'East', mission: 'Control line', lng: -119.9700, lat: 39.7420, radiusM: 4000, capacity: 0.05, autonomy: 70 },
+  { id: 'bhbe1', type: 'HBE', count: 2, sector: 'Head', mission: 'Helicopter support', lng: -119.9800, lat: 39.7229, radiusM: 4000, capacity: 0.08, autonomy: 60 },
 ];
 const saumosWeather = (): Weather => ({
   windSpeed: 26, windDirection: 'Nord-est', windBearing: 225, gusts: 42,
   temperature: 38, humidity: 22, droughtIndex: 0.96,
 });
-// 3 300 pompiers, 18 moyens aeriens, 121 km de pare-feux, 105 vehicules forestiers.
+// 3,300 firefighters, 18 aircraft, 121 km of firebreak, 105 wildland units.
 const saumosUnits = (): Deployment[] => [
-  { id: 'sccf1', type: 'CCF', count: 45, sector: 'Flanc sud', mission: 'Tenue du flanc sud', lng: -0.9870, lat: 44.8671, radiusM: 5000, capacity: 0.09 },
+  { id: 'sccf1', type: 'CCF', count: 45, sector: 'South flank', mission: 'Tenue du flanc sud', lng: -0.9870, lat: 44.8671, radiusM: 5000, capacity: 0.09 },
   { id: 'sccf2', type: 'CCF', count: 45, sector: 'Flanc sud-est', mission: 'Tenue du flanc est', lng: -0.9330, lat: 44.8828, radiusM: 5000, capacity: 0.09 },
-  { id: 'sccf3', type: 'CCF', count: 40, sector: 'Le Porge', mission: 'Défense des habitations', lng: -1.0678, lat: 44.8639, radiusM: 5000, capacity: 0.09 },
+  { id: 'sccf3', type: 'CCF', count: 40, sector: 'Le Porge', mission: 'Structure defence', lng: -1.0678, lat: 44.8639, radiusM: 5000, capacity: 0.09 },
   { id: 'sfpt1', type: 'FPT', count: 30, sector: 'Littoral', mission: 'Protection du littoral', lng: -1.1298, lat: 44.8841, radiusM: 4500, capacity: 0.06 },
-  { id: 'scl41', type: 'CL4', count: 9, sector: 'Tête', mission: 'Largages sur la tête', lng: -1.0872, lat: 44.9085, radiusM: 6000, capacity: 0.08 },
-  { id: 'shbe1', type: 'HBE', count: 9, sector: 'Flanc sud', mission: 'Appui héliporté', lng: -1.0170, lat: 44.8618, radiusM: 5000, capacity: 0.08 },
-  { id: 'sdoz1', type: 'DOZ', count: 30, sector: 'Ouest', mission: 'Pare-feu (121 km réalisés)', lng: -1.1521, lat: 44.9210, radiusM: 5500, capacity: 0.05 },
+  { id: 'scl41', type: 'CL4', count: 9, sector: 'Head', mission: 'Drops on the head', lng: -1.0872, lat: 44.9085, radiusM: 6000, capacity: 0.08 },
+  { id: 'shbe1', type: 'HBE', count: 9, sector: 'South flank', mission: 'Helicopter support', lng: -1.0170, lat: 44.8618, radiusM: 5000, capacity: 0.08 },
+  { id: 'sdoz1', type: 'DOZ', count: 30, sector: 'West', mission: 'Firebreak (121 km cut)', lng: -1.1521, lat: 44.9210, radiusM: 5500, capacity: 0.05 },
 ];
 const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'Ouest', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
-const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JUIL. 2022', startHour: 14, startMinute: 0, startDate: '2022-07-12', endDate: '2022-07-20' };
-const ETOILE_INCIDENT: Incident = { ref: 'EXERCICE 13-ETOILE', dateLabel: 'EXERCICE', startHour: 13, startMinute: 0 };
-const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AOÛT 2026', startHour: 13, startMinute: 0, startDate: '2026-08-08', endDate: '2026-08-15' };
-const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JUIL. 2026', startHour: 13, startMinute: 30, startDate: '2026-07-22', endDate: '2026-07-26' };
-const BLANK_INCIDENT: Incident = { ref: 'SIMULATION LIBRE', dateLabel: 'T0', startHour: 12, startMinute: 0 };
+const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JULY 2022', startHour: 14, startMinute: 0, startDate: '2022-07-12', endDate: '2022-07-20' };
+const ETOILE_INCIDENT: Incident = { ref: 'EXERCISE 13-ETOILE', dateLabel: 'EXERCISE', startHour: 13, startMinute: 0 };
+const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AUGUST 2026', startHour: 13, startMinute: 0, startDate: '2026-08-08', endDate: '2026-08-15' };
+const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JULY 2026', startHour: 13, startMinute: 30, startDate: '2026-07-22', endDate: '2026-07-26' };
+const BLANK_INCIDENT: Incident = { ref: 'FREE SIMULATION', dateLabel: 'T0', startHour: 12, startMinute: 0 };
 const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank'): Scenario => {
   const base = { id: nextId(), name, createdAt: Date.now(), preset, burnedHa: null };
   if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: LANDIRAS_INCIDENT };
@@ -223,35 +223,34 @@ const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | '
   if (preset === 'saumos') return { ...base, ignition: { ...SAUMOS_IGNITION }, minutes: 450, weather: saumosWeather(), committed: saumosUnits(), firebreaks: [], domain: SAUMOS_DOMAIN, terrain: SAUMOS_TERRAIN, incident: SAUMOS_INCIDENT };
   return { ...base, ignition: null, minutes: 0, weather: blankWeather(), committed: [], firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: BLANK_INCIDENT };
 };
-// Fond raster : charge par le fil principal, contrairement aux tuiles
-// vectorielles qui transitent par le worker MapLibre, lequel ne les recoit
-// jamais sur l'hebergement de production. Esri sert la base et les etiquettes
-// en deux couches distinctes, sans cle d'API -- CARTO filigrane desormais ses
-// tuiles raster avec « API KEY REQUIRED ».
+// Raster basemap: loaded by the main thread, unlike vector tiles, which go
+// through the MapLibre worker and never reach it on production hosting. Esri
+// serves base and labels as two separate layers with no API key -- CARTO now
+// watermarks its raster tiles with "API KEY REQUIRED".
 const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas';
-// Dernier niveau reellement couvert par le service, et plafond de zoom de la
-// carte : au-dela on n etire plus qu une bouillie, et la grille de simulation
-// (195 a 390 m par cellule) n a de toute facon plus rien a montrer.
+// The last level the service actually covers, and the map's zoom ceiling:
+// beyond it only mush gets stretched, and the simulation grid (195 to 390 m
+// per cell) has nothing left to show anyway.
 const BASEMAP_MAX_ZOOM = 16;
 const MAP_MAX_ZOOM = 17.5;
-// MapLibre deduit l'URL de son worker de son propre `import.meta.url`. Une fois
-// le paquet bundle, cette URL pointe vers un fichier que le bundler n'emet pas :
-// le worker repond 404, aucune source GeoJSON ne se charge et plus aucune couche
-// vectorielle n'est dessinee -- le feu disparait, seuls les marqueurs DOM restent.
-// On sert donc le worker officiel depuis public/ (scripts/sync-maplibre-worker.mjs).
+// MapLibre derives its worker URL from its own `import.meta.url`. Once bundled,
+// that URL points at a file the bundler never emits: the worker 404s, no GeoJSON
+// source loads and no vector layer is drawn at all -- the fire disappears and
+// only the DOM markers remain. So the official worker is served from public/
+// (see scripts/sync-maplibre-worker.mjs).
 const MAPLIBRE_WORKER_URL = '/maplibre/maplibre-gl-worker.mjs';
-// Foyers secondaires acceptes en plus du foyer principal. Le moteur applique la
-// meme borne de son cote : la carte et la simulation ne peuvent pas diverger.
+// Secondary ignitions accepted on top of the primary one. The engine enforces
+// the same bound on its side, so map and simulation cannot drift apart.
 const MAX_EXTRA_IGNITIONS = 11;
 // Zoom a partir duquel chaque moyen retrouve son marqueur propre et redevient
-// deplacable ; en dessous les moyens sont regroupes.
+// draggable; below it the units are clustered.
 const UNIT_CLUSTER_ZOOM = 10.2;
 const BASEMAP_STYLE = {
   version: 8 as const,
   sources: {
-    // Le service annonce 23 niveaux mais ne couvre reellement que jusqu'a 16
-    // sur le massif : au-dela il renvoie une tuile « Map data not yet
-    // available ». En bornant la source, MapLibre etire la derniere tuile
+    // The service advertises 23 levels but really covers only up to 16 over
+    // the massif: past that it returns a "Map data not yet available" tile.
+    // Bounding the source makes MapLibre stretch the last real tile
     // valide au lieu d'aller chercher ce placeholder.
     fondEsri: {
       type: 'raster' as const,
@@ -269,7 +268,7 @@ const BASEMAP_STYLE = {
   },
   layers: [
     { id: 'fond', type: 'background' as const, paint: { 'background-color': '#08090A' } },
-    // Le fond doit rester en retrait : le feu prime sur la carte.
+    // The basemap stays recessive: the fire outranks the map.
     { id: 'basemap', type: 'raster' as const, source: 'fondEsri',
       paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.62, 'raster-opacity': 0.95 } },
     { id: 'basemap-labels', type: 'raster' as const, source: 'etiquettesEsri',
@@ -284,21 +283,21 @@ const toolNames = [
   'focus_region', 'set_view_mode',
 ];
 
-// bearing = cap vers lequel le feu se propage ; `from` = provenance du vent, affichee a l'operateur.
+// bearing = the heading the fire spreads towards; `from` = where the wind blows from, shown to the operator.
 const COMPASS = [
-  { index: 0, short: 'N',  label: 'Vers le nord',      from: 'Sud',        bearing: 0 },
-  { index: 1, short: 'NE', label: 'Vers le nord-est',  from: 'Sud-ouest',  bearing: 45 },
-  { index: 2, short: 'E',  label: 'Vers l’est',        from: 'Ouest',      bearing: 90 },
-  { index: 3, short: 'SE', label: 'Vers le sud-est',   from: 'Nord-ouest', bearing: 135 },
-  { index: 4, short: 'S',  label: 'Vers le sud',       from: 'Nord',       bearing: 180 },
-  { index: 5, short: 'SO', label: 'Vers le sud-ouest', from: 'Nord-est',   bearing: 225 },
-  { index: 6, short: 'O',  label: 'Vers l’ouest',      from: 'Est',        bearing: 270 },
-  { index: 7, short: 'NO', label: 'Vers le nord-ouest', from: 'Sud-est',   bearing: 315 },
+  { index: 0, short: 'N',  label: 'Driving north',      from: 'South',      bearing: 0 },
+  { index: 1, short: 'NE', label: 'Driving north-east', from: 'South-west', bearing: 45 },
+  { index: 2, short: 'E',  label: 'Driving east',       from: 'West',       bearing: 90 },
+  { index: 3, short: 'SE', label: 'Driving south-east', from: 'North-west', bearing: 135 },
+  { index: 4, short: 'S',  label: 'Driving south',      from: 'North',      bearing: 180 },
+  { index: 5, short: 'SW', label: 'Driving south-west', from: 'North-east', bearing: 225 },
+  { index: 6, short: 'W',  label: 'Driving west',       from: 'East',       bearing: 270 },
+  { index: 7, short: 'NW', label: 'Driving north-west', from: 'South-east', bearing: 315 },
 ];
 const WEATHER_PRESETS: { label: string; values: Partial<Weather> }[] = [
-  { label: 'Calme', values: { windSpeed: 8, gusts: 14, humidity: 55, temperature: 24, droughtIndex: 0.35 } },
-  { label: 'Chaud et sec', values: { windSpeed: 22, gusts: 34, humidity: 22, temperature: 36, droughtIndex: 0.82 } },
-  { label: 'Bascule NO 40 km/h', values: { windSpeed: 40, gusts: 62, windBearing: 135, windDirection: 'Nord-ouest', humidity: 18, temperature: 38, droughtIndex: 0.91 } },
+  { label: 'Calm', values: { windSpeed: 8, gusts: 14, humidity: 55, temperature: 24, droughtIndex: 0.35 } },
+  { label: 'Hot and dry', values: { windSpeed: 22, gusts: 34, humidity: 22, temperature: 36, droughtIndex: 0.82 } },
+  { label: 'NW shift 40 km/h', values: { windSpeed: 40, gusts: 62, windBearing: 135, windDirection: 'North-west', humidity: 18, temperature: 38, droughtIndex: 0.91 } },
   { label: 'Rafales 70 km/h', values: { windSpeed: 55, gusts: 70, humidity: 15, temperature: 39, droughtIndex: 0.95 } },
   { label: 'Panache orageux', values: { windSpeed: 38, gusts: 60, humidity: 18, temperature: 38, droughtIndex: 0.97, plumeDriven: true } },
 ];
@@ -306,27 +305,27 @@ const nextId = () => Math.random().toString(36).slice(2, 9);
 const atNow = () => new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const textValue = (value: unknown, field: string, max = 240) => {
-  if (typeof value !== 'string') throw new Error(`Le champ « ${field} » doit être une chaîne de caractères non vide de ${max} caractères maximum.`);
-  if (!value.trim()) throw new Error(`Le champ « ${field} » ne peut pas être vide. Saisissez une valeur de ${max} caractères maximum.`);
-  if (value.length > max) throw new Error(`Le champ « ${field} » contient ${value.length} caractères ; ${max} maximum sont attendus. Raccourcissez la valeur.`);
+  if (typeof value !== 'string') throw new Error(`Field "${field}" must be a non-empty string of at most ${max} characters.`);
+  if (!value.trim()) throw new Error(`Field "${field}" cannot be empty. Provide a value of at most ${max} characters.`);
+  if (value.length > max) throw new Error(`Field "${field}" holds ${value.length} characters; ${max} are allowed. Shorten the value.`);
   return value.trim();
 };
 const numberValue = (value: unknown, field: string, min: number, max: number) => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Le champ « ${field} » doit être un nombre fini compris entre ${min} et ${max}.`);
-  if (value < min || value > max) throw new Error(`Le champ « ${field} » vaut ${value} ; une valeur comprise entre ${min} et ${max} est attendue.`);
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Field "${field}" must be a finite number between ${min} and ${max}.`);
+  if (value < min || value > max) throw new Error(`Field "${field}" is ${value}; a value between ${min} and ${max} is expected.`);
   return value;
 };
-// « Nord-ouest » decrit d'ou vient le vent ; le moteur veut le cap vers lequel
-// il pousse. Sans cette conversion, set_weather changeait l'etiquette sans
-// jamais devier le front.
+// "North-west" says where the wind comes from; the engine wants the bearing it
+// drives towards. Without this conversion set_weather changed the label and
+// never deflected the front.
 const normalizeCompass = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[\s_]+/g, '-').trim();
 const bearingFromProvenance = (provenance: string) => {
   const wanted = normalizeCompass(provenance);
   const point = COMPASS.find((entry) => normalizeCompass(entry.from) === wanted);
   return point ? point.bearing : null;
 };
-// Un agent ne peut rien faire d'un polygone de contour : il paie le contexte
-// sans pouvoir le dessiner. Les outils ne renvoient que les grandeurs lisibles.
+// An agent can do nothing with a perimeter polygon: it pays for the context
+// without being able to draw it. Tools return readable magnitudes only.
 const engineDigest = (engine: Record<string, unknown>) => {
   const suppression = engine.suppression as Suppression | undefined;
   return {
@@ -345,10 +344,10 @@ const engineDigest = (engine: Record<string, unknown>) => {
     calibrationStatus: 'not_performed',
   };
 };
-// Demonter une racine React depuis un nettoyage d'effet se fait pendant que
-// React rend encore : on repousse le demontage hors de la phase de rendu.
+// Unmounting a React root from effect cleanup happens while React is still
+// rendering, so the unmount is pushed out of the render phase.
 const unmountLater = (root: Root) => { queueMicrotask(() => root.unmount()); };
-const emptyPlan = (name = 'Plan de l’agent', intention = 'Renforcer la protection du village sous vent tournant.'): Plan => ({
+const emptyPlan = (name = 'Agent plan', intention = 'Reinforce village protection under a shifting wind.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
 const summarizePlan = (plan: Plan) => ({
@@ -363,22 +362,21 @@ const summarizePlan = (plan: Plan) => ({
   evacuationPopulation: plan.evacuations.reduce((sum, item) => sum + item.population, 0),
 });
 const scenarioPresets: { id: Scenario['preset']; name: string; kind: 'historical' | 'exercise' | 'free'; domain: Domain }[] = [
-  { id: 'landiras', name: 'Landiras · 12 juil. 2022', kind: 'historical', domain: LANDIRAS_DOMAIN },
-  { id: 'saumos', name: 'Saumos · 22 juil. 2026', kind: 'historical', domain: SAUMOS_DOMAIN },
-  { id: 'etoile', name: 'Marseille · Massif de l’Étoile', kind: 'exercise', domain: ETOILE_DOMAIN },
-  { id: 'bug', name: 'Bug Fire · 8 août 2026', kind: 'historical', domain: BUG_DOMAIN },
-  { id: 'blank', name: 'Simulation libre', kind: 'free', domain: LANDIRAS_DOMAIN },
+  { id: 'landiras', name: 'Landiras · 12 Jul 2022', kind: 'historical', domain: LANDIRAS_DOMAIN },
+  { id: 'saumos', name: 'Saumos · 22 Jul 2026', kind: 'historical', domain: SAUMOS_DOMAIN },
+  { id: 'etoile', name: 'Marseille · Étoile massif', kind: 'exercise', domain: ETOILE_DOMAIN },
+  { id: 'bug', name: 'Bug Fire · 8 August 2026', kind: 'historical', domain: BUG_DOMAIN },
+  { id: 'blank', name: 'Blank simulation', kind: 'free', domain: LANDIRAS_DOMAIN },
 ];
 
-const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 juil. 2022', 'landiras')];
+const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 Jul 2022', 'landiras')];
 
-export default function FireOpsClient({ userEmail }: { userEmail: string }) {
+export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
-  // Les marqueurs sont indexes par une cle qui decrit leur contenu : tant que la
-  // cle ne bouge pas, on reutilise le marqueur et sa racine React au lieu de les
-  // detruire. Sans cela chaque deplacement de carte les recreait tous, et ils
-  // clignotaient en pastilles blanches le temps du rendu React.
+  // Markers are keyed by what they contain: while the key holds, the marker and
+  // its React root are reused rather than destroyed. Without that, every map
+  // move recreated them all and they flashed as white pills during the render.
   const markersRef = useRef<globalThis.Map<string, { marker: Marker; root: Root }>>(new globalThis.Map());
   const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
@@ -425,13 +423,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const [stagedPlan, setStagedPlan] = useState<Plan | null>(null);
   const [committed, setCommitted] = useState<Deployment[]>(landirasUnits);
   const [committedFirebreaks, setCommittedFirebreaks] = useState<Firebreak[]>([]);
-  // La simulation ouverte au demarrage ne passe pas par la bascule : sans cela
-  // son domaine et sa geographie ne parvenaient jamais au moteur.
+  // The simulation open at startup never goes through the switcher, and without
+  // this its domain and geography never reached the engine.
   const [domain, setDomain] = useState<Domain>(initialScenarios[0].domain);
   const [terrain, setTerrain] = useState<Terrain | undefined>(initialScenarios[0].terrain);
   const [incident, setIncident] = useState<Incident>(initialScenarios[0].incident);
-  // Autonomie appliquee aux moyens prepositionnes : elle borne le debit
-  // qu'ils peuvent reellement tenir dans la duree.
+  // Sustainable duty applied to staged units: it bounds the flow they can
+  // actually hold over time.
   const [autonomy, setAutonomy] = useState(85);
   const [railOpen, setRailOpen] = useState(true);
   const [situationOpen, setSituationOpen] = useState(true);
@@ -478,8 +476,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual');
     setWeather((current) => ({ ...current, ...patch }));
   }, []);
-  // Les foyers secondaires sont lus par les outils WebMCP hors rendu React : on
-  // tient une ref a jour en meme temps que l'etat, comme pour le foyer principal.
+  // Secondary ignitions are read by the WebMCP tools outside React rendering, so
+  // a ref is kept in step with the state, as for the primary ignition.
   const applyExtraIgnitions = useCallback((next: Ignition[] | ((current: Ignition[]) => Ignition[])) => {
     const value = typeof next === 'function' ? next(extraIgnitionsRef.current) : next;
     extraIgnitionsRef.current = value;
@@ -538,14 +536,14 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     setReviewOpen(false);
     reviewResolver.current?.(true);
     reviewResolver.current = null;
-    notify('Plan appliqué. Toutes les actions restent annulables.');
+    notify('Plan applied. Every action remains reversible.');
     return true;
   }, [committed, committedFirebreaks, notify, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
     reviewResolver.current?.(false);
     reviewResolver.current = null;
-    notify('Plan rejeté. La situation active n’a pas été modifiée.');
+    notify('Plan rejected. The live situation was not changed.');
   }, [notify]);
   const revertPlan = useCallback(() => {
     let reverted = false;
@@ -557,7 +555,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       reverted = true;
       return stack.slice(0, -1);
     });
-    notify('Dernier plan annulé.');
+    notify('Last plan reverted.');
     return reverted;
   }, [notify]);
 
@@ -585,8 +583,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
           tileSize: 256, encoding: 'terrarium', maxzoom: 15,
         });
-        // Trois couches distinctes, du plus ancien au plus vif : la surface deja
-        // parcourue, la bande encore en flammes, puis la projection a +3 h.
+        // Three separate layers, oldest to liveliest: the area already burned,
+        // the band still in flame, then the +3 h projection.
         map.addSource('fire', { type: 'geojson', data: engineGeoRef.current.perimeter as Parameters<GeoJSONSource['setData']>[0] });
         map.addLayer({ id: 'fire-fill', type: 'fill', source: 'fire', paint: { 'fill-color': '#7A2E1E', 'fill-opacity': 0.42 } });
         map.addLayer({ id: 'fire-line', type: 'line', source: 'fire', paint: { 'line-color': '#FF6B45', 'line-width': 1.6, 'line-opacity': 0.9 } });
@@ -602,7 +600,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         map.addLayer({ id: 'operational-lines-burn', type: 'line', source: 'operational-lines', filter: ['==', ['get', 'tacticalBurn'], true], paint: { 'line-color': '#FF7A18', 'line-width': 3, 'line-opacity': ['case', ['get', 'staged'], 0.45, 0.95], 'line-dasharray': [2, 1] } });
         setMapReady(true);
       };
-      // Le feu doit s'afficher meme si le fond de carte ne repond pas.
+      // The fire must render even when the basemap does not answer.
       if (map.isStyleLoaded()) setupMapLayers(); else map.once('style.load', setupMapLayers);
       let anchor: { lng: number; lat: number } | null = null;
       const metresBetween = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) => {
@@ -627,10 +625,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         setDraftIgnition(null);
         if (ignitionRef.current) {
           applyExtraIgnitions((current) => [...current, placed].slice(0, MAX_EXTRA_IGNITIONS));
-          notify('Foyer secondaire allumé. La propagation repart de chaque foyer.');
+          notify('Secondary ignition set. Spread restarts from every ignition point.');
         } else {
           setIgnition(placed); ignitionRef.current = placed;
-          notify('Foyer principal placé.');
+          notify('Primary ignition placed.');
         }
         setPickingIgnition(false);
       });
@@ -658,13 +656,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         const hourly = (payload as { hourly?: { temperature_2m?: number[]; relative_humidity_2m?: number[]; wind_speed_10m?: number[]; wind_direction_10m?: number[] } }).hourly;
         const temperatures = hourly?.temperature_2m, humidities = hourly?.relative_humidity_2m;
         const winds = hourly?.wind_speed_10m, bearings = hourly?.wind_direction_10m;
-        if (!temperatures?.length || !humidities?.length || !winds?.length || !bearings?.length) throw new Error('Série horaire incomplète');
+        if (!temperatures?.length || !humidities?.length || !winds?.length || !bearings?.length) throw new Error('Incomplete hourly series');
         const offset = incident.startHour + incident.startMinute / 60;
         const series = temperatures.map((temperature, index) => ({
           hourFromStart: index - offset, temperature,
           humidity: humidities[index],
           windKph: winds[index],
-          // Open-Meteo donne la provenance meteorologique ; FireOps stocke le cap de propagation.
+          // Open-Meteo gives the meteorological origin; FireNow stores the spread bearing.
           windBearingDegrees: (bearings[index] + 180) % 360,
         }));
         if (controller.signal.aborted) return;
@@ -778,8 +776,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, [committedFirebreaks, mapReady, stagedPlan?.firebreaks]);
 
   useEffect(() => {
-    // Carte vierge : on vide la ref (lue par le handler 'load') sans toucher a l'etat,
-    // les valeurs affichees etant derivees plus bas.
+    // Blank map: clear the ref (read by the 'load' handler) without touching
+    // state, since the displayed values are derived further down.
     if (!ignition) { engineGeoRef.current = { perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON }; return; }
     runWorker({
       type: 'simulate', ignitionLngLat: ignition, extraIgnitions: additionalIgnitions, reset: true, targetMinutes: minutes,
@@ -791,7 +789,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     }).then(applyEngineResult).catch(() => undefined);
   }, [additionalIgnitions, applyEngineResult, committed, committedFirebreaks, minutes, runWorker, weather.windDirection, weather.windSpeed, weather.windBearing, weather.temperature, weather.humidity, weather.droughtIndex, weather.plumeDriven, domain, terrain, ignition, incident, landscapeAsset, weatherSeries]);
 
-  // Bascule de simulation : on fige la courante dans la liste, puis on charge la cible.
+  // Simulation switch: freeze the current one into the list, then load the target.
   const switchScenario = useCallback((id: string) => {
     setRunning(false);
     setScenarios((list) => list.map((item) => item.id === activeScenario
@@ -811,7 +809,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const createScenario = useCallback((preset: 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
     setRunning(false);
     const NAMES: Record<string, string> = {
-      saumos: 'Saumos · 22 juil. 2026', etoile: 'Marseille · Massif de l’Étoile', bug: 'Bug Fire · 8 août 2026',
+      saumos: 'Saumos · 22 Jul 2026', etoile: 'Marseille · Étoile massif', bug: 'Bug Fire · 8 Aug 2026',
     };
     const created = preset === 'blank'
       ? makeScenario('Simulation ' + String(scenarios.length + 1), 'blank')
@@ -827,15 +825,15 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
     const NOTES: Record<string, string> = {
-      saumos: 'Feu de Saumos, 22 juillet 2026 — 47 004 ha parcourus, 220 000 évacués.',
-      etoile: 'Massif de l’Étoile — exercice mistral, garrigue et pin d’Alep. Ce n’est pas un feu historique.',
-      bug: 'Bug Fire, 8 août 2026 — sagebrush et pinyon-genévrier, 93 733 acres parcourus.',
-      blank: 'Nouvelle simulation. Placez le point de départ du feu.',
+      saumos: 'Saumos fire, 22 July 2026 \u2014 47,004 ha burned, 220,000 people evacuated.',
+      etoile: 'Étoile massif \u2014 mistral exercise, garrigue and Aleppo pine. This is not a historical fire.',
+      bug: 'Bug Fire, 8 August 2026 \u2014 sagebrush and pinyon-juniper, 93,733 acres burned.',
+      blank: 'New simulation. Place the ignition point to start.',
     };
     notify(NOTES[preset]);
   }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
 
-  // La liste affichee derive de l'etat vivant pour la simulation ouverte.
+  // The displayed list derives from live state for the open simulation.
   const scenarioList = scenarios.map((item) => item.id === activeScenario
     ? { ...item, ignition, minutes, weather, committed, firebreaks: committedFirebreaks, burnedHa }
     : item);
@@ -850,8 +848,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       const renderMarkers = () => {
         if (cancelled || !mapRef.current) return;
         const zoom = map.getZoom();
-        // Au-dela du seuil chaque moyen s'affiche seul ; en dessous on regroupe
-        // par paves d'ecran, dont la taille suit le zoom.
+        // Above the threshold every unit shows on its own; below it they are
+        // clustered into screen tiles whose size follows the zoom.
         const bucketSize = zoom < 5 ? 118 : zoom < 8 ? 94 : 76;
         const buckets = new globalThis.Map<string, Deployment[]>();
         deployments.forEach((unit) => {
@@ -868,8 +866,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           if (group.length > 1) {
             const total = group.reduce((sum, unit) => sum + unit.count, 0);
             const staged = group.some((unit) => unit.staged);
-            // La cle porte tout ce qui est dessine : un regroupement de meme
-            // composition garde son marqueur au lieu d'etre redessine.
+            // The key carries everything drawn: a cluster of identical make-up
+            // keeps its marker instead of being redrawn.
             const key = 'c|' + group.map((unit) => unit.id).sort().join(',') + '|' + total + '|' + staged;
             wanted.add(key);
             const existing = markersRef.current.get(key);
@@ -883,7 +881,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             root.render(<><strong>{total}</strong><small>{group.length} groupes</small></>);
             element.addEventListener('click', (event) => {
               event.stopPropagation();
-              // Le zoom est relu au clic : le marqueur survit aux deplacements.
+              // Zoom is re-read on click: the marker outlives map moves.
               map.easeTo({ center, zoom: Math.min(11.2, map.getZoom() + 2.6), duration: 520 });
             });
             markersRef.current.set(key, { marker: new maplibre.Marker({ element }).setLngLat(center).addTo(map), root });
@@ -900,7 +898,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           }
           const catalogueUnit = units.find((item) => item.code === unit.type);
           const UnitIcon = UNIT_ICONS[unit.type] || Truck;
-          const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.famille) : 'terrestre';
+          const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.family) : 'terrestre';
           const element = document.createElement('button');
           element.type = 'button';
           element.className = 'unit-marker fam-' + familyClass + (unit.staged ? ' ghost' : '');
@@ -911,27 +909,27 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           const marker = new maplibre.Marker({ element, draggable: zoom >= UNIT_CLUSTER_ZOOM }).setLngLat([unit.lng, unit.lat]).addTo(map);
           marker.on('dragend', () => {
             const { lng, lat } = marker.getLngLat();
-            // Deplacer un moyen deja engage passe par le plan provisoire : la regle
-            // "une seule validation par lot" vaut aussi pour les gestes manuels.
+            // Moving an already-committed unit goes through the draft plan: the
+            // "one approval per batch" rule covers manual gestures too.
             if (unit.staged) {
               setStagedPlan((plan) => plan
                 ? { ...plan, deployments: plan.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
                 : plan);
             } else {
               setStagedPlan((plan) => {
-                const base = plan || emptyPlan('Redéploiement manuel', 'Repositionner un moyen déjà engagé.');
+                const base = plan || emptyPlan('Manual redeployment', 'Move a unit that is already committed.');
                 const already = base.deployments.some((item) => item.id === unit.id);
                 return already
                   ? { ...base, deployments: base.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
                   : { ...base, deployments: [...base.deployments, { ...unit, lng, lat, staged: true }], movedFrom: [...(base.movedFrom || []), unit.id] };
               });
-              notify(unit.type + ' repositionné dans le plan provisoire. Validez pour engager.');
+              notify(unit.type + ' moved inside the draft plan. Commit to make it real.');
             }
           });
           markersRef.current.set(key, { marker, root });
         });
-        // Ne restent que les marqueurs encore voulus : les autres partent avec
-        // leur racine React, sans toucher a ceux qui n'ont pas change.
+        // Only wanted markers remain: the others leave with their React root,
+        // without disturbing the ones that did not change.
         markersRef.current.forEach((entry, key) => {
           if (wanted.has(key)) return;
           entry.marker.remove();
@@ -946,8 +944,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     return () => { cancelled = true; dispose?.(); };
   }, [committed, mapReady, notify, stagedPlan?.deployments, viewMode]);
 
-  // Les marqueurs survivent aux rendus : seule la destruction du composant les
-  // retire pour de bon.
+  // Markers outlive renders: only tearing the component down removes them for
+  // good.
   useEffect(() => {
     const markers = markersRef.current;
     return () => {
@@ -957,9 +955,9 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   }, []);
 
   const comparePlansWithWorker = useCallback(async (names: string[], horizonHours: number) => {
-    if (names.length !== 3) throw new Error('compare_plans exige exactement trois stratégies.');
+    if (names.length !== 3) throw new Error('compare_plans requires exactly three strategies.');
     const placementSets: Deployment[][] = [
-      [{ id: nextId(), type: 'CCF', count: 12, sector: 'Sud-est', mission: 'Intercepter la tête du feu', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09, staged: true }, { id: nextId(), type: 'DOZ', count: 3, sector: 'Est', mission: 'Ligne d’appui', lng: -0.438, lat: 44.586, radiusM: 700, capacity: 0.07, staged: true }],
+      [{ id: nextId(), type: 'CCF', count: 12, sector: 'South-east', mission: 'Intercept the fire head', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09, staged: true }, { id: nextId(), type: 'DOZ', count: 3, sector: 'East', mission: 'Control line', lng: -0.438, lat: 44.586, radiusM: 700, capacity: 0.07, staged: true }],
       [{ id: nextId(), type: 'CCF', count: 6, sector: 'Nord', mission: 'Tenir le flanc nord', lng: -0.4541, lat: 44.597, radiusM: 900, capacity: 0.09, staged: true }, { id: nextId(), type: 'CCF', count: 6, sector: 'Sud', mission: 'Tenir le flanc sud', lng: -0.449, lat: 44.584, radiusM: 900, capacity: 0.09, staged: true }],
       [],
     ];
@@ -980,7 +978,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       burnedHa: Number(engineRuns[index].totalBurnedHa),
       rateOfSpread: Number(engineRuns[index].rateOfSpreadMetersPerMinute),
     })).sort((a, b) => a.burnedHa - b.burnedHa);
-    setStagedPlan((plan) => ({ ...(plan || emptyPlan(results[0].name, 'Protéger le village après bascule du vent.')), comparison: results }));
+    setStagedPlan((plan) => ({ ...(plan || emptyPlan(results[0].name, 'Protect the village after the wind shift.')), comparison: results }));
     setComparisonOpen(true);
     return { horizonHours, strategies: results, recommended: results[0].name, model: 'Rothermel 1972 + Alexander 1985', workerCalls: engineRuns.length };
   }, [runWorker]);
@@ -1043,13 +1041,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     const mutating = { readOnlyHint: false };
     const requireStagedPlan = () => {
       const plan = stateRef.current.stagedPlan;
-      if (!plan) throw new Error('Aucun plan provisoire n’est ouvert. Appelez d’abord propose_plan, puis recommencez cette action.');
+      if (!plan) throw new Error('No draft plan is open. Call propose_plan first, then retry this action.');
       return plan;
     };
     const defs: ToolDefinition[] = [
       {
-        name: 'get_situation', title: 'Lire la situation opérationnelle',
-        description: 'Retourne un état JSON compact du feu, de la météo, des moyens et zones menacées. Utiliser avant toute recommandation.',
+        name: 'get_situation', title: 'Read the operational situation',
+        description: 'Returns a compact JSON state of the fire, the weather, the committed units and the exposed areas. Call this before making any recommendation.',
         inputSchema: schema({}), annotations: readOnly,
         execute: () => {
           const s = stateRef.current;
@@ -1058,13 +1056,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'list_units', title: 'Lister les moyens',
-        description: 'Liste les moyens disponibles et engagés avec position, statut, capacité et autonomie.',
+        name: 'list_units', title: 'List the units',
+        description: 'Lists available and committed units with position, status, capacity and sustainable duty.',
         inputSchema: schema({}), annotations: readOnly, execute: () => ({ available: units, engaged: stateRef.current.committed }),
       },
       {
-        name: 'get_fire_forecast', title: 'Projeter le front',
-        description: 'Projette le feu à T+1h, T+3h et T+6h sous la météo courante.',
+        name: 'get_fire_forecast', title: 'Project the fire front',
+        description: 'Projects the fire at T+1h, T+3h and T+6h under the current weather.',
         inputSchema: schema({}), annotations: readOnly,
         execute: async () => {
           const projections = await Promise.all([1, 3, 6].map(async (hours) => {
@@ -1075,16 +1073,16 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'get_weather', title: 'Lire la météo', description: 'Retourne vent, rafales, température, hygrométrie et sécheresse.',
+        name: 'get_weather', title: 'Read the weather', description: 'Returns wind, gusts, temperature, relative humidity and drought index.',
         inputSchema: schema({}), annotations: readOnly, execute: () => stateRef.current.weather,
       },
       {
-        name: 'query_terrain', title: 'Interroger le terrain', description: 'Analyse pente, exposition, combustible et accès routiers d’un secteur.',
+        name: 'query_terrain', title: 'Query the terrain', description: 'Analyses slope, aspect, fuel model and road access for a sector.',
         inputSchema: schema({ sector: { type: 'string', maxLength: 80 } }, ['sector']), annotations: readOnly,
         execute: (input) => ({ sector: textValue(input.sector, 'sector', 80), slopePercent: 7.4, aspect: 'sud-est', fuel: 'Pin maritime · Scott & Burgan TU5', roadAccess: 'D115 et piste P-17', dataSource: 'scenario-mask' }),
       },
       {
-        name: 'list_scenarios', title: 'Lister les scénarios', description: 'Liste les scénarios disponibles et leur statut de calibration.',
+        name: 'list_scenarios', title: 'List the scenarios', description: 'Lists the available scenarios and their calibration status.',
         inputSchema: schema({}), annotations: readOnly,
         execute: () => {
           const s = stateRef.current;
@@ -1105,7 +1103,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'propose_plan', title: 'Ouvrir un plan provisoire',
-        description: 'Ouvre une couche de proposition fantôme. Ne modifie jamais la simulation active.',
+        description: 'Opens a ghost proposal layer. Never modifies the live simulation.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']), annotations: mutating,
         execute: (input) => {
           const plan = makePlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300));
@@ -1113,8 +1111,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_deploy_units', title: 'Prépositionner des moyens',
-        description: 'Place jusqu’à 50 moyens dans le plan provisoire. N’engage aucun moyen.',
+        name: 'stage_deploy_units', title: 'Stage units',
+        description: 'Places up to 50 units in the draft plan. Commits nothing.',
         inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
           type: { type: 'string', enum: ['CCF', 'FPT', 'HBE', 'DOZ'] }, count: { type: 'integer', minimum: 1, maximum: 50 },
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
@@ -1123,17 +1121,17 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM', 'capacity']) } }, ['units']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
-          if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Le champ « units » doit être un tableau contenant 1 à 50 groupes de moyens.');
+          if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Field "units" must be an array of 1 to 50 unit groups.');
           const deployments = input.units.map((raw, index) => {
-            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`L’élément units[${index}] doit être un objet décrivant un groupe de moyens.`);
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Item units[${index}] must be an object describing a unit group.`);
             const item = raw as Record<string, unknown>;
             const type = textValue(item.type, 'type', 3);
-            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error(`Le type « ${type} » n’est pas pris en charge ici. Utilisez CCF, FPT, HBE ou DOZ.`);
+            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error(`Unit type "${type}" is not supported here. Use CCF, FPT, HBE or DOZ.`);
             return { type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: numberValue(item.capacity, 'capacity', 0, 0.35), id: nextId(), staged: true };
           });
           const requestedUnits = deployments.reduce((sum, item) => sum + item.count, 0);
           const resultingUnits = summarizePlan(plan).totalUnits + requestedUnits;
-          if (resultingUnits > 50) throw new Error(`Ce lot porterait le plan à ${resultingUnits} moyens ; 50 maximum sont autorisés. Réduisez les valeurs « count » de ${resultingUnits - 50} au moins.`);
+          if (resultingUnits > 50) throw new Error(`This batch would take the plan to ${resultingUnits} units; 50 is the maximum. Reduce the "count" values by at least ${resultingUnits - 50}.`);
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
           setStagedPlan(nextPlan);
           return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
@@ -1151,13 +1149,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_firebreak', title: 'Tracer une ligne d’appui', description: 'Ajoute une polyligne géographique provisoire. Après validation, elle devient une coupure persistante du moteur.',
+        name: 'stage_firebreak', title: 'Draw a control line', description: 'Adds a draft geographic polyline. Once committed it becomes a persistent break in the engine.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
-          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Le champ « coordinates » doit contenir entre 2 et 64 points [longitude, latitude].');
+          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Field "coordinates" must hold between 2 and 64 [longitude, latitude] points.');
           const coordinates = input.coordinates.map((raw, index) => {
-            if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Le point coordinates[${index}] doit être exactement [longitude, latitude].`);
+            if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Point coordinates[${index}] must be exactly [longitude, latitude].`);
             return [numberValue(raw[0], 'longitude', -180, 180), numberValue(raw[1], 'latitude', -90, 90)] as [number, number];
           });
           const lengthKm = coordinates.slice(1).reduce((sum, point, index) => {
@@ -1172,13 +1170,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_tactical_burn', title: 'Préparer un brûlage tactique', description: 'Trace une ligne tenue et prépare l’allumage volontaire côté feu. Aucun allumage avant validation humaine.',
+        name: 'stage_tactical_burn', title: 'Prepare a tactical burn', description: 'Draws a held line and prepares a deliberate ignition on the fire side. Nothing is lit before human approval.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
-          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Le champ « coordinates » doit contenir entre 2 et 64 points [longitude, latitude].');
+          if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Field "coordinates" must hold between 2 and 64 [longitude, latitude] points.');
           const coordinates = input.coordinates.map((raw, index) => {
-            if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Le point coordinates[${index}] doit être exactement [longitude, latitude].`);
+            if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Point coordinates[${index}] must be exactly [longitude, latitude].`);
             return [numberValue(raw[0], 'longitude', -180, 180), numberValue(raw[1], 'latitude', -90, 90)] as [number, number];
           });
           const lengthKm = coordinates.slice(1).reduce((sum, point, index) => {
@@ -1193,8 +1191,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_evacuation_zone', title: 'Préparer une zone d’évacuation',
-        description: 'Délimite une zone provisoire. Aucun ordre n’est transmis.',
+        name: 'stage_evacuation_zone', title: 'Prepare an evacuation zone',
+        description: 'Outlines a draft zone. No order is ever transmitted.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
@@ -1205,11 +1203,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'commit_plan', title: 'Soumettre le plan à validation',
+        name: 'commit_plan', title: 'Submit the plan for approval',
         description: 'Ouvre la revue et demande une unique validation humaine pour tout le plan.',
         inputSchema: schema({}), annotations: { readOnlyHint: false },
         execute: async (_input, client) => {
-          if (!stateRef.current.stagedPlan) throw new Error('Aucun plan provisoire n’est ouvert. Appelez propose_plan et ajoutez les actions à examiner avant commit_plan.');
+          if (!stateRef.current.stagedPlan) throw new Error('No draft plan is open. Call propose_plan and add the actions to review before commit_plan.');
           const interaction = async () => new Promise<boolean>((resolve) => {
             reviewResolver.current = resolve;
             setReviewOpen(true);
@@ -1219,11 +1217,11 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'revert_plan', title: 'Annuler le dernier plan', description: 'Annule le dernier plan appliqué.',
+        name: 'revert_plan', title: 'Revert the last plan', description: 'Undoes the last applied plan.',
         inputSchema: schema({}), annotations: mutating, execute: () => ({ reverted: revertPlan() }),
       },
       {
-        name: 'run_simulation', title: 'Avancer la simulation', description: 'Avance le moteur local de 5 à 360 minutes.',
+        name: 'run_simulation', title: 'Advance the simulation', description: 'Advances the local engine by 5 to 360 minutes.',
         inputSchema: schema({ minutes: { type: 'integer', minimum: 5, maximum: 360 } }, ['minutes']), annotations: mutating,
         execute: async (input) => {
           const delta = numberValue(input.minutes, 'minutes', 5, 360);
@@ -1243,7 +1241,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'set_time', title: 'Positionner l’heure', description: 'Positionne le scénario entre H+0 et H+24.',
+        name: 'set_time', title: 'Set the clock', description: 'Moves the scenario between H+0 and H+24.',
         inputSchema: schema({ minutesFromIgnition: { type: 'integer', minimum: 0, maximum: 1440 } }, ['minutesFromIgnition']), annotations: mutating,
         execute: async (input) => {
           const value = numberValue(input.minutesFromIgnition, 'minutesFromIgnition', 0, 1440);
@@ -1252,8 +1250,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'set_weather', title: 'Modifier la météo',
-        description: 'Modifie la météo de la simulation. windDirection est la provenance du vent (Nord, Nord-est, Est, Sud-est, Sud, Sud-ouest, Ouest, Nord-ouest) ; le cap de propagation en est déduit.',
+        name: 'set_weather', title: 'Change the weather',
+        description: 'Changes the simulation weather. windDirection is where the wind blows FROM (North, North-east, East, South-east, South, South-west, West, North-west); the spread bearing is derived from it.',
         inputSchema: schema({
           windSpeed: { type: 'number', minimum: 0, maximum: 150 },
           windDirection: { type: 'string', enum: COMPASS.map((point) => point.from), maxLength: 40 },
@@ -1264,7 +1262,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         execute: (input) => {
           const windDirection = textValue(input.windDirection, 'windDirection', 40);
           const windBearing = bearingFromProvenance(windDirection);
-          if (windBearing === null) throw new Error(`Provenance de vent inconnue : « ${windDirection} ». Valeurs acceptées : ${COMPASS.map((point) => point.from).join(', ')}.`);
+          if (windBearing === null) throw new Error(`Unknown wind origin "${windDirection}". Accepted values: ${COMPASS.map((point) => point.from).join(', ')}.`);
           const current = stateRef.current.weather;
           const next = {
             ...current,
@@ -1279,8 +1277,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'ignite', title: 'Placer le foyer d’exercice',
-        description: 'Deplace le point d’allumage du scenario d’entrainement et relance la simulation depuis ce point.',
+        name: 'ignite', title: 'Place the exercise ignition',
+        description: 'Moves the ignition point of the training scenario and restarts the simulation from there.',
         inputSchema: schema({ lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 }, sector: { type: 'string', maxLength: 80 } }, ['lng','lat']), annotations: mutating,
         execute: async (input) => {
           const lng = numberValue(input.lng, 'lng', -180, 180);
@@ -1303,22 +1301,22 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'compare_plans', title: 'Comparer des stratégies',
-        description: 'Simule 2 ou 3 stratégies et retourne un comparatif chiffré à T+6h.',
+        name: 'compare_plans', title: 'Compare strategies',
+        description: 'Simulates 2 or 3 strategies and returns a quantified comparison at T+6h.',
         inputSchema: schema({ planNames: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 80 } }, horizonHours: { type: 'integer', enum: [1,3,6] } }, ['planNames']), annotations: readOnly,
         execute: async (input) => {
-          if (!Array.isArray(input.planNames) || input.planNames.length !== 3) throw new Error('Le champ « planNames » doit contenir exactement 3 noms de stratégies à comparer.');
+          if (!Array.isArray(input.planNames) || input.planNames.length !== 3) throw new Error('Field "planNames" must hold exactly 3 strategy names to compare.');
           const names = input.planNames.map((name) => textValue(name, 'planName', 80));
           return comparePlansWithWorker(names, Number(input.horizonHours || 6));
         },
       },
       {
-        name: 'focus_region', title: 'Centrer une région', description: 'Centre la carte sur l’un des cinq scénarios disponibles sans changer la simulation active.',
+        name: 'focus_region', title: 'Focus a region', description: 'Centres the map on one of the five available scenarios without changing the live simulation.',
         inputSchema: schema({ scenarioId: { type: 'string', enum: ['landiras','saumos','etoile','bug','blank'] } }, ['scenarioId']), annotations: mutating,
         execute: (input) => {
           const scenarioId = textValue(input.scenarioId, 'scenarioId', 20) as Scenario['preset'];
           const preset = scenarioPresets.find((item) => item.id === scenarioId);
-          if (!preset) throw new Error(`Le scénario « ${scenarioId} » est inconnu. Utilisez list_scenarios puis fournissez l’un des identifiants retournés.`);
+          if (!preset) throw new Error(`Scenario "${scenarioId}" is unknown. Call list_scenarios and pass one of the ids it returns.`);
           mapRef.current?.flyTo({ center: [preset.domain.lng, preset.domain.lat], zoom: preset.domain.boxMetres > 35000 ? 10.1 : 11.2, duration: 1000 });
           return { focused: true, scenarioId: preset.id, name: preset.name, center: { lng: preset.domain.lng, lat: preset.domain.lat }, activeScenarioChanged: false };
         },
@@ -1326,7 +1324,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       {
         name: 'set_view_mode', title: 'Changer le mode de carte', description: 'Bascule entre 2D, relief 3D et globe.',
         inputSchema: schema({ mode: { type: 'string', enum: ['2D','3D','globe'] } }, ['mode']), annotations: mutating,
-        execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error(`Le mode « ${mode} » est inconnu. Utilisez 2D, 3D ou globe.`); changeView(mode); return { mode }; },
+        execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error(`Map mode "${mode}" is unknown. Use 2D, 3D or globe.`); changeView(mode); return { mode }; },
       },
     ];
     const definitionsWithJournal: ToolDefinition[] = defs.map((definition) => ({
@@ -1338,7 +1336,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
           return result;
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Erreur inconnue';
-          logTool(definition.name, `Échec : ${message}`, 'error');
+          logTool(definition.name, `Failed: ${message}`, 'error');
           throw error;
         }
       },
@@ -1349,8 +1347,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
       registered.push(definition.name);
     })).then(() => setToolStatus('available')).catch(() => setToolStatus('unavailable'));
     return () => {
-      // `signal` est le retrait prevu par la specification ; `unregisterTool`
-      // ne sert que de repli pour les implementations qui ne l'honorent pas.
+      // `signal` is the retirement the specification defines; `unregisterTool`
+      // is only a fallback for implementations that ignore it.
       teardown.abort();
       registered.forEach((name) => { try { void mc.unregisterTool?.(name); } catch { /* teardown */ } });
       reviewResolver.current?.(false);
@@ -1360,13 +1358,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const type = event.dataTransfer.getData('fireops/unit');
+    const type = event.dataTransfer.getData('firenow/unit');
     if (!type) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const coordinate = mapRef.current?.unproject([event.clientX - rect.left, event.clientY - rect.top]);
     if (!coordinate) return;
-    stageUnit({ type, count: 1, sector: 'Point carte', mission: 'Mission à préciser', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: type === 'CCF' ? 0.09 : type === 'HBE' ? 0.08 : 0.06 });
-    notify(type + ' ajouté au plan provisoire. Aucune ressource engagée.');
+    stageUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: type === 'CCF' ? 0.09 : type === 'HBE' ? 0.08 : 0.06 });
+    notify(type + ' added to the draft plan. No resource committed.');
   };
   const signOut = async () => {
     const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin', cache: 'no-store' });
@@ -1378,8 +1376,10 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     });
     window.location.reload();
   };
-  // Tutoriel de premiere ouverture. Les panneaux replies sont deplies avant la
-  // mesure, sinon la lumiere tomberait sur un element de largeur nulle.
+  // The tutorial belongs to a new account, not to a first visit: login-client
+  // leaves a flag behind when an operator registers, and the console spends it
+  // once. Collapsed panels are unfolded before measuring, or the light would
+  // land on an element of zero width.
   const openPanel = useCallback((panel: 'resources' | 'situation') => {
     if (isNarrowViewport) { setMobilePanel(panel); return; }
     if (panel === 'resources') setRailOpen(true); else setSituationOpen(true);
@@ -1387,46 +1387,50 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const tourSteps: TourStep[] = [
     {
       id: 'scenario', target: '[data-tour="scenario"]',
-      title: 'Choisissez la simulation',
-      body: 'Chaque simulation garde son foyer, sa météo et ses moyens. Landiras et Saumos rejouent des feux de Gironde, l’Étoile est un exercice, et la simulation vierge part d’une carte nue.',
+      title: 'Pick the simulation',
+      body: 'Every simulation keeps its own ignition, weather and units. Landiras and Saumos replay fires from the Gironde, Étoile is an exercise, and the blank simulation starts from an empty map.',
     },
     {
       id: 'moyens', target: '#resources-panel',
-      title: 'Engagez le parc',
-      body: 'Treize types d’engins, avec cuve et débit constructeur. Cliquez pour prépositionner un moyen, ou glissez-le sur la carte. Rien n’est engagé tant que vous n’avez pas validé le plan.',
+      title: 'Commit the fleet',
+      body: 'Thirteen unit types, with manufacturer tank and pump figures. Click to stage a unit, or drag it onto the map. Nothing is committed until you approve the plan.',
       before: () => openPanel('resources'),
     },
     {
       id: 'situation', target: '#situation-panel',
-      title: 'Lisez le feu',
-      body: 'Surface parcourue, vitesse de tête, débit nécessaire face au débit déployé, habitants menacés. Ouvrez la carte météo pour changer le vent : le moteur recalcule aussitôt.',
+      title: 'Read the fire',
+      body: 'Area burned, head rate of spread, required flow against deployed flow, residents at risk. Open the weather card to turn the wind: the engine recomputes immediately.',
       before: () => openPanel('situation'),
     },
     {
       id: 'carte', target: '[data-tour="carte"]',
-      title: 'Placez le foyer, changez de vue',
-      body: '« Foyer » ajoute un départ de feu — maintenez et glissez pour l’agrandir. 2D, 3D et globe changent la projection sans rien perdre de la simulation en cours.',
+      title: 'Place the ignition, change the view',
+      body: '"Ignition" adds a start point — hold and drag to widen it. 2D, 3D and globe change the projection without losing anything of the running simulation.',
     },
     {
       id: 'chronologie', target: '[data-tour="chronologie"]',
-      title: 'Faites avancer l’heure',
-      body: 'Le bouton lance ou met en pause la simulation. Le curseur la déplace de H+0 à H+12, et le multiplicateur règle la vitesse du temps simulé.',
+      title: 'Move the clock',
+      body: 'The button runs or pauses the simulation. The slider moves it from H+0 to H+12, and the multiplier sets how fast simulated time passes.',
     },
     {
       id: 'webmcp', target: '[data-tour="webmcp"]',
-      title: 'Laissez l’agent travailler',
-      body: 'Ce bouton indique les 21 outils que la page expose à un agent. Ouvrez-le pour voir le catalogue, puis demandez à votre agent d’analyser la situation : il prépare un plan complet, et vous seul l’engagez.',
+      title: 'Let the agent work',
+      body: 'This button reports the 21 tools the page exposes to an agent. Open it for the catalogue, then ask your agent to analyse the situation: it drafts a complete plan, and only you commit it.',
     },
   ];
   const finishTour = useCallback((completed: boolean) => {
     setTourOpen(false);
-    try { window.localStorage.setItem(TOUR_KEY, 'done'); } catch { /* stockage indisponible */ }
-    if (completed) notify('Tutoriel terminé. Vous pouvez le relancer depuis l’aide.');
+    if (completed) notify('Tutorial finished. You can replay it from the help menu.');
   }, [notify]);
   useEffect(() => {
-    let seen = true;
-    try { seen = window.localStorage.getItem(TOUR_KEY) === 'done'; } catch { /* stockage indisponible */ }
-    if (seen) return;
+    let pending = false;
+    try {
+      pending = window.localStorage.getItem(TOUR_PENDING_KEY) === '1';
+      // Spent on sight: a reload during the tour should not replay it, and the
+      // operator can always restart it from the help menu.
+      if (pending) window.localStorage.removeItem(TOUR_PENDING_KEY);
+    } catch { /* storage unavailable */ }
+    if (!pending) return;
     const timer = window.setTimeout(() => setTourOpen(true), 1200);
     return () => window.clearTimeout(timer);
   }, []);
@@ -1437,8 +1441,8 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
   const shownBurnedHa = ignition ? burnedHa : null;
   const shownFrontRate = ignition ? frontRate : null;
   const shownSuppression = ignition ? suppression : null;
-  const STATUS_LABEL: Record<string, string> = { eteint: 'Feu éteint', maitrise: 'Maîtrisé', contenu: 'Contenu', libre: 'Libre de progresser' };
-  const ATTACK_LABEL: Record<string, string> = { directe: 'Attaque directe possible', 'moyens-lourds': 'Moyens lourds requis', indirect: 'Attaque directe inopérante' };
+  const STATUS_LABEL: Record<string, string> = { eteint: 'Fire out', maitrise: 'Controlled', contenu: 'Contained', libre: 'Spreading freely' };
+  const ATTACK_LABEL: Record<string, string> = { directe: 'Direct attack viable', 'moyens-lourds': 'Heavy units required', indirect: 'Direct attack ineffective' };
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
   const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
   const stagedUnitSummary = Object.entries((stagedPlan?.deployments || []).reduce<Record<string, number>>((summary, unit) => {
@@ -1452,7 +1456,7 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
     ? Math.max(4, Math.min(100, selectedPlanResult.burnedHa / noActionResult.burnedHa * 100))
     : 100;
   const timeLabel = 'H+' + String(Math.floor(minutes / 60)).padStart(2,'0') + ':' + String(minutes % 60).padStart(2,'0');
-  // Horloge de l incident : heure de depart reelle du scenario + temps simule.
+  // Incident clock: the scenario's real start time plus simulated time.
   const clockAt = (offset: number) => {
     const total = incident.startHour * 60 + incident.startMinute + offset;
     return String(Math.floor(total / 60) % 24).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
@@ -1464,38 +1468,38 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
   return (
     <main className="ops-shell">
-      <div className={'map-stage view-' + viewMode.toLowerCase() + (pickingIgnition ? ' picking' : '')} aria-label="Carte tactique du feu de Landiras" onDragOver={(event) => event.preventDefault()} onDrop={onMapDrop}>
+      <div className={'map-stage view-' + viewMode.toLowerCase() + (pickingIgnition ? ' picking' : '')} aria-label="Tactical fire map" onDragOver={(event) => event.preventDefault()} onDrop={onMapDrop}>
         <div ref={mapNode} className="maplibre-host" /><div className="map-shade" />
         {stagedPlan?.firebreaks.map((line) => <div key={line.name} className="ghost-firebreak"><span>{line.name} · {line.lengthKm} km</span></div>)}
-        {stagedPlan?.evacuations.map((zone) => <div key={zone.name} className="ghost-evac"><span>ZONE PROPOSÉE · {zone.name}</span></div>)}
+        {stagedPlan?.evacuations.map((zone) => <div key={zone.name} className="ghost-evac"><span>PROPOSED ZONE · {zone.name}</span></div>)}
       </div>
 
       {!ignition && !pickingIgnition && <div className="blank-cta glass-panel">
         <span className="blank-icon"><Flame size={20} /></span>
-        <strong>Carte vierge</strong>
-        <p>Aucun foyer n’est placé. Choisissez un point de départ pour lancer la simulation.</p>
-        <button className="primary-button" type="button" onClick={() => setPickingIgnition(true)}><Flame size={14} />Placer le foyer</button>
+        <strong>Blank map</strong>
+        <p>No ignition placed. Pick a start point to run the simulation.</p>
+        <button className="primary-button" type="button" onClick={() => setPickingIgnition(true)}><Flame size={14} />Place the ignition</button>
       </div>}
 
-      {pickingIgnition && <div className="pick-hint glass-panel"><Flame size={13} /><span>Cliquez pour ajouter un foyer — <b>maintenez et glissez</b> pour l’agrandir · {ignition ? 1 + additionalIgnitions.length : 0} actif{(ignition ? 1 + additionalIgnitions.length : 0) > 1 ? 's' : ''}{draftIgnition && draftIgnition.radiusM > 0 ? ' · rayon ' + Math.round(draftIgnition.radiusM) + ' m' : ''}</span><button type="button" onClick={() => { setPickingIgnition(false); setDraftIgnition(null); }}>Annuler</button></div>}
+      {pickingIgnition && <div className="pick-hint glass-panel"><Flame size={13} /><span>Click to add an ignition — <b>hold and drag</b> to widen it · {ignition ? 1 + additionalIgnitions.length : 0} active{draftIgnition && draftIgnition.radiusM > 0 ? ' · radius ' + Math.round(draftIgnition.radiusM) + ' m' : ''}</span><button type="button" onClick={() => { setPickingIgnition(false); setDraftIgnition(null); }}>Cancel</button></div>}
 
       <header className="topbar glass-panel">
-        <div className="brand-block"><span className="brand-mark"><Flame size={18} /></span><div><strong>FireOps</strong><span>Centre de commandement</span></div></div>
+        <div className="brand-block"><span className="brand-mark"><img src="/brand/mark.png" width={1024} height={1024} alt="" aria-hidden="true" /></span><div><strong>FireNow</strong><span>Command console</span></div></div>
         <div className="scenario-picker" data-tour="scenario">
           <button className={'scenario-title' + (scenarioOpen ? ' open' : '')} type="button" onClick={() => setScenarioOpen((value) => !value)} aria-expanded={scenarioOpen}>
-            <span>{activeIsBlank ? 'SIMULATION LIBRE' : incident.ref}</span>
+            <span>{activeIsBlank ? 'FREE SIMULATION' : incident.ref}</span>
             <strong>{activeName}<ChevronDown size={13} /></strong>
           </button>
           {scenarioOpen && <>
             <div className="popover-shield" role="presentation" onMouseDown={() => setScenarioOpen(false)} />
             <div className="popover scenario-pop glass-panel">
-              <div className="popover-head"><span>SIMULATIONS</span><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />Nouvelle</button></div>
+              <div className="popover-head"><span>SIMULATIONS</span><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />New</button></div>
               <div className="preset-row">
-                <span>RECONSTITUTIONS</span>
+                <span>REPLAYS</span>
                 <div>
-                  <button type="button" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Gironde — feu de Saumos, 22 juillet 2026">Gironde</button>
-                  <button type="button" onClick={() => { createScenario('etoile'); setScenarioOpen(false); }} title="Provence — massif de l’Étoile, exercice mistral">Marseille</button>
-                  <button type="button" onClick={() => { createScenario('bug'); setScenarioOpen(false); }} title="Californie — Bug Fire, 8 août 2026">Californie</button>
+                  <button type="button" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Gironde — Saumos fire, 22 July 2026">Gironde</button>
+                  <button type="button" onClick={() => { createScenario('etoile'); setScenarioOpen(false); }} title="Provence — Étoile massif, mistral exercise">Marseille</button>
+                  <button type="button" onClick={() => { createScenario('bug'); setScenarioOpen(false); }} title="California — Bug Fire, 8 August 2026">California</button>
                 </div>
               </div>
               <div className="scenario-list">{scenarioList.map((item) => {
@@ -1503,34 +1507,34 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
                 const state = !item.ignition ? 'vierge' : (isActive && running) ? 'active' : 'pause';
                 return <button key={item.id} type="button" className={'scenario-row' + (isActive ? ' current' : '')} onClick={() => { if (!isActive) switchScenario(item.id); setScenarioOpen(false); }}>
                   <span className={'sim-dot ' + state} />
-                  <span className="scenario-meta"><strong>{item.name}</strong><small>{!item.ignition ? 'Aucun foyer placé' : (item.burnedHa === null ? '—' : item.burnedHa.toLocaleString('fr-FR') + ' ha') + ' · H+' + String(Math.floor(item.minutes / 60)).padStart(2,'0') + ':' + String(item.minutes % 60).padStart(2,'0')}</small></span>
-                  <span className={'sim-state ' + state}>{state === 'active' ? 'En cours' : state === 'pause' ? 'En pause' : 'Vierge'}</span>
+                  <span className="scenario-meta"><strong>{item.name}</strong><small>{!item.ignition ? 'No ignition placed' : (item.burnedHa === null ? '—' : item.burnedHa.toLocaleString('en-US') + ' ha') + ' · H+' + String(Math.floor(item.minutes / 60)).padStart(2,'0') + ':' + String(item.minutes % 60).padStart(2,'0')}</small></span>
+                  <span className={'sim-state ' + state}>{state === 'active' ? 'Running' : state === 'pause' ? 'Paused' : 'Blank'}</span>
                 </button>;
               })}</div>
-              <p className="popover-foot">Changer de simulation met la précédente en pause. Chaque simulation garde son foyer, sa météo et ses moyens.</p>
+              <p className="popover-foot">Switching simulations pauses the previous one. Each keeps its own ignition, weather and units.</p>
             </div>
           </>}
         </div>
         <div className="top-actions">
-          <button className={'webmcp-status-button ' + toolStatus} data-tour="webmcp" type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} aria-label="Voir les outils WebMCP">
+          <button className={'webmcp-status-button ' + toolStatus} data-tour="webmcp" type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} aria-label="View the WebMCP tools">
             {toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}
-            <span>{toolStatus === 'available' ? `${toolNames.length} outils WebMCP actifs` : toolStatus === 'registering' ? 'WebMCP en cours' : 'WebMCP indisponible'}</span>
+            <span>{toolStatus === 'available' ? `${toolNames.length} WebMCP tools live` : toolStatus === 'registering' ? 'WebMCP registering' : 'WebMCP unavailable'}</span>
           </button>
-          <span className={'status-chip ' + simState}><i />{simState === 'active' ? 'Simulation active' : simState === 'pause' ? 'Simulation en pause' : 'Aucun foyer'}</span>
+          <span className={'status-chip ' + simState}><i />{simState === 'active' ? 'Simulation running' : simState === 'pause' ? 'Simulation paused' : 'No ignition'}</span>
           <div className="pop-anchor">
-            <button className={'icon-button' + (helpOpen ? ' active' : '')} type="button" aria-label="Aide" aria-expanded={helpOpen} onClick={() => setHelpOpen((value) => !value)}><CircleHelp size={17} /></button>
+            <button className={'icon-button' + (helpOpen ? ' active' : '')} type="button" aria-label="Help" aria-expanded={helpOpen} onClick={() => setHelpOpen((value) => !value)}><CircleHelp size={17} /></button>
             {helpOpen && <>
               <div className="popover-shield" role="presentation" onMouseDown={() => setHelpOpen(false)} />
               <div className="popover help-pop glass-panel">
-                <div className="popover-head"><span>COMMENT LIRE CET ÉCRAN</span><button type="button" onClick={() => setHelpOpen(false)}><X size={13} /></button></div>
+                <div className="popover-head"><span>HOW TO READ THIS SCREEN</span><button type="button" onClick={() => setHelpOpen(false)}><X size={13} /></button></div>
                 <dl className="help-list">
-                  <div><dt>Surface simulée</dt><dd>Aire totale parcourue par le feu depuis l’allumage, calculée cellule par cellule sur une grille de 195 m.</dd></div>
-                  <div><dt>Vitesse de tête</dt><dd>Vitesse du front dans l’axe du vent, issue du modèle de Rothermel (1972). Les flancs et l’arrière progressent beaucoup plus lentement.</dd></div>
-                  <div><dt>Temps simulé</dt><dd>Minutes écoulées depuis l’allumage. La timeline en bas fait avancer ce compteur.</dd></div>
-                  <div><dt>Contour plein / pointillé</dt><dd>Le trait plein est la situation actuelle. Le pointillé est la projection à T+3 h si rien ne change.</dd></div>
-                  <div><dt>Calibration</dt><dd>Non réalisée. Aucun écart n’a été mesuré contre un incendie réel : les chiffres sont un ordre de grandeur d’entraînement, pas une prévision.</dd></div>
+                  <div><dt>Area burned</dt><dd>Total area the fire has run over since ignition, computed cell by cell on a 195 m grid.</dd></div>
+                  <div><dt>Head rate of spread</dt><dd>Front speed along the wind axis, from the Rothermel (1972) model. Flanks and rear advance far more slowly.</dd></div>
+                  <div><dt>Simulated time</dt><dd>Minutes elapsed since ignition. The timeline at the bottom drives this counter.</dd></div>
+                  <div><dt>Solid / dashed outline</dt><dd>The solid line is the current situation. The dashed one is the T+3 h projection if nothing changes.</dd></div>
+                  <div><dt>Calibration</dt><dd>Not performed for this scenario. The published deviations against real fires are large: treat the figures as a training order of magnitude, not a forecast.</dd></div>
                 </dl>
-                <button className="help-tour-button" type="button" onClick={() => { setHelpOpen(false); setTourOpen(true); }}><Command size={13} />Revoir le tutoriel</button>
+                <button className="help-tour-button" type="button" onClick={() => { setHelpOpen(false); setTourOpen(true); }}><Command size={13} />Replay the tutorial</button>
               </div>
             </>}
           </div>
@@ -1539,13 +1543,13 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             {accountOpen && <>
               <div className="popover-shield" role="presentation" onMouseDown={() => setAccountOpen(false)} />
               <div className="popover account-pop glass-panel">
-                <div className="account-head"><span className="account-avatar">{userEmail.slice(0,2).toUpperCase()}</span><div><strong>{userEmail}</strong><small>Session opérateur</small></div></div>
+                <div className="account-head"><span className="account-avatar">{userEmail.slice(0,2).toUpperCase()}</span><div><strong>{userEmail}</strong><small>Operator session</small></div></div>
                 <dl className="account-facts">
                   <div><dt>Simulations</dt><dd>{scenarioList.length}</dd></div>
-                  <div><dt>Moyens engagés</dt><dd>{committedCount}</dd></div>
+                  <div><dt>Units committed</dt><dd>{committedCount}</dd></div>
                 </dl>
-                <p className="account-note"><ShieldCheck size={12} />L’agent WebMCP agit dans cette session. Aucune clé n’est exposée.</p>
-                <button className="account-signout" type="button" onClick={signOut}><LogOut size={13} />Se déconnecter</button>
+                <p className="account-note"><ShieldCheck size={12} />The WebMCP agent acts inside this session. No key is ever exposed.</p>
+                <button className="account-signout" type="button" onClick={signOut}><LogOut size={13} />Sign out</button>
               </div>
             </>}
           </div>
@@ -1554,93 +1558,93 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
-          <div><span>RESSOURCES</span><strong>Moyens disponibles</strong></div>
-          <span className="resource-count">{PARC_TOTAL}</span>
+          <div><span>RESOURCES</span><strong>Available units</strong></div>
+          <span className="resource-count">{FLEET_TOTAL}</span>
           <button className="panel-toggle" type="button" aria-expanded={isNarrowViewport ? mobilePanel === 'resources' : railOpen}
-            aria-label={(isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? 'Replier les moyens' : 'Déplier les moyens'}
+            aria-label={(isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? 'Collapse the units panel' : 'Expand the units panel'}
             onClick={() => isNarrowViewport ? setMobilePanel((current) => current === 'resources' ? null : 'resources') : setRailOpen((value) => !value)}><ChevronUp size={13} /></button>
         </div>
-        <div className="panel-scroll" tabIndex={0} role="region" aria-label="Moyens disponibles et autonomie à l’engagement" onKeyDown={scrollPanelByKeyboard}>
-          <p className="drag-hint">Glissez un moyen sur une route, ou cliquez pour le prépositionner</p>
+        <div className="panel-scroll" tabIndex={0} role="region" aria-label="Available units and sustainable duty at commitment" onKeyDown={scrollPanelByKeyboard}>
+          <p className="drag-hint">Drag a unit onto a road, or click to stage it</p>
           <div className="autonomy-control">
-            <label htmlFor="autonomy">AUTONOMIE À L’ENGAGEMENT</label>
+            <label htmlFor="autonomy">SUSTAINABLE DUTY AT COMMITMENT</label>
             <input id="autonomy" type="range" min={20} max={100} step={5} value={autonomy}
               onChange={(event) => setAutonomy(Number(event.target.value))} />
             <b>{autonomy} %</b>
           </div>
-          <p className="autonomy-note">Un engin à {autonomy} % ne tient que {autonomy} % de son débit théorique : carburant, relève des personnels et chaîne d’eau.</p>
-          {FAMILLES.map((famille) => <div className="unit-group" key={famille}>
-            <span className="unit-group-head">{famille}</span>
-            <div className="unit-list">{units.filter((unit) => unit.famille === famille).map((unit) => {
+          <p className="autonomy-note">A unit at {autonomy}% holds only {autonomy}% of its theoretical flow: fuel, crew relief and the water supply chain.</p>
+          {FAMILIES.map((family) => <div className="unit-group" key={family}>
+            <span className="unit-group-head">{FAMILY_LABEL[family]}</span>
+            <div className="unit-list">{units.filter((unit) => unit.family === family).map((unit) => {
               const UnitIcon = UNIT_ICONS[unit.code] || Truck;
               const capacityLevel = unitCapacityLevel(unit);
-              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('fireops/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Point d’appui', mission: 'Mission à préciser', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' ajouté. Aucune ressource engagée.'); }} aria-label={`Prépositionner ${unit.label} (${unit.code}), ${unit.cuve}`} key={unit.code}>
-                <span className={'unit-visual fam-' + unitFamilyClass(unit.famille)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
-                <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.cuve} · autonomie {autonomy} %</small></span>
+              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' added. No resource committed.'); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
+                <span className={'unit-visual fam-' + unitFamilyClass(unit.family)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
+                <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.tank} · duty {autonomy}%</small></span>
                 <b>{String(unit.count).padStart(2,'0')}</b>
               </button>;
             })}</div>
           </div>)}
         </div>
-        <div className="rail-footer panel-foot"><span><i />{committedCount} engagés</span><span>29 disponibles</span></div>
+        <div className="rail-footer panel-foot"><span><i />{committedCount} committed</span><span>{FLEET_TOTAL - committedCount} available</span></div>
       </aside>
 
       <aside id="situation-panel" className={'situation-panel glass-panel' + ((isNarrowViewport ? mobilePanel === 'situation' : situationOpen) ? '' : ' collapsed') + (mobilePanel === 'situation' ? ' mobile-open' : '')}>
         <div className="panel-heading">
-          <div><span>{incidentClock}</span><strong>Situation opérationnelle</strong></div>
-          <span className="beta-chip">BÊTA</span>
+          <div><span>{incidentClock}</span><strong>Operational situation</strong></div>
+          <span className="beta-chip">BETA</span>
           <button className="panel-toggle" type="button" aria-expanded={isNarrowViewport ? mobilePanel === 'situation' : situationOpen}
-            aria-label={(isNarrowViewport ? mobilePanel === 'situation' : situationOpen) ? 'Replier la situation' : 'Déplier la situation'}
+            aria-label={(isNarrowViewport ? mobilePanel === 'situation' : situationOpen) ? 'Collapse the situation panel' : 'Expand the situation panel'}
             onClick={() => isNarrowViewport ? setMobilePanel((current) => current === 'situation' ? null : 'situation') : setSituationOpen((value) => !value)}><ChevronUp size={13} /></button>
         </div>
-        <div className="panel-scroll" tabIndex={0} role="region" aria-label="Situation : météo, couvert, enjeux et extinction" onKeyDown={scrollPanelByKeyboard}>
-        <div className="metric-grid"><div><span>Surface simulée</span><strong>{shownBurnedHa === null ? '—' : shownBurnedHa.toLocaleString('fr-FR')} <small>ha</small></strong><em>calcul worker</em></div><div><span>Vitesse de tête</span><strong>{shownFrontRate === null ? '—' : shownFrontRate.toLocaleString('fr-FR')} <small>m/min</small></strong><em>calcul Rothermel</em></div><div><span>Temps simulé</span><strong>{minutes} <small>min</small></strong><em>depuis l’allumage</em></div><div><span>Calibration</span><strong>—</strong><em>non réalisée</em></div></div>
+        <div className="panel-scroll" tabIndex={0} role="region" aria-label="Situation: weather, fuel cover, exposure and suppression" onKeyDown={scrollPanelByKeyboard}>
+        <div className="metric-grid"><div><span>Area burned</span><strong>{shownBurnedHa === null ? '—' : shownBurnedHa.toLocaleString('en-US')} <small>ha</small></strong><em>worker computed</em></div><div><span>Head rate</span><strong>{shownFrontRate === null ? '—' : shownFrontRate.toLocaleString('en-US')} <small>m/min</small></strong><em>Rothermel model</em></div><div><span>Simulated time</span><strong>{minutes} <small>min</small></strong><em>since ignition</em></div><div><span>Calibration</span><strong>—</strong><em>not performed</em></div></div>
         <button className={'weather-card' + (weatherOpen ? ' open' : '')} type="button" onClick={() => setWeatherOpen((value) => !value)} aria-expanded={weatherOpen}>
           <span className="weather-icon"><Wind size={18} /></span>
-          <span className="weather-main"><span>VENT {weather.windDirection.toUpperCase()}</span><strong>{weather.windSpeed} <small>km/h</small></strong></span>
-          <span className="gust"><span>RAFALES</span><strong>{weather.gusts}</strong></span>
+          <span className="weather-main"><span>WIND FROM {weather.windDirection.toUpperCase()}</span><strong>{weather.windSpeed} <small>km/h</small></strong></span>
+          <span className="gust"><span>GUSTS</span><strong>{weather.gusts}</strong></span>
           <span className="weather-caret"><ChevronDown size={14} /></span>
         </button>
-        <div className="weather-details"><span><small>TEMP.</small><b>{weather.temperature} °C</b></span><span><small>HUMIDITÉ</small><b>{weather.humidity} %</b></span><span><small>SÉCHERESSE</small><b>{weather.droughtIndex.toFixed(2)}</b></span></div>
+        <div className="weather-details"><span><small>TEMP.</small><b>{weather.temperature} °C</b></span><span><small>HUMIDITY</small><b>{weather.humidity} %</b></span><span><small>DROUGHT</small><b>{weather.droughtIndex.toFixed(2)}</b></span></div>
         {weatherOpen && <div className="weather-editor">
           <div className="wind-row">
-            <div className="wind-dial" role="group" aria-label="Direction du vent">
+            <div className="wind-dial" role="group" aria-label="Wind direction">
               <div className="dial-face">
                 <i className="dial-needle" style={{ transform: 'rotate(' + weather.windBearing + 'deg)' }} />
-                <span className="dial-n">N</span><span className="dial-e">E</span><span className="dial-s">S</span><span className="dial-w">O</span>
+                <span className="dial-n">N</span><span className="dial-e">E</span><span className="dial-s">S</span><span className="dial-w">W</span>
               </div>
               <small>{COMPASS[Math.round(weather.windBearing / 45) % 8].label}</small>
             </div>
-            <div className="wind-buttons">{COMPASS.map((point) => <button key={point.label} type="button" className={Math.round(weather.windBearing / 45) % 8 === point.index ? 'active' : ''} onClick={() => patchWeather({ windBearing: point.bearing, windDirection: point.from })} title={'Vent de ' + point.from}>{point.short}</button>)}</div>
+            <div className="wind-buttons">{COMPASS.map((point) => <button key={point.label} type="button" className={Math.round(weather.windBearing / 45) % 8 === point.index ? 'active' : ''} onClick={() => patchWeather({ windBearing: point.bearing, windDirection: point.from })} title={'Wind from ' + point.from}>{point.short}</button>)}</div>
           </div>
-          <Slider label="Force du vent" value={weather.windSpeed} min={0} max={120} unit="km/h" onChange={(windSpeed) => patchWeather({ windSpeed, gusts: Math.max(weather.gusts, Math.round(windSpeed * 1.4)) })} />
-          <Slider label="Rafales" value={weather.gusts} min={0} max={160} unit="km/h" onChange={(gusts) => patchWeather({ gusts })} />
-          <Slider label="Humidité de l’air" value={weather.humidity} min={5} max={95} unit="%" onChange={(humidity) => patchWeather({ humidity })} />
-          <Slider label="Température" value={weather.temperature} min={-5} max={48} unit="°C" onChange={(temperature) => patchWeather({ temperature })} />
-          <Slider label="Indice de sécheresse" value={Math.round(weather.droughtIndex * 100)} min={0} max={100} unit="%" onChange={(value) => patchWeather({ droughtIndex: value / 100 })} />
+          <Slider label="Wind speed" value={weather.windSpeed} min={0} max={120} unit="km/h" onChange={(windSpeed) => patchWeather({ windSpeed, gusts: Math.max(weather.gusts, Math.round(windSpeed * 1.4)) })} />
+          <Slider label="Gusts" value={weather.gusts} min={0} max={160} unit="km/h" onChange={(gusts) => patchWeather({ gusts })} />
+          <Slider label="Relative humidity" value={weather.humidity} min={5} max={95} unit="%" onChange={(humidity) => patchWeather({ humidity })} />
+          <Slider label="Temperature" value={weather.temperature} min={-5} max={48} unit="°C" onChange={(temperature) => patchWeather({ temperature })} />
+          <Slider label="Drought index" value={Math.round(weather.droughtIndex * 100)} min={0} max={100} unit="%" onChange={(value) => patchWeather({ droughtIndex: value / 100 })} />
           <div className="weather-presets">
-            <span>PRÉRÉGLAGES</span>
+            <span>PRESETS</span>
             <div>{WEATHER_PRESETS.map((preset) => <button key={preset.label} type="button" onClick={() => { weatherSeriesRef.current = null; setWeatherSeries(null); setWeatherSource('manual'); setWeather((current) => ({ ...current, ...preset.values })); }}>{preset.label}</button>)}</div>
           </div>
-          <p className={'weather-note weather-source ' + weatherSource}>{weatherSource === 'open-meteo' ? <><b>Série horaire réelle active.</b> Vent, température et humidité suivent l’archive <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open‑Meteo</a>. Modifier un réglage repasse en mode manuel.</> : weatherSource === 'loading' ? 'Chargement de la série météo horaire…' : weatherSource === 'error' ? 'Archive indisponible · réglages manuels conservés.' : 'Météo manuelle · les réglages restent constants hors cycle diurne.'}</p>
+          <p className={'weather-note weather-source ' + weatherSource}>{weatherSource === 'open-meteo' ? <><b>Real hourly series active.</b> Wind, temperature and humidity follow the <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open‑Meteo</a> archive. Changing any setting switches back to manual.</> : weatherSource === 'loading' ? 'Loading the hourly weather series…' : weatherSource === 'error' ? 'Archive unavailable · manual settings kept.' : 'Manual weather · settings stay constant outside the diurnal cycle.'}</p>
         </div>}
         {composition.length > 0 && <div className="cover-card">
-          <span className="cover-head">COUVERT DOMINANT · {(REGION_LABEL[(terrain?.region) || 'gironde'])}</span>
+          <span className="cover-head">DOMINANT COVER · {(REGION_LABEL[(terrain?.region) || 'gironde'])}</span>
           {composition.map((entry) => <div className="cover-row" key={entry.nom}>
             <i style={{ width: Math.max(4, entry.part * 100) + '%' }} />
             <span>{entry.nom}</span><b>{(entry.part * 100).toFixed(0)} %</b>
           </div>)}
-          {terrain?.region === 'gironde' && <small className={'data-source-status ' + landscapeStatus}>{landscapeStatus === 'real' ? 'IGN BD Forêt / BD TOPO · INSEE 200 m · relief DEM 90 m' : landscapeStatus === 'loading' ? 'Chargement des données territoriales…' : 'Données réelles indisponibles · repli procédural'}</small>}
+          {terrain?.region === 'gironde' && <small className={'data-source-status ' + landscapeStatus}>{landscapeStatus === 'real' ? 'IGN BD Forêt / BD TOPO · INSEE 200 m grid · 90 m DEM' : landscapeStatus === 'loading' ? 'Loading territorial data…' : 'Real data unavailable · procedural fallback'}</small>}
         </div>}
         {exposure && <div className="exposure-card">
-          <span className="cover-head">ENJEUX · {exposure.populationMenacee > 0 ? 'POPULATION MENACÉE' : 'AUCUNE POPULATION EXPOSÉE'}</span>
+          <span className="cover-head">EXPOSURE · {exposure.populationMenacee > 0 ? 'RESIDENTS AT RISK' : 'NO POPULATION EXPOSED'}</span>
           <div className="exposure-grid">
-            <div><span>Habitants menacés</span><b className={exposure.populationMenacee > 0 ? 'danger' : ''}>{exposure.populationMenacee.toLocaleString('fr-FR')}</b></div>
-            <div><span>Habitants atteints</span><b className={exposure.populationAtteinte > 0 ? 'danger' : ''}>{exposure.populationAtteinte.toLocaleString('fr-FR')}</b></div>
-            <div><span>Bâti parcouru</span><b>{exposure.surfaceBatieHa.toLocaleString('fr-FR')} <small>ha</small></b></div>
-            <div><span>Voies coupées</span><b>{(exposure.pistesCoupeesKm + exposure.routesCoupeesKm).toLocaleString('fr-FR')} <small>km</small></b></div>
+            <div><span>Residents at risk</span><b className={exposure.populationMenacee > 0 ? 'danger' : ''}>{exposure.populationMenacee.toLocaleString('en-US')}</b></div>
+            <div><span>Residents reached</span><b className={exposure.populationAtteinte > 0 ? 'danger' : ''}>{exposure.populationAtteinte.toLocaleString('en-US')}</b></div>
+            <div><span>Built area burned</span><b>{exposure.surfaceBatieHa.toLocaleString('en-US')} <small>ha</small></b></div>
+            <div><span>Routes cut</span><b>{(exposure.pistesCoupeesKm + exposure.routesCoupeesKm).toLocaleString('en-US')} <small>km</small></b></div>
           </div>
-          <small>Dont {exposure.routesCoupeesKm.toLocaleString('fr-FR')} km de routes ouvertes à la circulation — le reste est du maillage DFCI.</small>
+          <small>Of which {exposure.routesCoupeesKm.toLocaleString('en-US')} km are public roads — the rest is the DFCI forest track network.</small>
         </div>}
         {shownSuppression && <div className={'suppression-card ' + shownSuppression.status}>
           <div className="supp-head">
@@ -1648,103 +1652,103 @@ export default function FireOpsClient({ userEmail }: { userEmail: string }) {
             <strong>{STATUS_LABEL[shownSuppression.status]}</strong>
             <span className={'supp-mode ' + shownSuppression.attackMode}>{ATTACK_LABEL[shownSuppression.attackMode]}</span>
           </div>
-          <div className="supp-gauge" aria-label="Couverture hydraulique">
+          <div className="supp-gauge" aria-label="Water coverage">
             <i style={{ width: Math.min(100, shownSuppression.containmentRatio * 100) + '%' }} />
           </div>
           <div className="supp-grid">
-            <div><span>Débit déployé</span><b className="water">{shownSuppression.deployedFlowLpm.toLocaleString('fr-FR')} <small>L/min</small></b></div>
-            <div><span>Débit nécessaire</span><b>{shownSuppression.requiredFlowLpm.toLocaleString('fr-FR')} <small>L/min</small></b></div>
-            <div><span>Front actif</span><b>{shownSuppression.activePerimeterM.toLocaleString('fr-FR')} <small>m</small></b></div>
-            <div><span>Intensité en tête</span><b className={shownSuppression.attackViable ? '' : 'danger'}>{shownSuppression.firelineIntensityKwM.toLocaleString('fr-FR')} <small>kW/m</small></b></div>
+            <div><span>Deployed flow</span><b className="water">{shownSuppression.deployedFlowLpm.toLocaleString('en-US')} <small>L/min</small></b></div>
+            <div><span>Required flow</span><b>{shownSuppression.requiredFlowLpm.toLocaleString('en-US')} <small>L/min</small></b></div>
+            <div><span>Active perimeter</span><b>{shownSuppression.activePerimeterM.toLocaleString('en-US')} <small>m</small></b></div>
+            <div><span>Head intensity</span><b className={shownSuppression.attackViable ? '' : 'danger'}>{shownSuppression.firelineIntensityKwM.toLocaleString('en-US')} <small>kW/m</small></b></div>
           </div>
-          <div className="front-split" aria-label="Répartition du front">
+          <div className="front-split" aria-label="Front breakdown">
             <div className="front-bars">
-              <i className="head" style={{ flexGrow: Math.max(1, shownSuppression.headM) }} title="Tête" />
-              <i className="flank" style={{ flexGrow: Math.max(1, shownSuppression.flankM) }} title="Flancs" />
-              <i className="rear" style={{ flexGrow: Math.max(1, shownSuppression.rearM) }} title="Arrière" />
+              <i className="head" style={{ flexGrow: Math.max(1, shownSuppression.headM) }} title="Head" />
+              <i className="flank" style={{ flexGrow: Math.max(1, shownSuppression.flankM) }} title="Flanks" />
+              <i className="rear" style={{ flexGrow: Math.max(1, shownSuppression.rearM) }} title="Rear" />
             </div>
             <div className="front-legend">
-              <span><i className="head" />Tête {shownSuppression.headM.toLocaleString('fr-FR')} m</span>
-              <span><i className="flank" />Flancs {shownSuppression.flankM.toLocaleString('fr-FR')} m</span>
-              <span><i className="rear" />Arrière {shownSuppression.rearM.toLocaleString('fr-FR')} m</span>
+              <span><i className="head" />Head {shownSuppression.headM.toLocaleString('en-US')} m</span>
+              <span><i className="flank" />Flanks {shownSuppression.flankM.toLocaleString('en-US')} m</span>
+              <span><i className="rear" />Rear {shownSuppression.rearM.toLocaleString('en-US')} m</span>
             </div>
-            <small>Moyenne sur le périmètre : {shownSuppression.meanIntensityKwM.toLocaleString('fr-FR')} kW/m — l’arrière recule contre le vent et demande peu d’eau.</small>
+            <small>Perimeter mean: {shownSuppression.meanIntensityKwM.toLocaleString('en-US')} kW/m — the rear backs into the wind and needs little water.</small>
           </div>
           <p className="supp-verdict">
-            {shownSuppression.status === 'eteint' ? 'Le front ne progresse plus.'
+            {shownSuppression.status === 'eteint' ? 'The front is no longer advancing.'
               : shownSuppression.containmentMinutes !== null
-                ? <>Maîtrise estimée en <b>{shownSuppression.containmentMinutes} min</b> · {shownSuppression.litresPerHour.toLocaleString('fr-FR')} L consommés par heure</>
+                ? <>Containment estimated in <b>{shownSuppression.containmentMinutes} min</b> · {shownSuppression.litresPerHour.toLocaleString('en-US')} L consumed per hour</>
                 : shownSuppression.attackViable
-                  ? <>Il manque <b>{Math.max(0, shownSuppression.requiredFlowLpm - shownSuppression.deployedFlowLpm).toLocaleString('fr-FR')} L/min</b> pour tenir le front</>
-                  : <>Au-delà de 4 000 kW/m aucun débit ne suffit : ligne d’appui ou attaque indirecte</>}
+                  ? <><b>{Math.max(0, shownSuppression.requiredFlowLpm - shownSuppression.deployedFlowLpm).toLocaleString('en-US')} L/min</b> short of holding the front</>
+                  : <>Above 4,000 kW/m no flow is enough: control line or indirect attack</>}
           </p>
         </div>}
         </div>
-        <p className="model-disclaimer panel-foot">Modèle Rothermel 1972 · outil d’entraînement · non calibré sur données historiques</p>
+        <p className="model-disclaimer panel-foot">Rothermel 1972 model · training tool · not calibrated against historical fires</p>
       </aside>
 
-      <nav className="panel-tabs glass-panel" aria-label="Panneaux de la carte">
-        <button type="button" className={mobilePanel === 'resources' ? 'active' : ''} aria-controls="resources-panel" aria-expanded={mobilePanel === 'resources'} onClick={() => setMobilePanel((current) => current === 'resources' ? null : 'resources')}>Moyens</button>
+      <nav className="panel-tabs glass-panel" aria-label="Map panels">
+        <button type="button" className={mobilePanel === 'resources' ? 'active' : ''} aria-controls="resources-panel" aria-expanded={mobilePanel === 'resources'} onClick={() => setMobilePanel((current) => current === 'resources' ? null : 'resources')}>Units</button>
         <button type="button" className={mobilePanel === 'situation' ? 'active' : ''} aria-controls="situation-panel" aria-expanded={mobilePanel === 'situation'} onClick={() => setMobilePanel((current) => current === 'situation' ? null : 'situation')}>Situation</button>
       </nav>
 
-      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>PLAN PROVISOIRE · AUCUNE ACTION ENGAGÉE</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} moyens · {stagedPlan.firebreaks.length} ligne · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setStagedPlan(null); notify('Plan provisoire annulé. Aucune ressource n’a été engagée.'); }}>Annuler</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Comparer</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Appliquer</button></section>}
-      {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} appel{activities.length > 1 ? 's' : ''} WebMCP<ChevronDown size={13} /></button>}
+      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>DRAFT PLAN · NOTHING COMMITTED</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} units · {stagedPlan.firebreaks.length} line · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setStagedPlan(null); notify('Draft plan discarded. No resource was ever committed.'); }}>Discard</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Compare</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Apply</button></section>}
+      {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} WebMCP call{activities.length > 1 ? 's' : ''}<ChevronDown size={13} /></button>}
 
-      <aside className="map-legend glass-panel" aria-label="Légende de la carte">
-        <span><i className="lg-scar" />Surface parcourue</span>
-        <span><i className="lg-active" />Front en flammes</span>
-        <span><i className="lg-forecast" />Position projetée à +3 h</span>
+      <aside className="map-legend glass-panel" aria-label="Map legend">
+        <span><i className="lg-scar" />Area burned</span>
+        <span><i className="lg-active" />Active flame front</span>
+        <span><i className="lg-forecast" />Projected position at +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel" data-tour="carte" aria-label="Carte : foyer et projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Ajouter un foyer"><Flame size={13} />Foyer</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation réinitialisée.'); }} title="Vider cette simulation"><RotateCcw size={13} />Vider</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel" data-tour="carte" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel" data-tour="chronologie">
-        <div className="time-readout"><span>HEURE INCIDENT</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} depuis le départ</small></div>
-        <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Mettre la simulation en pause' : 'Lancer la simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
+        <div className="time-readout"><span>INCIDENT CLOCK</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} since ignition</small></div>
+        <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Pause the simulation' : 'Run the simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
         <div className="timeline-track">
-          <div className="timeline-scrubber-head"><span>CHRONOLOGIE · PAUSE À L’AJUSTEMENT</span><output htmlFor="incident-timeline">{timeLabel}</output></div>
+          <div className="timeline-scrubber-head"><span>TIMELINE · PAUSES WHILE YOU SCRUB</span><output htmlFor="incident-timeline">{timeLabel}</output></div>
           <div className="timeline-scrubber-row">
-            <button type="button" onClick={() => seekTimeline(timelinePosition - 15)} aria-label="Reculer de 15 minutes">−15</button>
-            <label className="sr-only" htmlFor="incident-timeline">Temps de la simulation, de zéro à douze heures</label>
+            <button type="button" onClick={() => seekTimeline(timelinePosition - 15)} aria-label="Back 15 minutes">−15</button>
+            <label className="sr-only" htmlFor="incident-timeline">Simulation time, from zero to twelve hours</label>
             <input id="incident-timeline" className="timeline-scrubber" type="range" min="0" max={TIMELINE_MAX_MINUTES} step="5" value={timelinePosition} onChange={(event) => seekTimeline(Number(event.target.value))} style={{ background: `linear-gradient(90deg, var(--accent) 0%, var(--accent) ${timelineProgress}%, rgba(255,255,255,.14) ${timelineProgress}%, rgba(255,255,255,.14) 100%)` }} />
-            <button type="button" onClick={() => seekTimeline(timelinePosition + 15)} aria-label="Avancer de 15 minutes">+15</button>
+            <button type="button" onClick={() => seekTimeline(timelinePosition + 15)} aria-label="Forward 15 minutes">+15</button>
           </div>
           <div className="time-labels">{timelineMarks.map((mark) => <span key={mark}>{mark}</span>)}</div>
         </div>
-        <div className="speed-control"><span>VITESSE</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)} aria-label={`Vitesse de simulation actuelle multipliée par ${speed}. Changer la vitesse.`}>× {speed}</button></div>
+        <div className="speed-control"><span>SPEED</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)} aria-label={`Simulation speed is currently ${speed} times real time. Change the speed.`}>× {speed}</button></div>
       </section>
 
-      {toolsOpen && <Modal labelledBy="tool-catalog-title" onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead titleId="tool-catalog-title" icon={<Bot size={18} />} eyebrow="WEBMCP · OUTILS DE LA PAGE" title="Capacités de l’agent" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
+      {toolsOpen && <Modal labelledBy="tool-catalog-title" onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead titleId="tool-catalog-title" icon={<Bot size={18} />} eyebrow="WEBMCP · TOOLS ON THIS PAGE" title="What the agent can do" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
   <span className="connect-dot" />
   <div>
     <strong>{toolStatus === 'available'
-      ? toolTransport === 'native' ? 'API WebMCP native · outils enregistrés' : 'Pont WebMCP actif · outils enregistrés'
-      : toolStatus === 'registering' ? 'Enregistrement en cours…' : 'Aucun contexte de modèle dans cet onglet'}</strong>
+      ? toolTransport === 'native' ? 'Native WebMCP API · tools registered' : 'WebMCP bridge active · tools registered'
+      : toolStatus === 'registering' ? 'Registering…' : 'No model context in this tab'}</strong>
     <span>{toolStatus === 'available'
       ? toolTransport === 'native'
-        ? `Ce navigateur expose document.modelContext. Les ${toolNames.length} outils ci-dessous y sont enregistrés et visibles par l’agent.`
-        : `Ce navigateur n’a pas encore l’API native : la page fournit son propre contexte de modèle. Les ${toolNames.length} outils sont enregistrés sur document.modelContext et appelables via window.__WEBMCP__.`
-      : 'Rechargez la page. Si le problème persiste, un bloqueur de scripts empêche le chargement de /webmcp.js.'}</span>
+        ? `This browser exposes document.modelContext. The ${toolNames.length} tools below are registered on it and visible to the agent.`
+        : `This browser has no native API yet, so the page provides its own model context. The ${toolNames.length} tools are registered on document.modelContext and callable through window.__WEBMCP__.`
+      : 'Reload the page. If it persists, a script blocker is preventing /webmcp.js from loading.'}</span>
   </div>
 </div>
 <ol className="connect-steps">
-  <li><b>1</b><span>Ouvrez cet onglet avec un agent : app ChatGPT, extension de navigateur, ou Chrome avec le flag WebMCP.</span></li>
-  <li><b>2</b><span>Restez connecté : l’agent hérite de votre session, il n’y a ni clé API ni OAuth.</span></li>
-  <li><b>3</b><span>Demandez en langage naturel. L’agent appelle les outils de la page, jamais l’inverse.</span></li>
-  <li><b>4</b><span>Il construit un plan en fantôme sans vous interrompre, puis demande <em>une</em> validation pour tout engager.</span></li>
+  <li><b>1</b><span>Open this tab with an agent: the ChatGPT app, a browser extension, or Chrome with the WebMCP flag.</span></li>
+  <li><b>2</b><span>Stay signed in: the agent inherits your session, with no API key and no OAuth.</span></li>
+  <li><b>3</b><span>Ask in plain language. The agent calls the page&apos;s tools, never the other way round.</span></li>
+  <li><b>4</b><span>It drafts a ghost plan without interrupting you, then asks for <em>one</em> approval to commit it all.</span></li>
 </ol>
 <div className="bridge-probe">
-  <span>VÉRIFIER DEPUIS LA CONSOLE DU NAVIGATEUR</span>
+  <span>CHECK IT FROM THE BROWSER CONSOLE</span>
   <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
-  <small>{toolTransport === 'native' ? 'document.modelContext est fourni par le navigateur.' : 'document.modelContext est fourni par la page via /webmcp.js.'}</small>
+  <small>{toolTransport === 'native' ? 'document.modelContext comes from the browser.' : 'document.modelContext comes from the page, through /webmcp.js.'}</small>
 </div>
-<div className="security-note"><ShieldCheck size={18} /><div><strong>Aucune clé API, aucun accès hors page</strong><span>L’agent agit dans votre session active. Tous les paramètres sont validés avant exécution.</span></div></div><div className="tool-groups">{[['Lecture',toolNames.slice(0,6)],['Provisoire',toolNames.slice(6,12)],['Engagement',toolNames.slice(12,14)],['Simulation & carte',toolNames.slice(14)]].map(([label,names]) => <details className="tool-group" open key={String(label)}><summary><span>{String(label)}</span><b>{(names as string[]).length}</b><ChevronDown size={13} /></summary><div>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Lecture' ? 'Lecture seule' : label === 'Provisoire' ? 'Fantôme · sans confirmation' : label === 'Engagement' ? 'Traçable & annulable' : 'Simulation locale'}</span></div>)}</div></details>)}</div></section></Modal>}
+<div className="security-note"><ShieldCheck size={18} /><div><strong>No API key, no access beyond this page</strong><span>The agent acts inside your live session. Every parameter is validated before it runs.</span></div></div><div className="tool-groups">{[['Read',toolNames.slice(0,6)],['Draft',toolNames.slice(6,12)],['Commit',toolNames.slice(12,14)],['Simulation & map',toolNames.slice(14)]].map(([label,names]) => <details className="tool-group" open key={String(label)}><summary><span>{String(label)}</span><b>{(names as string[]).length}</b><ChevronDown size={13} /></summary><div>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Read' ? 'Read-only' : label === 'Draft' ? 'Ghost · no confirmation' : label === 'Commit' ? 'Traceable & reversible' : 'Local simulation'}</span></div>)}</div></details>)}</div></section></Modal>}
 
-      {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 EXÉCUTIONS WORKER · T+6H" title="Comparaison des stratégies" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Stratégie recommandée' : undefined}><header><div><small>{index === 0 ? 'SURFACE MINIMALE' : strategy.resources === 0 ? 'RÉFÉRENCE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Résultat calculé</span>}</header><p>{strategy.description}</p><dl><div><dt>Surface simulée</dt><dd>{strategy.burnedHa.toLocaleString('fr-FR')} ha</dd></div><div><dt>Vitesse de tête</dt><dd>{strategy.rateOfSpread.toLocaleString('fr-FR')} m/min</dd></div><div><dt>Moyens</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Modèle non calibré · résultats calculés localement</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Retenir le résultat minimal</button></div></section></Modal>}
+      {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 WORKER RUNS · T+6H" title="Strategy comparison" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Recommended strategy' : undefined}><header><div><small>{index === 0 ? 'SMALLEST AREA' : strategy.resources === 0 ? 'BASELINE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Computed result</span>}</header><p>{strategy.description}</p><dl><div><dt>Area burned</dt><dd>{strategy.burnedHa.toLocaleString('en-US')} ha</dd></div><div><dt>Head rate</dt><dd>{strategy.rateOfSpread.toLocaleString('en-US')} m/min</dd></div><div><dt>Units</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Model not calibrated · results computed locally</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Take the smallest result</button></div></section></Modal>}
 
-      {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}><section className="review-panel glass-panel"><ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Engager ${stagedCount} moyens ?` : 'Engager ce plan ?'} onClose={rejectPlan} /><p className="review-intention">« {stagedPlan.intention} »</p>{noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Comparaison de la surface simulée à six heures"><div className="decision-row"><span>Sans action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('fr-FR')} ha</strong></div><div className="decision-row selected"><span>Avec ce plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('fr-FR')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('fr-FR')} ha à T+6 h</p>}</div>}<div className="plan-contents"><p>{stagedUnitSummary || 'Aucun moyen supplémentaire'}</p>{stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} ligne{stagedPlan.firebreaks.length > 1 ? 's' : ''} d’appui · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('fr-FR')} km</p>}{stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('fr-FR')} personnes · ordre non transmis</p>}</div><p className="review-warning"><ShieldCheck size={13} />Modèle non calibré · outil d’entraînement</p><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Rejeter</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />{stagedCount > 0 ? `Engager ${stagedCount} moyens` : 'Engager ce plan'}</button></div></section></Modal>}
+      {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}><section className="review-panel glass-panel"><ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Commit ${stagedCount} units?` : 'Commit this plan?'} onClose={rejectPlan} /><p className="review-intention">&ldquo;{stagedPlan.intention}&rdquo;</p>{noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Area burned at six hours, compared"><div className="decision-row"><span>No action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('en-US')} ha</strong></div><div className="decision-row selected"><span>With this plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('en-US')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('en-US')} ha at T+6 h</p>}</div>}<div className="plan-contents"><p>{stagedUnitSummary || 'No additional units'}</p>{stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} control line{stagedPlan.firebreaks.length > 1 ? 's' : ''} · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('en-US')} km</p>}{stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('en-US')} people · no order transmitted</p>}</div><p className="review-warning"><ShieldCheck size={13} />Model not calibrated · training tool</p><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Reject</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />{stagedCount > 0 ? `Commit ${stagedCount} units` : 'Commit this plan'}</button></div></section></Modal>}
 
-      {agentOpen && <aside className="agent-drawer glass-panel" aria-label="Journal des appels WebMCP"><ModalHead icon={<Bot size={18} />} eyebrow="APPELS DE L’AGENT" title="Journal WebMCP" onClose={() => setAgentOpen(false)} /><div className="agent-guidance"><span>ESSAYEZ DANS CHATGPT</span><ol><li>« Analyse la situation et propose-moi deux stratégies pour protéger Landiras Est. »</li><li>« Le vent passe au nord-ouest à 40 km/h. Recalcule et adapte le plan. »</li><li>« Compare le plan avec et sans les moyens aériens, puis soumets-moi le meilleur. »</li></ol></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Les appels WebMCP réels apparaîtront ici, avec leur outil et leur résultat. Ouvrez FireOps dans ChatGPT puis formulez une demande.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <X size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div></aside>}
-      {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan appliqué · Annuler</button>}
+      {agentOpen && <aside className="agent-drawer glass-panel" aria-label="WebMCP call log"><ModalHead icon={<Bot size={18} />} eyebrow="AGENT CALLS" title="WebMCP log" onClose={() => setAgentOpen(false)} /><div className="agent-guidance"><span>TRY ASKING YOUR AGENT</span><ol><li>&ldquo;Analyse the situation and give me two strategies to protect Landiras East.&rdquo;</li><li>&ldquo;The wind shifts to north-west at 40 km/h. Recompute and adapt the plan.&rdquo;</li><li>&ldquo;Compare the plan with and without air units, then submit the better one.&rdquo;</li></ol></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Real WebMCP calls appear here, with the tool and its result. Open FireNow with an agent, then ask for something.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <X size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div></aside>}
+      {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan applied · Undo</button>}
       {tourOpen && <Tour steps={tourSteps} onFinish={finishTour} />}
       {toast && <div className="toast glass-panel" role="status"><Check size={15} />{toast}</div>}
     </main>

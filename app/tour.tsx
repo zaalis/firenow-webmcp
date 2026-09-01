@@ -5,26 +5,33 @@ import { ArrowLeft, ArrowRight, Check, X } from 'lucide-react';
 
 export type TourStep = {
   id: string;
-  /** Selecteur de l'element a mettre en lumiere. */
+  /** Selector of the element to light up. */
   target: string;
   title: string;
   body: string;
-  /** Prepare l'ecran avant la mesure : deplier un panneau replie, par exemple. */
+  /** Prepares the screen before measuring: unfolds a collapsed panel, say. */
   before?: () => void;
 };
+
+/**
+ * Set when an operator creates an account, read once by the console.
+ * The tour belongs to a first account, not to a first visit: a returning
+ * operator on a new machine should not be walked through the console again.
+ */
+export const TOUR_PENDING_KEY = 'firenow.tour.pending';
 
 const GAP = 16;
 const PAD = 10;
 const NARROW = 700;
 
 /**
- * Tutoriel en surbrillance.
+ * Spotlight tutorial.
  *
- * Un voile assombrit toute l'interface ; seul l'element de l'etape reste a sa
- * couleur normale, decoupe par l'ombre portee du cadre de lumiere. Le voile
- * capte les clics : pendant le tutoriel, la console ne bouge pas sous les
- * doigts. La position est relue a chaque image, donc la lumiere reste collee a
- * sa cible meme quand un panneau finit de se deplier.
+ * A veil darkens the whole interface; only the step's element keeps its own
+ * colour, cut out by the spotlight's box-shadow. A separate catcher swallows
+ * clicks, so the console cannot move under the operator mid-explanation. The
+ * position is re-read every frame, which keeps the light glued to a panel that
+ * is still unfolding.
  */
 export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish: (completed: boolean) => void }) {
   const [index, setIndex] = useState(0);
@@ -35,20 +42,20 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
   const last = index === steps.length - 1;
 
   const close = useCallback((completed: boolean) => { onFinish(completed); }, [onFinish]);
-  // `close` remonte un setState au parent : il ne doit pas partir depuis une
-  // fonction de mise a jour, que React execute pendant le rendu.
+  // `close` raises a setState to the parent, so it must not fire from an
+  // updater function, which React runs during render.
   const next = useCallback(() => {
     if (index >= steps.length - 1) { close(true); return; }
     setIndex(index + 1);
   }, [close, index, steps.length]);
   const previous = useCallback(() => setIndex((current) => Math.max(0, current - 1)), []);
 
-  // La mesure vit hors de React : ecrire les positions image par image evite un
-  // rendu par frame tout en suivant les panneaux qui s'ouvrent. L'etat « mesure »
-  // est une classe posee sur le noeud, pas un state : il ne declenche aucun rendu.
+  // Measurement lives outside React: writing positions frame by frame follows
+  // opening panels without a render per frame. The "measured" state is a class
+  // on the node rather than a state, so it triggers nothing.
   useEffect(() => {
     if (!step) return;
-    // L'ecran peut avoir besoin d'etre prepare : deplier un panneau replie.
+    // The screen may need preparing first: unfold a collapsed panel.
     step.before?.();
     rootRef.current?.classList.remove('tour-ready');
     let frame = 0;
@@ -63,7 +70,7 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
       const viewportHeight = window.innerHeight;
 
       if (!box || box.width === 0 || box.height === 0) {
-        // Cible absente ou repliee : on eclaire le centre plutot que rien.
+        // Target missing or collapsed: light the centre rather than nothing.
         hole.style.opacity = '0';
         card.style.left = Math.round((viewportWidth - card.offsetWidth) / 2) + 'px';
         card.style.top = Math.round((viewportHeight - card.offsetHeight) / 2) + 'px';
@@ -79,9 +86,9 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
       const cardWidth = card.offsetWidth;
 
       if (viewportWidth <= NARROW) {
-        // Sur un ecran etroit aucune place ne reste a cote d'un panneau pleine
-        // hauteur : la carte s'amarre en bas et la lumiere s'arrete au-dessus,
-        // plutot que de se faire recouvrir par l'explication.
+        // On a narrow screen nothing fits beside a full-height panel: the card
+        // docks to the bottom and the light stops above it, rather than being
+        // covered by its own explanation.
         const cardTop = Math.max(8, viewportHeight - cardHeight - 12);
         card.style.left = Math.round(Math.max(8, (viewportWidth - cardWidth) / 2)) + 'px';
         card.style.top = Math.round(cardTop) + 'px';
@@ -93,7 +100,7 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
           : above >= 8 ? above
           : Math.max(8, Math.min(viewportHeight - cardHeight - 8, top));
         let cardLeft = left + width / 2 - cardWidth / 2;
-        // Si la carte chevauche encore la lumiere, elle passe sur le cote libre.
+        // If the card still overlaps the light, move it to the free side.
         if (cardTop < top + height && cardTop + cardHeight > top) {
           cardLeft = left + width + GAP + cardWidth <= viewportWidth - 8
             ? left + width + GAP
@@ -114,7 +121,7 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
     return () => cancelAnimationFrame(frame);
   }, [step]);
 
-  // Le focus suit l'etape : un lecteur d'ecran annonce le nouveau contenu.
+  // Focus follows the step, so a screen reader announces the new content.
   useEffect(() => { cardRef.current?.focus(); }, [index]);
 
   useEffect(() => {
@@ -148,7 +155,7 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
         aria-labelledby="tour-title"
         tabIndex={-1}
       >
-        <p className="tour-count">Étape {index + 1} sur {steps.length}</p>
+        <p className="tour-count">Step {index + 1} of {steps.length}</p>
         <h2 id="tour-title">{step.title}</h2>
         <p className="tour-body">{step.body}</p>
         <div className="tour-dots" aria-hidden="true">
@@ -156,13 +163,13 @@ export default function Tour({ steps, onFinish }: { steps: TourStep[]; onFinish:
         </div>
         <div className="tour-actions">
           <button type="button" className="tour-skip" onClick={() => close(false)}>
-            <X size={13} aria-hidden="true" />Passer
+            <X size={13} aria-hidden="true" />Skip
           </button>
           <button type="button" className="tour-back" onClick={previous} disabled={index === 0}>
-            <ArrowLeft size={14} aria-hidden="true" />Précédent
+            <ArrowLeft size={14} aria-hidden="true" />Back
           </button>
           <button type="button" className="tour-next" onClick={next}>
-            {last ? <>Commencer<Check size={14} aria-hidden="true" /></> : <>Suivant<ArrowRight size={14} aria-hidden="true" /></>}
+            {last ? <>Start<Check size={14} aria-hidden="true" /></> : <>Next<ArrowRight size={14} aria-hidden="true" /></>}
           </button>
         </div>
       </div>

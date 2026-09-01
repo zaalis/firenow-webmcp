@@ -1,79 +1,85 @@
 import {
-  ArrowRight, Bot, Check, Eye, ExternalLink, Flame, Layers3, Radar,
+  ArrowRight, Bot, Check, Eye, ExternalLink, Layers3, Radar,
   ShieldCheck, Terminal, TriangleAlert, Wind,
 } from 'lucide-react';
 import LoginClient from './login-client';
 
-const CHIFFRES = [
-  { valeur: '21', libelle: 'outils WebMCP' },
-  { valeur: '35', libelle: 'espèces réelles' },
-  { valeur: '13', libelle: 'types d’engins' },
-  { valeur: '5', libelle: 'scénarios' },
+const BrandMark = () => (
+  <span className="brand-mark">
+    <img src="/brand/mark.png" width={1024} height={1024} alt="" aria-hidden="true" />
+  </span>
+);
+
+const FIGURES = [
+  { value: '21', label: 'WebMCP tools' },
+  { value: '35', label: 'real species' },
+  { value: '13', label: 'unit types' },
+  { value: '5', label: 'scenarios' },
 ];
 
-const ETAPES = [
+const STEPS = [
   {
-    numero: '01',
-    icone: Eye,
-    titre: 'Lire',
-    outils: '6 outils en lecture seule',
-    texte: 'L’agent lit la situation, la météo, le terrain, le parc et les scénarios. Ces outils portent l’annotation readOnlyHint : ils ne modifient rien.',
-    exemples: ['get_situation', 'get_weather', 'query_terrain', 'get_fire_forecast'],
+    number: '01',
+    icon: Eye,
+    title: 'Read',
+    tools: '6 read-only tools',
+    text: 'The agent reads the situation, the weather, the terrain, the fleet and the scenarios. These tools carry the readOnlyHint annotation: they change nothing.',
+    examples: ['get_situation', 'get_weather', 'query_terrain', 'get_fire_forecast'],
   },
   {
-    numero: '02',
-    icone: Layers3,
-    titre: 'Préparer',
-    outils: '6 outils provisoires',
-    texte: 'Il construit un plan complet dans une couche fantôme : moyens prépositionnés, missions, lignes d’appui, brûlage tactique, zones d’évacuation. Rien n’est engagé, rien n’interrompt l’officier.',
-    exemples: ['propose_plan', 'stage_deploy_units', 'stage_firebreak', 'stage_evacuation_zone'],
+    number: '02',
+    icon: Layers3,
+    title: 'Draft',
+    tools: '6 staging tools',
+    text: 'It builds a complete plan in a ghost layer: staged units, tasks, control lines, tactical burns, evacuation zones. Nothing is committed, and nothing interrupts the officer.',
+    examples: ['propose_plan', 'stage_deploy_units', 'stage_firebreak', 'stage_evacuation_zone'],
   },
   {
-    numero: '03',
-    icone: ShieldCheck,
-    titre: 'Engager',
-    outils: '1 point d’arrêt',
-    texte: 'commit_plan est le seul appel qui suspend l’agent. La revue s’ouvre, l’officier voit le plan entier et tranche une fois. Le plan appliqué reste annulable.',
-    exemples: ['commit_plan', 'revert_plan'],
+    number: '03',
+    icon: ShieldCheck,
+    title: 'Commit',
+    tools: '1 stopping point',
+    text: 'commit_plan is the only call that suspends the agent. The review opens, the officer sees the whole plan and decides once. An applied plan stays reversible.',
+    examples: ['commit_plan', 'revert_plan'],
   },
 ];
 
-const MOTEUR = [
-  { titre: 'Rothermel 1972, deux classes', texte: 'Combustible mort et vivant, amortissement d’humidité et puits de chaleur séparés. Aucun coefficient d’ajustement par espèce.' },
-  { titre: '15 modèles de combustible', texte: 'Anderson 1982 et Scott & Burgan 2005, du tapis herbacé à la litière résineuse.' },
-  { titre: 'Paysage ancré sur les coordonnées', texte: 'Un lieu garde sa végétation quel que soit le cadrage. Aucun feu historique n’est scripté.' },
-  { titre: 'Intensité de Byram', texte: 'Seuils opérationnels à 2 000 et 4 000 kW/m, front décomposé en tête, flancs et arrière.' },
-  { titre: 'Anthropisation du massif landais', texte: 'Maillage DFCI, routes, bâti, débroussaillement. Une coupure retarde le front ; elle n’est jamais une barrière absolue.' },
-  { titre: 'Extinction dimensionnée', texte: '13 types d’engins avec cuve, débit de pompe et temps de remplissage constructeur. L’autonomie borne le débit réellement tenu.' },
+const ENGINE = [
+  { title: 'Rothermel 1972, two classes', text: 'Dead and live fuel, with separate moisture damping and heat sinks. No per-species tuning coefficient.' },
+  { title: '15 standard fuel models', text: 'Anderson 1982 and Scott & Burgan 2005, from grass mat to conifer litter.' },
+  { title: 'Landscape anchored to coordinates', text: 'A place keeps its vegetation whatever the framing. No historical fire is scripted.' },
+  { title: 'Byram fireline intensity', text: 'Operational thresholds at 2,000 and 4,000 kW/m, with the front split into head, flanks and rear.' },
+  { title: 'Human landscape of the Landes', text: 'DFCI track grid, roads, buildings and clearing rules. A break delays the front; it is never an absolute barrier.' },
+  { title: 'Suppression sized from real units', text: '13 unit types with manufacturer tank, pump rate and refill time. Sustainable duty bounds the flow actually held.' },
 ];
 
-const ECARTS = [
-  { mesure: 'Saumos 2026', valeur: '− 92 %', detail: 'surface finale sous-estimée', ton: 'ecart' },
-  { mesure: 'Saumos 2022', valeur: '+ 158 %', detail: 'surface finale surestimée', ton: 'ecart' },
-  { mesure: 'Recouvrement de périmètre', valeur: '0,171', detail: 'indice de Jaccard contre Copernicus EMS', ton: 'ecart' },
-  { mesure: 'Croissance nocturne', valeur: '19,4 %', detail: 'de la surface finale, contre 27 % avant correction', ton: 'progres' },
+const GAPS = [
+  { measure: 'Saumos 2026', value: '− 92 %', detail: 'final area under-predicted', tone: 'ecart' },
+  { measure: 'Saumos 2022', value: '+ 158 %', detail: 'final area over-predicted', tone: 'ecart' },
+  { measure: 'Perimeter overlap', value: '0.171', detail: 'Jaccard index against Copernicus EMS', tone: 'ecart' },
+  { measure: 'Overnight growth', value: '19.4 %', detail: 'of final area, down from 27 % before the fix', tone: 'progres' },
 ];
 
 const SCENARIOS = [
-  { nom: 'Landiras I', lieu: 'Gironde · juillet 2022', nature: 'Reconstitution', couvert: 'Landes de Gascogne · pin maritime' },
-  { nom: 'Saumos', lieu: 'Gironde · juillet 2026', nature: 'Reconstitution', couvert: 'Landes de Gascogne · pin maritime' },
-  { nom: 'Massif de l’Étoile', lieu: 'Provence · mistral', nature: 'Exercice', couvert: 'Provence calcaire · garrigue' },
-  { nom: 'Bug Fire', lieu: 'Californie · août 2026', nature: 'Reconstitution', couvert: 'Chaparral cismontain' },
-  { nom: 'Simulation vierge', lieu: 'Point de départ libre', nature: 'Entraînement', couvert: 'Défini par le cadrage' },
+  { name: 'Landiras I', place: 'Gironde · July 2022', kind: 'Replay', cover: 'Landes de Gascogne · maritime pine' },
+  { name: 'Saumos', place: 'Gironde · July 2026', kind: 'Replay', cover: 'Landes de Gascogne · maritime pine' },
+  { name: 'Étoile massif', place: 'Provence · mistral', kind: 'Exercise', cover: 'Provence limestone · garrigue' },
+  { name: 'Bug Fire', place: 'California · August 2026', kind: 'Replay', cover: 'Cismontane chaparral' },
+  { name: 'Blank simulation', place: 'Free starting point', kind: 'Training', cover: 'Set by the framing' },
 ];
 
 const CREDITS = [
-  { titre: 'Crowning fire in forest', auteur: 'Karen Murphy, U.S. Fish and Wildlife Service', lien: 'https://commons.wikimedia.org/wiki/File:Crowning_fire_in_forest.jpg' },
-  { titre: 'MAFFS operations, Boise', auteur: 'Master Sgt. David Buttner, U.S. Air Force', lien: 'https://commons.wikimedia.org/wiki/File:MAFFS_operations_Boise,_Idaho_120807-F-JB467-003.jpg' },
-  { titre: 'Drip torch on a new fire line', auteur: 'National Park Service', lien: 'https://commons.wikimedia.org/wiki/File:A_wildland_firefighter_uses_a_drip_torch_to_light_a_new_fire_line_through_Munshower_field._(6c137b74-8be5-4908-b9d1-38e0888c2650).jpg' },
-  { titre: 'Fires and smoke in British Columbia', auteur: 'Jeff Schmaltz, MODIS Rapid Response, NASA GSFC', lien: 'https://commons.wikimedia.org/wiki/File:Fires_and_smoke_in_British_Columbia_(MODIS_2015-07-27).jpg' },
+  { title: 'Crowning fire in forest', author: 'Karen Murphy, U.S. Fish and Wildlife Service', href: 'https://commons.wikimedia.org/wiki/File:Crowning_fire_in_forest.jpg' },
+  { title: 'MAFFS operations, Boise', author: 'Master Sgt. David Buttner, U.S. Air Force', href: 'https://commons.wikimedia.org/wiki/File:MAFFS_operations_Boise,_Idaho_120807-F-JB467-003.jpg' },
+  { title: 'Drip torch on a new fire line', author: 'National Park Service', href: 'https://commons.wikimedia.org/wiki/File:A_wildland_firefighter_uses_a_drip_torch_to_light_a_new_fire_line_through_Munshower_field._(6c137b74-8be5-4908-b9d1-38e0888c2650).jpg' },
+  { title: 'Fires and smoke in British Columbia', author: 'Jeff Schmaltz, MODIS Rapid Response, NASA GSFC', href: 'https://commons.wikimedia.org/wiki/File:Fires_and_smoke_in_British_Columbia_(MODIS_2015-07-27).jpg' },
 ];
 
-const EXTRAIT = `document.modelContext.registerTool({
+const SNIPPET = `document.modelContext.registerTool({
   name: 'stage_deploy_units',
-  title: 'Prépositionner des moyens',
-  description: 'Ajoute des moyens au plan provisoire. Rien n’est engagé.',
-  inputSchema: { /* JSON Schema, validé comme entrée non fiable */ },
+  title: 'Stage units',
+  description: 'Places units in the draft plan. Nothing is committed.',
+  inputSchema: { /* JSON Schema, validated as untrusted input */ },
   annotations: { readOnlyHint: false },
   execute: (input) => stageUnits(input),
 }, { signal: teardown.signal });`;
@@ -81,85 +87,85 @@ const EXTRAIT = `document.modelContext.registerTool({
 export default function Landing() {
   return (
     <div className="landing-shell">
-      <a className="skip-link" href="#contenu">Aller au contenu</a>
+      <a className="skip-link" href="#content">Skip to content</a>
 
       <header className="landing-nav">
-        <a className="landing-brand" href="#contenu">
-          <span className="brand-mark"><Flame size={17} aria-hidden="true" /></span>
-          <span><strong>FireOps</strong><small>Centre de commandement</small></span>
+        <a className="landing-brand" href="#content">
+          <BrandMark />
+          <span><strong>FireNow</strong><small>Command console</small></span>
         </a>
-        <nav aria-label="Sections de la page">
-          <a href="#deroule">Le déroulé</a>
+        <nav aria-label="Page sections">
+          <a href="#flow">The flow</a>
           <a href="#webmcp">WebMCP</a>
-          <a href="#moteur">Le moteur</a>
+          <a href="#engine">The engine</a>
           <a href="#validation">Validation</a>
         </nav>
-        <a className="nav-cta" href="#acces">Ouvrir la console<ArrowRight size={14} aria-hidden="true" /></a>
+        <a className="nav-cta" href="#access">Open the console<ArrowRight size={14} aria-hidden="true" /></a>
       </header>
 
-      <main id="contenu">
+      <main id="content">
         <section className="landing-hero">
           <img
             className="hero-photo"
             src="/media/front-couronne.jpg"
             width={1920}
             height={1441}
-            alt="Front de flammes montant dans la canopée d’une forêt de conifères."
+            alt="A flame front climbing into the canopy of a conifer forest."
             fetchPriority="high"
           />
           <div className="hero-veil" aria-hidden="true" />
           <div className="hero-copy">
-            <p className="landing-eyebrow"><Bot size={13} aria-hidden="true" />SIMULATEUR AGENT-NATIVE · WEBMCP</p>
-            <h1>L’agent prépare le plan.<br />L’officier l’engage.</h1>
+            <p className="landing-eyebrow"><Bot size={13} aria-hidden="true" />AGENT-NATIVE SIMULATOR · WEBMCP</p>
+            <h1>The agent drafts the plan.<br />The officer commits it.</h1>
             <p className="hero-lede">
-              FireOps est un simulateur d’aide à la décision et d’entraînement pour les feux de forêt.
-              La carte reste pilotable à la main. Un agent compatible WebMCP lit la situation, construit
-              un plan complet dans une couche fantôme, compare plusieurs stratégies — et s’arrête à une
-              seule validation humaine avant d’engager quoi que ce soit.
+              FireNow is a wildfire decision-support and training simulator. The map stays under human
+              control. A WebMCP-capable agent reads the situation, builds a complete plan in a ghost
+              layer, compares strategies against a local physics engine — and stops at a single human
+              approval before anything is committed.
             </p>
             <div className="hero-actions">
-              <a className="landing-primary" href="#acces">Ouvrir la console<ArrowRight size={15} aria-hidden="true" /></a>
-              <a className="landing-secondary" href="#webmcp">Voir les 21 outils</a>
+              <a className="landing-primary" href="#access">Open the console<ArrowRight size={15} aria-hidden="true" /></a>
+              <a className="landing-secondary" href="#webmcp">See the 21 tools</a>
             </div>
             <p className="hero-warning">
               <TriangleAlert size={14} aria-hidden="true" />
-              Bêta d’entraînement. Ne remplace ni le COS, ni les données terrain, ni les procédures locales.
+              Training beta. It replaces neither the incident commander, nor field data, nor local procedure.
             </p>
           </div>
           <dl className="hero-stats">
-            {CHIFFRES.map((chiffre) => (
-              <div key={chiffre.libelle}>
-                <dt>{chiffre.libelle}</dt>
-                <dd>{chiffre.valeur}</dd>
+            {FIGURES.map((figure) => (
+              <div key={figure.label}>
+                <dt>{figure.label}</dt>
+                <dd>{figure.value}</dd>
               </div>
             ))}
           </dl>
         </section>
 
-        <section id="deroule" className="landing-section">
+        <section id="flow" className="landing-section">
           <header className="section-head">
-            <p className="landing-eyebrow">CE QUE FAIT L’AGENT</p>
-            <h2>Trois surfaces séparées, une seule décision</h2>
+            <p className="landing-eyebrow">WHAT THE AGENT DOES</p>
+            <h2>Three separate surfaces, one decision</h2>
             <p className="section-lede">
-              Le problème des agents qui agissent, c’est le nombre de confirmations. FireOps le résout en
-              séparant ce qui lit, ce qui prépare et ce qui engage. L’agent peut préparer cinquante
-              véhicules sans interrompre personne.
+              The problem with agents that act is the number of confirmations. FireNow solves it by
+              separating what reads, what drafts and what commits. An agent can stage fifty vehicles
+              without interrupting anyone.
             </p>
           </header>
           <ol className="etapes">
-            {ETAPES.map((etape) => {
-              const Icone = etape.icone;
+            {STEPS.map((step) => {
+              const Icon = step.icon;
               return (
-                <li key={etape.numero} className="etape-card glass-panel">
+                <li key={step.number} className="etape-card glass-panel">
                   <div className="etape-head">
-                    <span className="etape-icon"><Icone size={18} aria-hidden="true" /></span>
-                    <span className="etape-num">{etape.numero}</span>
+                    <span className="etape-icon"><Icon size={18} aria-hidden="true" /></span>
+                    <span className="etape-num">{step.number}</span>
                   </div>
-                  <h3>{etape.titre}</h3>
-                  <p className="etape-tag">{etape.outils}</p>
-                  <p>{etape.texte}</p>
+                  <h3>{step.title}</h3>
+                  <p className="etape-tag">{step.tools}</p>
+                  <p>{step.text}</p>
                   <ul className="etape-tools">
-                    {etape.exemples.map((outil) => <li key={outil}><code>{outil}</code></li>)}
+                    {step.examples.map((tool) => <li key={tool}><code>{tool}</code></li>)}
                   </ul>
                 </li>
               );
@@ -170,56 +176,56 @@ export default function Landing() {
         <section id="webmcp" className="landing-section landing-section-alt">
           <div className="split">
             <div>
-              <p className="landing-eyebrow"><Terminal size={13} aria-hidden="true" />L’INTÉGRATION</p>
-              <h2>La page est le serveur d’outils</h2>
+              <p className="landing-eyebrow"><Terminal size={13} aria-hidden="true" />THE INTEGRATION</p>
+              <h2>The page is the tool server</h2>
               <p className="section-lede">
-                FireOps n’appelle aucun modèle de langage. La page enregistre ses 21 outils métier sur
-                <code> document.modelContext</code>, avec repli sur <code>navigator.modelContext</code>.
-                Un agent utilise la session déjà ouverte dans l’onglet : ni clé d’API, ni OAuth, ni
-                second backend. Les outils disparaissent au démontage de la page, donc à la déconnexion.
+                FireNow calls no language model. The page registers its 21 domain tools on
+                <code> document.modelContext</code>, falling back to <code>navigator.modelContext</code>.
+                An agent uses the session already open in the tab: no API key, no OAuth, no second
+                backend. The tools disappear when the page unmounts, and therefore at sign-out.
               </p>
               <ul className="checklist">
-                <li><Check size={14} aria-hidden="true" />Outils pensés par intention métier, pas comme des wrappers CRUD</li>
-                <li><Check size={14} aria-hidden="true" />Paramètres validés comme des entrées non fiables</li>
-                <li><Check size={14} aria-hidden="true" />Journal des appels réellement exécutés, visible dans la console</li>
-                <li><Check size={14} aria-hidden="true" />Pont de compatibilité pour les navigateurs sans API native</li>
+                <li><Check size={14} aria-hidden="true" />Tools designed around intent, not as CRUD wrappers</li>
+                <li><Check size={14} aria-hidden="true" />Every parameter validated as untrusted input</li>
+                <li><Check size={14} aria-hidden="true" />A log of the calls actually executed, visible in the console</li>
+                <li><Check size={14} aria-hidden="true" />A compatibility bridge for browsers with no native API</li>
               </ul>
               <p className="probe">
-                <span>VÉRIFIER DEPUIS N’IMPORTE QUEL NAVIGATEUR</span>
+                <span>CHECK IT FROM ANY BROWSER</span>
                 <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
               </p>
             </div>
             <figure className="code-card glass-panel">
-              <figcaption>app/fireops-client.tsx</figcaption>
-              <pre><code>{EXTRAIT}</code></pre>
+              <figcaption>app/firenow-client.tsx</figcaption>
+              <pre><code>{SNIPPET}</code></pre>
             </figure>
           </div>
         </section>
 
-        <section id="moteur" className="landing-section">
+        <section id="engine" className="landing-section">
           <div className="split split-media">
             <figure className="media-card">
               <img
                 src="/media/largage-aerien.jpg"
                 width={1920}
                 height={1148}
-                alt="Avion bombardier d’eau larguant du retardant au-dessus d’un relief boisé."
+                alt="An air tanker dropping retardant over forested terrain."
                 loading="lazy"
               />
-              <figcaption>13 types d’engins, avec cuve, débit de pompe et temps de remplissage constructeur.</figcaption>
+              <figcaption>13 unit types, each with manufacturer tank, pump rate and refill time.</figcaption>
             </figure>
             <div>
-              <p className="landing-eyebrow"><Radar size={13} aria-hidden="true" />LE MOTEUR</p>
-              <h2>Automate cellulaire 128 × 128, dans un Web Worker</h2>
+              <p className="landing-eyebrow"><Radar size={13} aria-hidden="true" />THE ENGINE</p>
+              <h2>A 128 × 128 cellular automaton, in a Web Worker</h2>
               <p className="section-lede">
-                Propagation par file de priorité, sous-pas de quinze minutes, cycle diurne et série météo
-                horaire réelle pour les runs multi-jours. Le calcul reste dans le navigateur.
+                Priority-queue spread, fifteen-minute sub-steps, a diurnal cycle and a real hourly
+                weather series for multi-day runs. The computation never leaves the browser.
               </p>
               <dl className="moteur-list">
-                {MOTEUR.map((item) => (
-                  <div key={item.titre}>
-                    <dt>{item.titre}</dt>
-                    <dd>{item.texte}</dd>
+                {ENGINE.map((item) => (
+                  <div key={item.title}>
+                    <dt>{item.title}</dt>
+                    <dd>{item.text}</dd>
                   </div>
                 ))}
               </dl>
@@ -229,48 +235,49 @@ export default function Landing() {
 
         <section id="validation" className="landing-section landing-section-alt">
           <header className="section-head">
-            <p className="landing-eyebrow"><TriangleAlert size={13} aria-hidden="true" />CE QUE LE MODÈLE NE SAIT PAS FAIRE</p>
-            <h2>Le moteur n’est pas calibré, et le dépôt le dit</h2>
+            <p className="landing-eyebrow"><TriangleAlert size={13} aria-hidden="true" />WHAT THE MODEL CANNOT DO YET</p>
+            <h2>The engine is not calibrated, and the repository says so</h2>
             <p className="section-lede">
-              Le harnais <code>validate-fires.mjs</code> rejoue des feux de référence et mesure le
-              recouvrement de périmètre contre les données Copernicus EMS. Il ne modifie aucun
-              coefficient. Voici les écarts au 28 août 2026, publiés plutôt que masqués par un facteur
-              d’ajustement.
+              The <code>validate-fires.mjs</code> harness replays reference fires and measures perimeter
+              overlap against Copernicus EMS data. It changes no coefficient. These are the deviations
+              measured on 28 August 2026, published rather than hidden behind a tuning factor.
             </p>
           </header>
           <div className="ecarts">
-            {ECARTS.map((ecart) => (
-              <article key={ecart.mesure} className={'ecart-card glass-panel ' + ecart.ton}>
-                <p className="ecart-mesure">{ecart.mesure}</p>
-                <p className="ecart-valeur">{ecart.valeur}</p>
-                <p className="ecart-detail">{ecart.detail}</p>
+            {GAPS.map((gap) => (
+              <article key={gap.measure} className={'ecart-card glass-panel ' + gap.tone}>
+                <p className="ecart-mesure">{gap.measure}</p>
+                <p className="ecart-valeur">{gap.value}</p>
+                <p className="ecart-detail">{gap.detail}</p>
               </article>
             ))}
           </div>
           <p className="validation-note">
-            Le bandeau « non calibré sur données historiques » reste affiché dans l’interface tant que ces
-            écarts subsistent. À l’échelle de quelques heures, le modèle sert à comparer des options :
-            intensité de front, mode d’attaque possible, suffisance des moyens, enjeux menacés. Sur
-            plusieurs jours, il ne sert pas encore, et l’interface l’affiche.
+            The two Saumos runs miss in opposite directions, which is the signature of a missing driver
+            rather than a wrong constant — most likely fuel moisture conditioning and the wind profile
+            over the canopy, neither of which is fitted to the site. Until that is closed, the
+            &ldquo;not calibrated&rdquo; banner stays in the interface. Over a few hours the model is
+            useful for comparing options: front intensity, feasible attack mode, whether committed flow
+            is sufficient, who is exposed. Over several days it is not, and the interface says so.
           </p>
         </section>
 
         <section id="scenarios" className="landing-section">
           <div className="split split-media reverse">
             <div>
-              <p className="landing-eyebrow"><Wind size={13} aria-hidden="true" />LES ENTRÉES</p>
-              <h2>Cinq scénarios, trois régions écologiques</h2>
+              <p className="landing-eyebrow"><Wind size={13} aria-hidden="true" />THE INPUTS</p>
+              <h2>Five scenarios, three ecological regions</h2>
               <p className="section-lede">
-                Chaque scénario garde son foyer, sa météo et ses moyens. Changer de simulation met la
-                précédente en pause sans rien perdre.
+                Each scenario keeps its own ignition, weather and units. Switching simulations pauses
+                the previous one without losing anything.
               </p>
               <ul className="scenario-cards">
                 {SCENARIOS.map((scenario) => (
-                  <li key={scenario.nom} className="glass-panel">
-                    <p className="scenario-nature">{scenario.nature}</p>
-                    <h3>{scenario.nom}</h3>
-                    <p className="scenario-lieu">{scenario.lieu}</p>
-                    <p className="scenario-couvert">{scenario.couvert}</p>
+                  <li key={scenario.name} className="glass-panel">
+                    <p className="scenario-nature">{scenario.kind}</p>
+                    <h3>{scenario.name}</h3>
+                    <p className="scenario-lieu">{scenario.place}</p>
+                    <p className="scenario-couvert">{scenario.cover}</p>
                   </li>
                 ))}
               </ul>
@@ -280,37 +287,38 @@ export default function Landing() {
                 src="/media/ligne-appui.jpg"
                 width={1920}
                 height={1272}
-                alt="Sapeur-pompier ouvrant une ligne d’appui à la torche d’allumage dans un champ."
+                alt="A firefighter opening a control line with a drip torch across a field."
                 loading="lazy"
               />
-              <figcaption>Les lignes d’appui construites sont cumulatives et persistantes dans le moteur.</figcaption>
+              <figcaption>Control lines built during a run are cumulative and persistent in the engine.</figcaption>
             </figure>
           </div>
         </section>
 
-        <section id="acces" className="landing-section landing-access">
+        <section id="access" className="landing-section landing-access">
           <img
             className="access-photo"
             src="/media/vue-satellite.jpg"
             width={1920}
             height={2444}
-            alt="Vue satellite de panaches de fumée s’étirant au-dessus d’un massif forestier."
+            alt="Satellite view of smoke plumes drifting over a forested massif."
             loading="lazy"
           />
           <div className="access-veil" aria-hidden="true" />
           <div className="access-inner">
             <div className="access-copy">
-              <p className="landing-eyebrow">ACCÈS OPÉRATIONNEL</p>
-              <h2>Ouvrir la console</h2>
+              <p className="landing-eyebrow">OPERATIONAL ACCESS</p>
+              <h2>Open the console</h2>
               <p className="section-lede">
-                Créez un accès, ouvrez la carte, puis laissez un agent compatible WebMCP travailler dans
-                le même onglet. Un tutoriel de six étapes se lance à la première ouverture.
+                Create an account, open the map, then let a WebMCP-capable agent work in the same tab.
+                A new account opens the console on a six-step tour, which you can skip and replay at
+                any time from the help menu.
               </p>
               <ul className="checklist">
-                <li><Check size={14} aria-hidden="true" />Carte tactique 2D, 3D et globe</li>
-                <li><Check size={14} aria-hidden="true" />Météo réglable ou série horaire réelle</li>
-                <li><Check size={14} aria-hidden="true" />Comparaison de trois stratégies par le moteur</li>
-                <li><Check size={14} aria-hidden="true" />Journal des appels de l’agent</li>
+                <li><Check size={14} aria-hidden="true" />Tactical map in 2D, 3D and globe</li>
+                <li><Check size={14} aria-hidden="true" />Adjustable weather, or a real hourly series</li>
+                <li><Check size={14} aria-hidden="true" />Three strategies compared by the engine</li>
+                <li><Check size={14} aria-hidden="true" />A log of the agent&apos;s calls</li>
               </ul>
             </div>
             <LoginClient />
@@ -321,27 +329,27 @@ export default function Landing() {
       <footer className="landing-footer">
         <div className="footer-top">
           <div className="landing-brand">
-            <span className="brand-mark"><Flame size={17} aria-hidden="true" /></span>
-            <span><strong>FireOps</strong><small>Outil d’entraînement · ne remplace pas le COS</small></span>
+            <BrandMark />
+            <span><strong>FireNow</strong><small>Training tool · not an incident command system</small></span>
           </div>
           <a className="footer-link" href="https://github.com/zaalis/fireops-webmcp" target="_blank" rel="noreferrer">
-            Code source<ExternalLink size={13} aria-hidden="true" />
+            Source code<ExternalLink size={13} aria-hidden="true" />
           </a>
         </div>
         <div className="footer-credits">
-          <p className="footer-credits-head">Photographies — domaine public</p>
+          <p className="footer-credits-head">Photographs — public domain</p>
           <ul>
             {CREDITS.map((credit) => (
-              <li key={credit.lien}>
-                <a href={credit.lien} target="_blank" rel="noreferrer">{credit.titre}</a>
-                <span>{credit.auteur}</span>
+              <li key={credit.href}>
+                <a href={credit.href} target="_blank" rel="noreferrer">{credit.title}</a>
+                <span>{credit.author}</span>
               </li>
             ))}
           </ul>
         </div>
         <p className="footer-legal">
-          Modèle Rothermel 1972 · non calibré sur données historiques · fond de carte Esri ·
-          archive météo Open-Meteo · code sous licence MIT.
+          Rothermel 1972 model · not calibrated against historical fires · Esri basemap ·
+          Open-Meteo weather archive · code under the MIT licence.
         </p>
       </footer>
     </div>

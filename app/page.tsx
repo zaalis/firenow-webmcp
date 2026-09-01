@@ -1,4 +1,4 @@
-import FireOpsClient from './fireops-client';
+import FireNowClient from './firenow-client';
 import Landing from './landing';
 import { getSessionUser } from '../db/auth';
 
@@ -6,5 +6,5 @@ export const dynamic = 'force-dynamic';
 
 export default async function Home() {
   const user = await getSessionUser();
-  return user ? <FireOpsClient userEmail={user.email} /> : <Landing />;
+  return user ? <FireNowClient userEmail={user.email} /> : <Landing />;
 }

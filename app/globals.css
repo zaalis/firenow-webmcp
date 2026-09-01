@@ -14,11 +14,11 @@
   --accent: #FFFFFF;
   --accent-ink: #08090A;
   --ghost: rgba(255,255,255,.55);
-  /* Palette sémantique : chaque teinte porte un sens, aucune n'est décorative. */
-  --water: #5AC8FA;          /* eau, débits, hydraulique */
+  /* Semantic palette: every hue carries a meaning, none is decorative. */
+  --water: #5AC8FA;          /* water, flow rates, hydraulics */
   --agent: #BF7AF0;          /* agent WebMCP, plan provisoire */
-  --ok: #30D158;             /* maîtrisé, engagé, sûr */
-  --earth: #D9A05B;          /* génie, lignes d'appui */
+  --ok: #30D158;             /* controlled, committed, safe */
+  --earth: #D9A05B;          /* engineering, control lines */
   --panel-solid: rgba(20,21,23,.98);
   --fire-smold: #FFD60A;
   --fire-active: #FF9F0A;
@@ -77,10 +77,13 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 }
 .brand-block,.top-actions { display: flex; align-items: center; gap: 11px; }
 .brand-mark {
-  width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px;
+  flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px;
   background: var(--accent); color: var(--accent-ink); box-shadow: inset 0 1px rgba(255,255,255,.28);
+  overflow: hidden;
 }
-.brand-mark i { width: 16px; height: 19px; border: 2px solid white; border-radius: 50% 50% 46% 54%; transform: rotate(15deg); }
+/* The mark is dark green line art, so it needs the light tile to read at all
+   against the near-black console. */
+.brand-mark img { width: 78%; height: 78%; object-fit: contain; display: block; }
 .brand-block div,.scenario-title { display: flex; flex-direction: column; }
 .brand-block strong { font-size: 16px; letter-spacing: -.02em; }
 .brand-block span,.scenario-title span {
@@ -429,15 +432,15 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 }
 
 /* ------------------------------------------------------------------ *
- * Page de presentation publique.
- * Elle reprend les jetons de la console (fond quasi noir, accent blanc,
- * palette de feu semantique) avec une echelle typographique de site, pas
- * de tableau de bord : le corps est a 16 px, pas a 10.
+ * Public presentation page.
+ * It reuses the console tokens (near-black ground, white accent, semantic
+ * fire palette) with the type scale of a website rather than a dashboard:
+ * body text is 16 px, not 10.
  * ------------------------------------------------------------------ */
 
-/* `body { overflow: hidden }` sert la console plein ecran. La page de
-   presentation defile : on ne libere que body, dont le debordement se propage
-   a la fenetre — liberer aussi html creerait un second conteneur de defilement. */
+/* `body { overflow: hidden }` serves the full-screen console. The presentation
+   page scrolls, so only body is released; its overflow propagates to the
+   viewport. Releasing html too would create a second scroll container. */
 body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .landing-shell {
   --measure: 1180px;
@@ -452,7 +455,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 .skip-link:focus-visible { top: 16px; }
 
-/* --- Barre de navigation --- */
+/* --- Navigation bar --- */
 .landing-nav {
   position: sticky; z-index: 40; top: 0; display: flex; align-items: center; gap: 24px;
   padding: 14px clamp(16px, 4vw, 48px);
@@ -530,15 +533,15 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .hero-stats dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
 .hero-stats dd { margin: 0; font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.03em; }
 
-/* Ces cartes reposent sur un aplat, pas sur une carte : le flou d'arriere-plan
-   ne montre rien et coute une couche de composition par carte. Seule la carte
-   d'acces, posee sur une photo, garde le verre. */
+/* These cards sit on a flat fill, not on a map: the backdrop blur shows nothing
+   and costs a compositing layer per card. Only the access card, resting on a
+   photograph, keeps the glass. */
 .etape-card, .code-card, .ecart-card, .scenario-cards li {
   background: rgba(20,21,23,.72); backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: 0 12px 32px rgba(0,0,0,.28);
 }
 
-/* --- Le deroule --- */
+/* --- The flow --- */
 .etapes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; max-width: var(--measure); margin: 0 auto; padding: 0; list-style: none; }
 .etape-card { padding: 26px; border-radius: 18px; }
 .etape-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
@@ -617,7 +620,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .login-submit:hover:not(:disabled) { background: #E7E7E9; }
 .login-submit:disabled { cursor: wait; opacity: .65; }
 
-/* --- Pied de page --- */
+/* --- Footer --- */
 .landing-footer { padding: clamp(40px, 5vw, 64px) clamp(16px, 4vw, 48px); border-top: 1px solid var(--border); }
 .footer-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; max-width: var(--measure); margin: 0 auto; }
 .footer-link { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border-strong); color: var(--text); font-size: 14px; text-decoration: none; transition: background .2s var(--ease); }
@@ -633,7 +636,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 
 @media (max-width: 860px) {
   .landing-nav nav { display: none; }
-  /* Le sous-titre passait a la ligne et poussait le bouton sur deux lignes. */
+  /* The subtitle wrapped and pushed the button onto two lines. */
   .landing-nav .landing-brand small { display: none; }
   .landing-nav { gap: 12px; }
   .nav-cta { margin-left: auto; }
@@ -694,7 +697,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .popover-head button:hover { background: rgba(255,255,255,.14); }
 .popover-foot { margin: 9px 2px 1px; color: var(--faint); font-size: 9px; line-height: 1.5; }
 
-/* ---------- Selecteur de simulations ---------- */
+/* ---------- Simulation switcher ---------- */
 .scenario-picker { position: relative; }
 .scenario-title {
   display: flex; flex-direction: column; gap: 3px; padding: 5px 9px; cursor: pointer; text-align: left;
@@ -730,7 +733,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .sim-state.active { color: #30D158; border-color: rgba(48,209,88,.32); }
 .sim-state.pause { color: var(--fire-active); border-color: rgba(255,159,10,.28); }
 
-/* ---------- Etat de la simulation, barre du haut ---------- */
+/* ---------- Simulation state, top bar ---------- */
 .status-chip.active i { background: #30D158; box-shadow: 0 0 0 3px rgba(48,209,88,.18); animation: sim-pulse 2s ease-in-out infinite; }
 .status-chip.pause i { background: var(--fire-active); box-shadow: 0 0 0 3px rgba(255,159,10,.16); animation: none; }
 .status-chip.vierge i { background: var(--faint); box-shadow: none; animation: none; }
@@ -888,7 +891,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 .connect-steps em { color: var(--text); font-style: normal; font-weight: 650; }
 
-/* ---------- Menus : opaques, on ne doit pas lire la carte au travers ---------- */
+/* ---------- Menus: opaque, the map must not read through them ---------- */
 .popover, .weather-editor {
   background: var(--panel-solid);
   backdrop-filter: blur(30px) saturate(180%);
@@ -898,7 +901,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .popover { box-shadow: 0 28px 70px rgba(0,0,0,.66), 0 0 0 1px rgba(0,0,0,.4); }
 .modal-backdrop > section, .agent-drawer { background: var(--panel-solid); }
 
-/* ---------- Accents sémantiques ---------- */
+/* ---------- Semantic accents ---------- */
 .drawer-icon { color: var(--agent); }
 .proposal-bar { border-left: 2px solid var(--agent); }
 .proposal-icon { color: var(--agent); background: rgba(191,122,240,.14); border-color: rgba(191,122,240,.34); }
@@ -911,7 +914,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .review-legal svg { color: var(--ok); }
 .account-note svg { color: var(--ok); }
 
-/* Teinte par famille : l'icone et la jauge portent le sens, sans fond plein. */
+/* Tint per family: the icon and the gauge carry the meaning, with no solid fill. */
 .unit-visual.fam-terrestre,.unit-marker.fam-terrestre svg { color: var(--water); }
 .unit-visual.fam-aerien,.unit-marker.fam-aerien svg { color: #9FD8FF; }
 .unit-visual.fam-genie,.unit-marker.fam-genie svg { color: var(--earth); }
@@ -950,7 +953,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .supp-grid span { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
 .supp-grid b { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
-/* Repartition du front : tete, flancs, arriere. La barre montre pourquoi le
+/* Front breakdown: head, flanks, rear. The bar shows why the
    besoin en eau est bien inferieur a l'intensite de tete. */
 .front-split { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .front-bars { display: flex; gap: 2px; height: 5px; }
@@ -967,7 +970,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .front-legend i.rear { background: var(--fire-burnt); }
 .front-split small { color: var(--faint); font-size: 9.5px; line-height: 1.45; }
 
-/* Legende carte : les pointilles etaient pris pour une probabilite. */
+/* Map legend: the dashes were being read as a probability. */
 .map-legend { position: absolute; z-index: 9; left: 306px; bottom: 107px;
   display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border-radius: 10px; }
 .map-legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted);
@@ -983,21 +986,21 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .supp-verdict { margin: 0; color: var(--muted); font-size: 9.5px; line-height: 1.5; }
 .supp-verdict b { color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* Bouton de reconstitution d un feu reel dans le selecteur. */
+/* Replay button for a real fire, inside the switcher. */
 .popover-head .preset-new { color: var(--fire-active); border-color: rgba(255,159,10,.38); background: rgba(255,159,10,.10); letter-spacing: .04em; }
 .popover-head .preset-new:hover { border-color: rgba(255,159,10,.62); background: rgba(255,159,10,.18); }
 
 .unit-group { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
 .unit-group-head { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .13em; text-transform: uppercase; }
 
-/* Autonomie : elle borne le debit reellement tenu par les moyens engages. */
+/* Sustainable duty: it bounds the flow committed units actually hold. */
 .autonomy-control { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 10px; margin-top: 10px; }
 .autonomy-control label { grid-column: 1 / -1; color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .12em; }
 .autonomy-control input { width: 100%; accent-color: var(--water); }
 .autonomy-control b { color: var(--water); font-size: 11px; font-variant-numeric: tabular-nums; }
 .autonomy-note { color: var(--faint); font-size: 9.5px; line-height: 1.45; margin-top: 4px; }
 
-/* Couvert vegetal reellement tire sur la fenetre simulee. */
+/* Vegetation cover actually sampled over the simulated window. */
 .cover-card { display: flex; flex-direction: column; gap: 5px; padding: 11px 13px; border: 1px solid var(--border);
   border-radius: 10px; background: rgba(255,255,255,.02); }
 .cover-head { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .1em; }
@@ -1008,7 +1011,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .data-source-status { margin-top: 3px; padding-top: 7px; border-top: 1px solid var(--border); color: var(--faint); font-size: 8px; line-height: 1.4; }
 .data-source-status.real { color: var(--muted); }
 
-/* Le sélecteur ne doit jamais déborder, quelle que soit la largeur d'écran. */
+/* The switcher must never overflow, whatever the screen width. */
 .scenario-pop { width: min(330px, calc(100vw - 36px)); }
 .preset-row { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
 .preset-row > span { color: var(--faint); font: 650 7.5px/1 "SF Mono", Consolas, monospace; letter-spacing: .13em; }
@@ -1021,7 +1024,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 .preset-row button:hover { border-color: rgba(255,159,10,.62); background: rgba(255,159,10,.18); }
 
-/* Panneaux repliables : le chevron pivote, le corps disparaît. */
+/* Collapsible panels: the chevron rotates, the body disappears. */
 .panel-toggle {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 22px; height: 22px; margin-left: 2px; cursor: pointer;
@@ -1038,7 +1041,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
   .left-rail.collapsed,.situation-panel.collapsed { bottom: 154px; }
 }
 
-/* Enjeux humains : ce que le feu a pris et ce qu'il menace. */
+/* Human exposure: what the fire has taken and what it threatens. */
 .exposure-card { display: flex; flex-direction: column; gap: 7px; padding: 11px 13px;
   border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.02); }
 .exposure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -1057,7 +1060,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 .danger-button:hover { border-color: var(--fire-extreme); background: rgba(255,59,48,.12); }
 
-/* Sur ecran etroit l en-tete se resserre et l ancrage du popover sortait du
+/* On a narrow screen the header tightens and the popover anchor used to leave the
    cadre : on l accroche alors a la fenetre plutot qu au bouton. */
 @media (max-width: 620px) {
   .scenario-pop {
@@ -1068,11 +1071,11 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 
 /* ------------------------------------------------------------------ *
- * Tutoriel en surbrillance.
- * L'assombrissement vient de l'ombre portee du cadre de lumiere : elle
- * peint tout le viewport sauf le rectangle de l'etape, qui garde donc sa
- * couleur d'origine sans qu'on y touche. Un capteur separe bloque les
- * clics, car une ombre portee n'intercepte rien.
+ * Spotlight tutorial.
+ * The darkening comes from the spotlight's box-shadow: it paints the whole
+ * viewport except the step's rectangle, which therefore keeps its own
+ * colour untouched. A separate catcher blocks clicks, because a box-shadow
+ * intercepts nothing.
  * ------------------------------------------------------------------ */
 .tour { position: fixed; inset: 0; z-index: 300; opacity: 0; transition: opacity .24s var(--ease); }
 .tour-ready { opacity: 1; }
