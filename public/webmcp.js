@@ -1,17 +1,16 @@
 /**
- * Pont WebMCP de FireOps.
+ * FireNow WebMCP bridge.
  *
- * L'API `document.modelContext` n'existe aujourd'hui que dans les canaux
- * experimentaux. Sans elle, la page n'expose aucun outil et tout agent —
- * ChatGPT, Claude in Chrome, une extension MCP — ne voit qu'une carte muette.
+ * `document.modelContext` exists today only behind experimental flags. Without
+ * it the page exposes no tools at all, and any agent - ChatGPT, Claude in
+ * Chrome, an MCP extension - sees nothing but a mute map.
  *
- * Ce fichier ne remplace jamais une implementation native : il la detecte, s'y
- * range, et ne construit un contexte de repli que lorsqu'il n'y en a aucune.
- * Dans les deux cas il publie une entree unique, `window.__WEBMCP__`, qui
- * permet a un agent capable d'executer du JavaScript dans l'onglet de lister
- * les outils de la page et de les appeler.
+ * This file never replaces a native implementation: it detects one and steps
+ * aside, building a fallback context only when there is none. Either way it
+ * publishes a single entry point, `window.__WEBMCP__`, so an agent able to run
+ * JavaScript in the tab can list the page's tools and call them.
  *
- * Charge en tete de document, avant l'hydratation React.
+ * Loaded at the top of the document, before React hydrates.
  */
 (function () {
   'use strict';
@@ -29,7 +28,7 @@
     null;
 
   /* ------------------------------------------------------------------ *
-   * Contexte de repli conforme a la forme de `WebMCP.ModelContext`.
+   * Fallback context, shaped like `WebMCP.ModelContext`.
    * ------------------------------------------------------------------ */
 
   class PolyfilledModelContext extends EventTarget {
@@ -56,7 +55,7 @@
         return Promise.reject(new TypeError('Un outil WebMCP doit porter un nom.'));
       }
       if (typeof tool.execute !== 'function') {
-        return Promise.reject(new TypeError('L’outil « ' + tool.name + ' » n’a pas de fonction execute.'));
+        return Promise.reject(new TypeError('Tool "' + tool.name + '" has no execute function.'));
       }
       this._tools.set(tool.name, tool);
       const signal = options && options.signal;
@@ -76,13 +75,13 @@
       return Promise.resolve();
     }
 
-    /* Hors specification, mais attendu par plusieurs clients MCP existants. */
+    /* Outside the specification, but expected by several existing MCP clients. */
     unregisterTool(name) {
       if (this._tools.delete(name)) this._emitToolChange();
       return Promise.resolve();
     }
 
-    /* Forme historique de l'explainer : remplace la liste complete. */
+    /* Historical explainer shape: replaces the whole list. */
     provideContext(contextInit) {
       this._tools.clear();
       const tools = (contextInit && contextInit.tools) || [];
@@ -102,7 +101,7 @@
       if (!tool) return Promise.reject(new Error('Outil WebMCP inconnu : ' + name));
       const callOptions = {
         signal: (options && options.signal) || new AbortController().signal,
-        /* `commit_plan` s'en sert pour suspendre l'agent pendant la revue humaine. */
+        /* `commit_plan` uses this to suspend the agent during human review. */
         requestUserInteraction: (handler) => Promise.resolve(handler()),
       };
       return Promise.resolve().then(() => tool.execute(input || {}, callOptions));
@@ -129,7 +128,7 @@
     var descriptor = { configurable: true, enumerable: false, get: function () { return context; } };
     try { Object.defineProperty(Document.prototype, 'modelContext', descriptor); } catch (error) { reportError(error); }
     try { Object.defineProperty(Navigator.prototype, 'modelContext', descriptor); } catch (error) { reportError(error); }
-    /* Si la definition sur le prototype a echoue, on retombe sur l'instance. */
+    /* If defining on the prototype failed, fall back to the instance. */
     if (!document.modelContext) {
       try { Object.defineProperty(document, 'modelContext', descriptor); } catch (error) { reportError(error); }
     }
@@ -139,7 +138,7 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * Manifeste lisible dans le DOM, pour les agents qui lisent la page.
+   * A manifest readable from the DOM, for agents that read the page.
    * ------------------------------------------------------------------ */
 
   function listToolsSync() {
@@ -157,8 +156,8 @@
       document.head.appendChild(node);
     }
     node.textContent = JSON.stringify({ webmcp: VERSION, mode: mode, origin: location.origin, tools: tools });
-    /* Les attributs restent sur le manifeste : ecrire sur <html> ferait echouer
-       l'hydratation React, qui possede cet element. */
+    /* The attributes stay on the manifest: writing on <html> would break React
+       hydration, which owns that element. */
     node.setAttribute('data-webmcp', mode);
     node.setAttribute('data-webmcp-tools', String(tools.length));
   }
@@ -168,7 +167,7 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * Entree unique pour un agent qui execute du JavaScript dans l'onglet.
+   * Single entry point for an agent running JavaScript in the tab.
    * ------------------------------------------------------------------ */
 
   function listTools() {
@@ -203,7 +202,7 @@
 
   Object.defineProperty(window, '__WEBMCP__', { value: bridge, writable: false, configurable: true });
 
-  /* Un contexte natif ne tient pas le manifeste a jour : on l'y raccroche. */
+  /* A native context does not keep the manifest current, so hook it up. */
   if (mode === 'native' && typeof context.addEventListener === 'function') {
     context.addEventListener('toolchange', function () {
       if (typeof context.getTools !== 'function') return;
@@ -212,8 +211,8 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * Canal postMessage, pour un content script d'extension.
-   * Meme origine uniquement : un cadre tiers ne peut pas piloter la carte.
+   * postMessage channel, for an extension content script.
+   * Same origin only: a third-party frame cannot drive the map.
    * ------------------------------------------------------------------ */
 
   window.addEventListener('message', function (event) {

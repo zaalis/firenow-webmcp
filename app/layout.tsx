@@ -2,19 +2,27 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'FireOps — Commandement feux de forêt',
-  description: 'Simulateur agent-native d’aide à la décision pour les feux de forêt.',
-  applicationName: 'FireOps',
+  title: 'FireNow — Agent-native wildfire command',
+  description: 'Agent-native wildfire decision-support and training simulator. A WebMCP agent reads the situation and drafts a plan; a human commits it.',
+  applicationName: 'FireNow',
+  icons: {
+    icon: [
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
   openGraph: {
-    title: 'FireOps',
+    title: 'FireNow',
     description: 'Agent-native wildfire command',
     type: 'website',
-    locale: 'fr_FR',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'FireOps — Agent-native wildfire command' }],
+    locale: 'en_US',
+    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'FireNow — Agent-native wildfire command' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'FireOps',
+    title: 'FireNow',
     description: 'Agent-native wildfire command',
     images: ['/og.png'],
   },
@@ -26,12 +34,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr">
+    <html lang="en">
       <body>
-        {/* Le pont WebMCP doit exister avant l'hydratation : les outils de la
-            page s'enregistrent dessus des le premier rendu client, et un agent
-            injecte au chargement du document doit le trouver deja pose. Le
-            differer rouvrirait la course que ce fichier existe pour fermer. */}
+        {/* The WebMCP bridge has to exist before hydration: the page registers
+            its tools on it during the very first client render, and an agent
+            injected at document start must find it already in place. Deferring
+            it would reopen the race this file exists to close. */}
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
         <script src="/webmcp.js" />
         {children}

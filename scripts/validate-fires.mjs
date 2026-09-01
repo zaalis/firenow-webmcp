@@ -12,7 +12,7 @@ function engine() {
   const self = { postMessage() {} };
   const context = vm.createContext({ self, Math, Number, String, Array, Object, Infinity, Uint8Array, Uint16Array, Float32Array, Map, Set, atob: globalThis.atob });
   vm.runInContext(fs.readFileSync(workerPath, 'utf8'), context);
-  return self.__fireopsTest;
+  return self.__firenowTest;
 }
 
 const saumos2022Perimeter = JSON.parse(fs.readFileSync(path.join(ROOT, 'validation-data/saumos-2022-emsr633.geojson'), 'utf8'));
@@ -143,7 +143,7 @@ for (const fire of FIRES) {
     withSuppressionHa: fire.measureSuppression ? previousHa : null, withoutSuppressionHa });
 }
 
-console.log(`Validation FireOps · worker ${path.relative(ROOT, workerPath)}`);
+console.log(`FireNow validation · worker ${path.relative(ROOT, workerPath)}`);
 console.log('| Feu | Échéance | Réel (ha) | Modèle (ha) | Écart | Jaccard |');
 console.log('| --- | ---: | ---: | ---: | ---: | ---: |');
 for (const row of rows) console.log(`| ${row.fire} | ${row.deadline} | ${row.actualHa.toFixed(0)} | ${row.modelHa.toFixed(0)} | ${row.errorPct >= 0 ? '+' : ''}${row.errorPct.toFixed(1)} % | ${row.jaccard === null ? 'n/d' : row.jaccard.toFixed(3)} |`);
