@@ -332,7 +332,7 @@ export default function Landing() {
             <BrandMark />
             <span><strong>FireNow</strong><small>Training tool · not an incident command system</small></span>
           </div>
-          <a className="footer-link" href="https://github.com/zaalis/fireops-webmcp" target="_blank" rel="noreferrer">
+          <a className="footer-link" href="https://github.com/zaalis/firenow-webmcp" target="_blank" rel="noreferrer">
             Source code<ExternalLink size={13} aria-hidden="true" />
           </a>
         </div>
