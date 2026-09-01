@@ -2,6 +2,7 @@ import {
   ArrowRight, Bot, Check, Eye, ExternalLink, Layers3, Radar,
   ShieldCheck, Terminal, TriangleAlert, Wind,
 } from 'lucide-react';
+import LandingMotion from './landing-motion';
 import LoginClient from './login-client';
 
 const BrandMark = () => (
@@ -103,6 +104,8 @@ export default function Landing() {
         <a className="nav-cta" href="#access">Open the console<ArrowRight size={14} aria-hidden="true" /></a>
       </header>
 
+      <div className="nav-sentinel" aria-hidden="true" />
+
       <main id="content">
         <section className="landing-hero">
           <img
@@ -114,7 +117,7 @@ export default function Landing() {
             fetchPriority="high"
           />
           <div className="hero-veil" aria-hidden="true" />
-          <div className="hero-copy">
+          <div className="hero-copy" data-hero>
             <p className="landing-eyebrow"><Bot size={13} aria-hidden="true" />AGENT-NATIVE SIMULATOR · WEBMCP</p>
             <h1>The agent drafts the plan.<br />The officer commits it.</h1>
             <p className="hero-lede">
@@ -132,18 +135,18 @@ export default function Landing() {
               Training beta. It replaces neither the incident commander, nor field data, nor local procedure.
             </p>
           </div>
-          <dl className="hero-stats">
+          <dl className="hero-stats" data-reveal>
             {FIGURES.map((figure) => (
               <div key={figure.label}>
                 <dt>{figure.label}</dt>
-                <dd>{figure.value}</dd>
+                <dd data-count={figure.value}>{figure.value}</dd>
               </div>
             ))}
           </dl>
         </section>
 
         <section id="flow" className="landing-section">
-          <header className="section-head">
+          <header className="section-head" data-reveal>
             <p className="landing-eyebrow">WHAT THE AGENT DOES</p>
             <h2>Three separate surfaces, one decision</h2>
             <p className="section-lede">
@@ -152,7 +155,7 @@ export default function Landing() {
               without interrupting anyone.
             </p>
           </header>
-          <ol className="etapes">
+          <ol className="etapes" data-reveal>
             {STEPS.map((step) => {
               const Icon = step.icon;
               return (
@@ -174,7 +177,7 @@ export default function Landing() {
         </section>
 
         <section id="webmcp" className="landing-section landing-section-alt">
-          <div className="split">
+          <div className="split" data-reveal>
             <div>
               <p className="landing-eyebrow"><Terminal size={13} aria-hidden="true" />THE INTEGRATION</p>
               <h2>The page is the tool server</h2>
@@ -195,7 +198,7 @@ export default function Landing() {
                 <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
               </p>
             </div>
-            <figure className="code-card glass-panel">
+            <figure className="code-card glass-panel" data-reveal>
               <figcaption>app/firenow-client.tsx</figcaption>
               <pre><code>{SNIPPET}</code></pre>
             </figure>
@@ -203,7 +206,7 @@ export default function Landing() {
         </section>
 
         <section id="engine" className="landing-section">
-          <div className="split split-media">
+          <div className="split split-media" data-reveal>
             <figure className="media-card">
               <img
                 src="/media/largage-aerien.jpg"
@@ -234,7 +237,7 @@ export default function Landing() {
         </section>
 
         <section id="validation" className="landing-section landing-section-alt">
-          <header className="section-head">
+          <header className="section-head" data-reveal>
             <p className="landing-eyebrow"><TriangleAlert size={13} aria-hidden="true" />WHAT THE MODEL CANNOT DO YET</p>
             <h2>The engine is not calibrated, and the repository says so</h2>
             <p className="section-lede">
@@ -243,7 +246,7 @@ export default function Landing() {
               measured on 28 August 2026, published rather than hidden behind a tuning factor.
             </p>
           </header>
-          <div className="ecarts">
+          <div className="ecarts" data-reveal>
             {GAPS.map((gap) => (
               <article key={gap.measure} className={'ecart-card glass-panel ' + gap.tone}>
                 <p className="ecart-mesure">{gap.measure}</p>
@@ -252,7 +255,7 @@ export default function Landing() {
               </article>
             ))}
           </div>
-          <p className="validation-note">
+          <p className="validation-note" data-reveal>
             The two runs miss in opposite directions, so <code>ablate-calibration.mjs</code> varies one
             engine term at a time to find out which. The answer is a single rule: a perimeter cell is
             extinguished <em>for good</em> once it holds below 500 kW/m for 45 minutes. Switching that
@@ -268,7 +271,7 @@ export default function Landing() {
         </section>
 
         <section id="scenarios" className="landing-section">
-          <div className="split split-media reverse">
+          <div className="split split-media reverse" data-reveal>
             <div>
               <p className="landing-eyebrow"><Wind size={13} aria-hidden="true" />THE INPUTS</p>
               <h2>Five scenarios, three ecological regions</h2>
@@ -276,7 +279,7 @@ export default function Landing() {
                 Each scenario keeps its own ignition, weather and units. Switching simulations pauses
                 the previous one without losing anything.
               </p>
-              <ul className="scenario-cards">
+              <ul className="scenario-cards" data-reveal>
                 {SCENARIOS.map((scenario) => (
                   <li key={scenario.name} className="glass-panel">
                     <p className="scenario-nature">{scenario.kind}</p>
@@ -310,7 +313,7 @@ export default function Landing() {
             loading="lazy"
           />
           <div className="access-veil" aria-hidden="true" />
-          <div className="access-inner">
+          <div className="access-inner" data-reveal>
             <div className="access-copy">
               <p className="landing-eyebrow">OPERATIONAL ACCESS</p>
               <h2>Open the console</h2>
@@ -341,7 +344,7 @@ export default function Landing() {
             Source code<ExternalLink size={13} aria-hidden="true" />
           </a>
         </div>
-        <div className="footer-credits">
+        <div className="footer-credits" data-reveal>
           <p className="footer-credits-head">Photographs — public domain</p>
           <ul>
             {CREDITS.map((credit) => (
@@ -357,6 +360,8 @@ export default function Landing() {
           Open-Meteo weather archive · code under the MIT licence.
         </p>
       </footer>
+
+      <LandingMotion />
     </div>
   );
 }
