@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.1.0';
+  var VERSION = '1.2.0';
   var MANIFEST_ID = 'webmcp-manifest';
 
   /* Repeated verbatim on every surface: the manifest, the <meta> tag in the
@@ -37,10 +37,10 @@
     + 'tools - do not click, drag or type on the map. Read the situation with '
     + 'get_situation first, open a draft with propose_plan, add the actions with '
     + 'the stage_* tools, then call commit_plan, which asks the human operator '
-    + 'for the single approval that applies the whole plan. If your client has '
-    + 'no WebMCP support, use the "Agent bridge" panel in the page: pick the '
-    + 'tool, type its JSON arguments, submit, and read the result back from the '
-    + 'page. Every route runs the same tool implementation.';
+    + 'for the single approval that applies the whole plan. If the browser does '
+    + 'not expose native site tools, do not use the mouse: use the webmcp:call '
+    + 'DOM event channel described in #webmcp-manifest, or navigate to the URL '
+    + 'fallback. Every transport runs the same tool implementation.';
 
   function reportError(error) {
     if (typeof console !== 'undefined' && console.debug) console.debug('[webmcp]', error);
@@ -195,6 +195,12 @@
       fallbackTransport: {
         domForm: '#agent-bridge',
         urlTemplate: location.origin + '/?tool=TOOL_NAME&args=URL_ENCODED_JSON',
+        domEvents: {
+          request: 'webmcp:call',
+          response: 'webmcp:result',
+          listToolsDetail: { id: 'unique-call-id', type: 'list-tools' },
+          callToolDetail: { id: 'unique-call-id', type: 'call-tool', name: 'TOOL_NAME', input: {} },
+        },
       },
       tools: tools,
     });

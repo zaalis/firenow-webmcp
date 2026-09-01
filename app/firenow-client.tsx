@@ -1734,7 +1734,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   </div>
 </div>
 <ol className="connect-steps">
-  <li><b>1</b><span>Open this tab with an agent: the ChatGPT app, a browser extension, or Chrome with the WebMCP flag.</span></li>
+  <li><b>1</b><span>For native site tools, open this tab in the ChatGPT desktop browser or a browser that exposes document.modelContext.</span></li>
   <li><b>2</b><span>Stay signed in: the agent inherits your session, with no API key and no OAuth.</span></li>
   <li><b>3</b><span>Ask in plain language. The agent calls the page&apos;s tools, never the other way round.</span></li>
   <li><b>4</b><span>It drafts a ghost plan without interrupting you, then asks for <em>one</em> approval to commit it all.</span></li>
@@ -1742,7 +1742,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
 <div className="bridge-probe">
   <span>CHECK IT FROM THE BROWSER CONSOLE</span>
   <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
-  <small>{toolTransport === 'native' ? 'document.modelContext comes from the browser.' : 'document.modelContext comes from the page, through /webmcp.js.'}</small>
+  <small>{toolTransport === 'native' ? 'document.modelContext comes from the browser.' : 'The page bridge also exposes a no-mouse DOM event transport for isolated extensions.'}</small>
 </div>
 <div className="security-note"><ShieldCheck size={18} /><div><strong>No API key, no access beyond this page</strong><span>The agent acts inside your live session. Every parameter is validated before it runs.</span></div></div><div className="tool-groups">{[['Read',toolNames.slice(0,6)],['Draft',toolNames.slice(6,12)],['Commit',toolNames.slice(12,14)],['Simulation & map',toolNames.slice(14)]].map(([label,names]) => <details className="tool-group" open key={String(label)}><summary><span>{String(label)}</span><b>{(names as string[]).length}</b><ChevronDown size={13} /></summary><div>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Read' ? 'Read-only' : label === 'Draft' ? 'Ghost · no confirmation' : label === 'Commit' ? 'Traceable & reversible' : 'Local simulation'}</span></div>)}</div></details>)}</div></section></Modal>}
 
