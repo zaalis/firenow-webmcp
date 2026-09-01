@@ -3,19 +3,13 @@
 /**
  * The agent bridge.
  *
- * `document.modelContext` and `window.__WEBMCP__` are JavaScript objects living
- * in the page's main world. An agent that drives a tab through screenshots and
- * the accessibility tree - which is what ChatGPT does today - never evaluates
- * JavaScript there, and an extension content script runs in an isolated world
- * where those objects do not exist at all. Such an agent reads "21 WebMCP tools
- * live" in the header, finds no way to call any of them, and correctly reports
- * that the tools are not exposed to its session.
+ * `document.modelContext` is the native site-tools surface. Some extension
+ * clients instead run in an isolated JavaScript world, where page objects are
+ * not directly visible.
  *
- * This panel is the missing transport. It puts the directive, the tool
- * catalogue, an invocation form and the result into the DOM, where every agent
- * can read and type. It calls the same `callTool` the JavaScript surfaces use,
- * so a call made here is a real WebMCP call: same validation, same journal,
- * same human approval on `commit_plan`.
+ * This compact panel documents the no-mouse fallback and offers a human test
+ * console. It calls the same `callTool` implementation as the native surface:
+ * same validation, same journal, same human approval on `commit_plan`.
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -194,19 +188,19 @@ export default function AgentBridge({ initialCall = null }: { initialCall?: Init
         onClick={() => setOpen((value) => !value)}>
         <span className="bridge-icon" aria-hidden="true"><Bot size={14} /></span>
         <span className="bridge-headline">
-          <small>AGENT DIRECTIVE</small>
-          <strong>Call the WebMCP tools of this page. Do not drive the map with the mouse.</strong>
+          <small>AGENT TOOLS</small>
+          <strong>{tools.length} WebMCP tools</strong>
         </span>
-        <span className="bridge-tools">{tools.length} tools · {tools.map((tool) => tool.name).join(' · ')}</span>
+        <span className="bridge-tools">Call tools · never drive the map</span>
         <span className="bridge-caret" aria-hidden="true"><ChevronDown size={13} /></span>
       </button>
 
       {open && <div className="bridge-body" id="agent-bridge-body">
         <p className="bridge-directive">{AGENT_DIRECTIVE}</p>
         <p className="bridge-directive faint">
-          If your client speaks WebMCP, the tools are on <code>document.modelContext</code>. If it does not, this form is the
-          supported route: it runs the same implementation, and the result comes back below as JSON. A call can also be made by
-          navigating to <code>/?tool=NAME&amp;args=URL_ENCODED_JSON</code>.
+          Native site tools are registered on <code>document.modelContext</code>. An isolated Chrome extension can call the same
+          implementation without a mouse through the <code>webmcp:call</code> / <code>webmcp:result</code> DOM events documented
+          in <code>#webmcp-manifest</code>. URL fallback: <code>/?tool=NAME&amp;args=URL_ENCODED_JSON</code>.
         </p>
 
         <form className="bridge-form" onSubmit={submit}>

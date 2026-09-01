@@ -1244,6 +1244,10 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
   position: absolute; z-index: 13; left: 306px; right: 342px; top: 90px;
   border-radius: 14px; border-color: rgba(191,122,240,.30); background: var(--panel-hi);
 }
+.agent-bridge:not(.open) {
+  left: 50%; right: auto; width: min(248px, calc(100% - 24px));
+  transform: translateX(-50%); border-radius: 999px;
+}
 .agent-bridge.open {
   /* Bounded rather than stretched to the timeline: the map has to stay
      readable behind an open bridge. */
@@ -1254,6 +1258,14 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
   width: 100%; min-height: 46px; padding: 7px 10px; cursor: pointer; border: 0; border-radius: 14px;
   background: transparent; color: var(--text); text-align: left;
 }
+.agent-bridge:not(.open) .bridge-bar {
+  grid-template-columns: auto minmax(0,1fr) auto; min-height: 38px; padding: 4px 8px;
+  border-radius: 999px;
+}
+.agent-bridge:not(.open) .bridge-icon { width: 28px; height: 28px; border-radius: 50%; }
+.agent-bridge:not(.open) .bridge-headline { flex-direction: row; align-items: baseline; gap: 6px; }
+.agent-bridge:not(.open) .bridge-headline strong { margin-top: 0; font-size: 9.5px; }
+.agent-bridge:not(.open) .bridge-tools { display: none; }
 .bridge-icon {
   width: 30px; height: 30px; display: grid; place-items: center; flex: none;
   border-radius: 9px; border: 1px solid rgba(191,122,240,.34); background: rgba(191,122,240,.12); color: var(--agent);
@@ -1315,6 +1327,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 @media (max-width: 900px) {
   .agent-bridge { left: 12px; right: 12px; top: 82px; }
+  .agent-bridge:not(.open) { left: 50%; right: auto; }
   .agent-bridge.open { max-height: calc(100vh - 200px); }
   .bridge-form { grid-template-columns: minmax(0,1fr); }
 }

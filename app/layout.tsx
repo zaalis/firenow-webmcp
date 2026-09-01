@@ -25,7 +25,7 @@ export const metadata: Metadata = {
      sentence is repeated in the WebMCP manifest and in the page itself, so the
      rule is the same wherever the agent happens to look first. */
   other: {
-    'agent-instructions': 'FireNow is tool-driven. Call the WebMCP tools registered on document.modelContext instead of clicking or dragging the map. Read with get_situation, draft with propose_plan and the stage_* tools, then call commit_plan, which asks the human operator for one approval. Clients without WebMCP support can drive the same tools from the "Agent bridge" panel (#agent-bridge) in the page, or by navigating to /?tool=NAME&args=URL_ENCODED_JSON.',
+    'agent-instructions': 'FireNow is tool-driven. Call the WebMCP tools registered on document.modelContext instead of clicking or dragging the map. Read with get_situation, draft with propose_plan and the stage_* tools, then call commit_plan, which asks the human operator for one approval. If native site tools are unavailable in an isolated extension, call the same implementation without a mouse through the webmcp:call and webmcp:result DOM events documented in #webmcp-manifest, or use /?tool=NAME&args=URL_ENCODED_JSON.',
   },
   twitter: {
     card: 'summary_large_image',
