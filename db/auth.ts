@@ -3,8 +3,8 @@ import { cookies } from 'next/headers';
 import { argon2idAsync } from '@noble/hashes/argon2.js';
 import { authSchema } from './schema';
 
-const SESSION_COOKIE = 'fireops_session';
-const CSRF_COOKIE = 'fireops_csrf';
+const SESSION_COOKIE = 'firenow_session';
+const CSRF_COOKIE = 'firenow_csrf';
 const SESSION_SECONDS = 60 * 60 * 8;
 
 type UserRow = { id: string; email: string; password_hash: string };
@@ -142,7 +142,7 @@ export async function isPwnedPassword(password: string) {
   const suffix = digest.slice(5);
   try {
     const response = await fetch('https://api.pwnedpasswords.com/range/' + prefix, {
-      headers: { 'Add-Padding': 'true', 'User-Agent': 'FireOps-beta' },
+      headers: { 'Add-Padding': 'true', 'User-Agent': 'FireNow-beta' },
     });
     if (!response.ok) return false;
     const body = await response.text();

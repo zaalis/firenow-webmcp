@@ -1,4 +1,4 @@
-/* FireOps local wildfire engine: Rothermel (1972), Alexander (1985), 128 x 128 cellular grid. */
+/* FireNow local wildfire engine: Rothermel (1972), Alexander (1985), 128 x 128 cellular grid. */
 const GRID_SIZE = 128;
 // Nombre maximal de foyers secondaires acceptes en plus du foyer principal.
 const MAX_EXTRA_IGNITIONS = 16;
@@ -1140,18 +1140,18 @@ function ringsToGeoJSON(filled) {
 }
 function perimeterGeoJSON(sim) {
   const feature = ringsToGeoJSON((x, y) => sim.state[indexOf(x, y)] > 0);
-  feature.properties = { source: 'FireOps cellular simulation', layer: 'perimetre' };
+  feature.properties = { source: 'FireNow cellular simulation', layer: 'perimetre' };
   return feature;
 }
 // Bande en flammes : cellules encore dans leur temps de residence.
 function activeFrontGeoJSON(sim) {
   const feature = ringsToGeoJSON((x, y) => sim.state[indexOf(x, y)] === 1);
-  feature.properties = { source: 'FireOps cellular simulation', layer: 'front-actif' };
+  feature.properties = { source: 'FireNow cellular simulation', layer: 'front-actif' };
   return feature;
 }
 function extinguishedEdgeGeoJSON(sim) {
   const feature = ringsToGeoJSON((x, y) => sim.state[indexOf(x, y)] === 3);
-  feature.properties = { source: 'FireOps cellular simulation', layer: 'lisiere-eteinte' };
+  feature.properties = { source: 'FireNow cellular simulation', layer: 'lisiere-eteinte' };
   return feature;
 }
 function cloneState(sim){return{state:sim.state.slice(),arrival:sim.arrival.slice(),lowIntensitySince:sim.lowIntensitySince.slice(),constructedBreak:sim.constructedBreak.slice(),heldBreak:sim.heldBreak.slice(),lineProgressM:{...sim.lineProgressM},lineCellsBuilt:{...sim.lineCellsBuilt},explicitLinesReady:sim.explicitLinesReady,tacticalBurnsReady:sim.tacticalBurnsReady,fuel:sim.fuel.slice(),currentMinutes:sim.currentMinutes,ignition:sim.ignition,extraIgnitions:sim.extraIgnitions,infra:sim.infra,people:sim.people,network:sim.network,slope:sim.slope,aspect:sim.aspect,landscapeSources:sim.landscapeSources,landscapeAppliedCells:sim.landscapeAppliedCells};}
@@ -1321,5 +1321,5 @@ const key=configureDomain(input.domain);const domainChanged=key!==DOMAIN_KEY;DOM
 const independent=Boolean(input.independent);const sim=independent||input.reset||!scenario?createState({...(input.ignitionLngLat||{}),extraIgnitions:input.extraIgnitions,terrain:input.terrain,landscape:input.landscape}):scenario;const target=Number.isFinite(input.targetMinutes)?Math.max(0,input.targetMinutes):sim.currentMinutes+clamp(input.minutes||0,0,1440);// Avancer d'un bloc figerait les moyens sur le front du debut de pas. On
 // decoupe pour qu'ils se reportent au fur et a mesure, comme sur le terrain.
 const STEP=15;let spread,lastEnvironment=environmentAt(input,sim.currentMinutes);{let cursor=sim.currentMinutes;do{cursor=Math.min(target,cursor+STEP);lastEnvironment=environmentAt(input,cursor);spread=propagate(sim,lastEnvironment,cursor);}while(cursor<target);}if(!independent)scenario=sim;const result=resultFor(sim,lastEnvironment,spread);result.diurnal={hourOfDay:Number(lastEnvironment.hourOfDay.toFixed(2)),daylightFactor:Number(lastEnvironment.daylightFactor.toFixed(3)),wafScale:Number(lastEnvironment.wafScale.toFixed(3)),activeFraction:Number(lastEnvironment.activeFraction.toFixed(3))};if(input.includeForecast){const forecast=cloneState(sim);let projected=spread,forecastCursor=target,forecastEnvironment=lastEnvironment;while(forecastCursor<target+180){forecastCursor=Math.min(target+180,forecastCursor+STEP);forecastEnvironment=environmentAt(input,forecastCursor);projected=propagate(forecast,forecastEnvironment,forecastCursor);}result.forecastPerimeterGeoJSON=perimeterGeoJSON(forecast);result.forecastMinutes=target+180;result.forecastBurnedHa=Number((projected.affectedCells*CELL_METERS*CELL_METERS/10000).toFixed(2));}return result;}
-self.__fireopsTest={buildInfrastructure,decodeLandscape,landscapeIndexAt,localFireInput,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,crossingDelayMinutes,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
+self.__firenowTest={buildInfrastructure,decodeLandscape,landscapeIndexAt,localFireInput,NETWORKS,INFRA_TRACK,INFRA_ROAD,INFRA_BUILT,speciesAt,cellForLngLat,lngLatForCell,APPLIANCES,SPECIES,FUEL_MODELS,REGIONS,speciesMix,generateFuelMask,simulate,rothermelRateOfSpread,deriveMoisture,environmentAt,daylightProfile,firelineIntensity,sustainedFlowLpm,crossingDelayMinutes,APPLIANCES,GRID_SIZE,configureDomain,get IGNITION(){return IGNITION;},get CELL_METERS(){return CELL_METERS;}};
 self.onmessage=(event)=>{const message=event.data||{};try{self.postMessage({id:message.id,ok:true,result:simulate(message)});}catch(error){self.postMessage({id:message.id,ok:false,error:error instanceof Error?error.message:'Simulation worker error'});}};

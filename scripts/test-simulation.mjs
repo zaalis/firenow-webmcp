@@ -7,7 +7,7 @@ function engine() {
   const self = { postMessage() {} };
   const context = vm.createContext({ self, Math, Number, String, Array, Object, Infinity, Uint8Array, Uint16Array, Float32Array, Map, Set, atob: globalThis.atob });
   vm.runInContext(fs.readFileSync(new URL('../public/simulation.worker.js', import.meta.url), 'utf8'), context);
-  return self.__fireopsTest;
+  return self.__firenowTest;
 }
 const e = engine();
 const IGNITION = { lng: -0.4540519, lat: 44.5897472, radiusM: 0 };

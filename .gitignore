@@ -41,5 +41,7 @@ next-env.d.ts
 tsconfig.tsbuildinfo
 
 # journaux du serveur de dev local
+firenow-dev.log
+firenow-dev.err.log
 fireops-dev.log
 fireops-dev.err.log
