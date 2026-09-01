@@ -253,12 +253,17 @@ export default function Landing() {
             ))}
           </div>
           <p className="validation-note">
-            The two Saumos runs miss in opposite directions, which is the signature of a missing driver
-            rather than a wrong constant — most likely fuel moisture conditioning and the wind profile
-            over the canopy, neither of which is fitted to the site. Until that is closed, the
-            &ldquo;not calibrated&rdquo; banner stays in the interface. Over a few hours the model is
-            useful for comparing options: front intensity, feasible attack mode, whether committed flow
-            is sufficient, who is exposed. Over several days it is not, and the interface says so.
+            The two runs miss in opposite directions, so <code>ablate-calibration.mjs</code> varies one
+            engine term at a time to find out which. The answer is a single rule: a perimeter cell is
+            extinguished <em>for good</em> once it holds below 500 kW/m for 45 minutes. Switching that
+            off alone brings Saumos 2026 to 43,701 ha against 42,000 observed, and inflates Saumos 2022
+            sixteenfold. One fixed threshold, in absolute kW/m, is bounding both fires — too weakly for
+            a mild one, far too strongly for a severe one — and it is irreversible, so a front that lies
+            down overnight can never run again the next afternoon. The measurement is published; the
+            fix is not written yet, and the &ldquo;not calibrated&rdquo; banner stays until it is. Over
+            a few hours the model is still useful for comparing options: front intensity, feasible
+            attack mode, whether committed flow is sufficient, who is exposed. Over several days it is
+            not, and the interface says so.
           </p>
         </section>
 
