@@ -166,6 +166,7 @@ les remet en phase après une mise à jour de `maplibre-gl`.
 - Test mobile terrain et validation métier par des sapeurs-pompiers non réalisés.
 - Le fond cartographique est servi jusqu’au niveau de zoom 16 ; au-delà la dernière tuile est étirée.
 - Le bundle MapLibre dépasse l’avertissement de 500 kB et gagnerait à être découpé.
+- `npm run start` ne démarre pas en local : le serveur importe `cloudflare:workers`, que le chargeur ESM de Node ne connaît pas. `npm run dev` exécute déjà le code serveur dans le runtime Workers via le plugin Vite Cloudflare ; c’est là qu’une vérification locale a lieu.
 
 ## Licence
 
