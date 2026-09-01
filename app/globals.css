@@ -644,6 +644,110 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
   .split.reverse > figure { order: 0; }
   .hero-veil { background: linear-gradient(180deg, rgba(8,9,10,.78) 0%, rgba(8,9,10,.88) 40%, rgba(8,9,10,.96) 100%); }
 }
+
+/* ------------------------------------------------------------------ *
+ * Presentation page motion.
+ *
+ * Everything here hangs off `[data-motion="on"]`, which landing-motion.tsx
+ * sets only after it has checked the reader's motion preference. The page
+ * therefore ships fully visible: no JavaScript, or reduced motion, means a
+ * static page rather than a blank one. Only transform and opacity are
+ * animated, so nothing here can shift the layout.
+ * ------------------------------------------------------------------ */
+
+/* The sticky bar would otherwise sit on top of whatever an anchor lands on. */
+.landing-shell [id] { scroll-margin-top: 92px; }
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.landing-shell) { scroll-behavior: smooth; }
+}
+
+.nav-sentinel { height: 1px; margin-bottom: -1px; pointer-events: none; }
+.landing-nav {
+  background: rgba(8,9,10,.62); border-bottom-color: transparent;
+  transition: background .3s var(--ease), border-color .3s var(--ease), box-shadow .3s var(--ease);
+}
+.nav-pinned .landing-nav {
+  background: rgba(8,9,10,.9); border-bottom-color: var(--border);
+  box-shadow: 0 10px 30px rgba(0,0,0,.34);
+}
+
+/* --- Hero: the photo drifts, the copy arrives line by line --- */
+@keyframes hero-drift {
+  from { transform: scale(1.04) translate3d(0, 0, 0); }
+  to   { transform: scale(1.13) translate3d(-1.6%, -1.2%, 0); }
+}
+@keyframes ember-breathe {
+  from { opacity: .38; }
+  to   { opacity: 1; }
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translate3d(0, 26px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+.landing-shell[data-motion="on"] .hero-photo {
+  animation: hero-drift 34s var(--ease) infinite alternate;
+}
+/* A slow warm swell where the fire sits in the photograph. */
+.landing-shell[data-motion="on"] .hero-veil::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(58% 48% at 24% 60%, rgba(255,107,0,.17), transparent 72%);
+  animation: ember-breathe 11s ease-in-out infinite alternate;
+}
+.landing-shell[data-motion="on"] [data-hero] > * {
+  animation: rise-in .72s var(--ease) backwards;
+}
+.landing-shell[data-motion="on"] [data-hero] > *:nth-child(1) { animation-delay: .06s; }
+.landing-shell[data-motion="on"] [data-hero] > *:nth-child(2) { animation-delay: .14s; }
+.landing-shell[data-motion="on"] [data-hero] > *:nth-child(3) { animation-delay: .24s; }
+.landing-shell[data-motion="on"] [data-hero] > *:nth-child(4) { animation-delay: .34s; }
+.landing-shell[data-motion="on"] [data-hero] > *:nth-child(5) { animation-delay: .44s; }
+
+/* --- Blocks that arrive as one piece --- */
+.landing-shell[data-motion="on"] [data-reveal] {
+  opacity: 0; transform: translate3d(0, 22px, 0);
+}
+.landing-shell[data-motion="on"] [data-reveal].is-visible {
+  opacity: 1; transform: none;
+  transition: opacity .55s var(--ease), transform .55s var(--ease);
+}
+
+/* --- Grids arrive item by item: the container only fades, the items rise --- */
+.landing-shell[data-motion="on"] .hero-stats,
+.landing-shell[data-motion="on"] .etapes,
+.landing-shell[data-motion="on"] .ecarts,
+.landing-shell[data-motion="on"] .scenario-cards { transform: none; }
+
+.landing-shell[data-motion="on"] .hero-stats.is-visible > div,
+.landing-shell[data-motion="on"] .etapes.is-visible > li,
+.landing-shell[data-motion="on"] .ecarts.is-visible > article,
+.landing-shell[data-motion="on"] .scenario-cards.is-visible > li {
+  animation: rise-in .5s var(--ease) backwards;
+}
+.landing-shell[data-motion="on"] .is-visible > *:nth-child(2) { animation-delay: .07s; }
+.landing-shell[data-motion="on"] .is-visible > *:nth-child(3) { animation-delay: .14s; }
+.landing-shell[data-motion="on"] .is-visible > *:nth-child(4) { animation-delay: .21s; }
+.landing-shell[data-motion="on"] .is-visible > *:nth-child(5) { animation-delay: .28s; }
+
+/* --- Hover, for pointers that have one --- */
+@media (hover: hover) {
+  .etape-card, .ecart-card, .scenario-cards li, .media-card img {
+    transition: transform .28s var(--ease), border-color .28s var(--ease), box-shadow .28s var(--ease);
+  }
+  .etape-card:hover, .ecart-card:hover, .scenario-cards li:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+    box-shadow: 0 18px 40px rgba(0,0,0,.36);
+  }
+  .media-card:hover img { transform: scale(1.015); }
+  .landing-primary:hover, .nav-cta:hover { transform: translateY(-1px); }
+  .footer-credits a { transition: border-color .2s var(--ease), color .2s var(--ease); }
+}
+
+/* The catalogue chips answer the pointer without moving their own box. */
+.etape-tools code { transition: background .2s var(--ease), color .2s var(--ease); }
+.etape-card:hover .etape-tools code { background: rgba(255,255,255,.1); color: var(--text); }
+
 @media (prefers-reduced-motion: reduce) {
   .landing-shell * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

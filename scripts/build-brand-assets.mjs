@@ -62,6 +62,28 @@ async function tile(size) {
     .toBuffer();
 }
 
+/**
+ * A browser that has no <link rel="icon"> to go on asks for /favicon.ico by
+ * name, and so do bookmark and feed readers. The ICO container accepts a PNG
+ * payload verbatim, so this wraps one rather than pulling in an encoder.
+ */
+function icoFromPng(png, size) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);   // reserved
+  header.writeUInt16LE(1, 2);   // type: icon
+  header.writeUInt16LE(1, 4);   // one image
+  const entry = Buffer.alloc(16);
+  entry.writeUInt8(size >= 256 ? 0 : size, 0);  // width, 0 means 256
+  entry.writeUInt8(size >= 256 ? 0 : size, 1);  // height
+  entry.writeUInt8(0, 2);       // palette colours
+  entry.writeUInt8(0, 3);       // reserved
+  entry.writeUInt16LE(1, 4);    // colour planes
+  entry.writeUInt16LE(32, 6);   // bits per pixel
+  entry.writeUInt32LE(png.length, 8);
+  entry.writeUInt32LE(header.length + entry.length, 12);
+  return Buffer.concat([header, entry, png]);
+}
+
 async function openGraph() {
   const width = 1200;
   const height = 630;
@@ -88,18 +110,21 @@ async function openGraph() {
 
 await mkdir(brandDir, { recursive: true });
 
+const favicon32 = await tile(32);
+
 const outputs = [
+  [join(publicDir, 'favicon.ico'), icoFromPng(favicon32, 32)],
   [join(brandDir, 'mark.png'), await tintedMark(MARK, GREEN)],
   [join(brandDir, 'mark-light.png'), await tintedMark(MARK, '#FFFFFF')],
   [join(publicDir, 'icon-512.png'), await tile(512)],
   [join(publicDir, 'favicon-192.png'), await tile(192)],
   [join(publicDir, 'apple-touch-icon.png'), await tile(180)],
-  [join(publicDir, 'favicon-32.png'), await tile(32)],
+  [join(publicDir, 'favicon-32.png'), favicon32],
   [join(publicDir, 'og.png'), await openGraph()],
 ];
 
 for (const [path, data] of outputs) {
   await writeFile(path, data);
-  const { width, height } = await sharp(data).metadata();
-  console.log(`${path.slice(root.length + 1)}  ${width}x${height}  ${Math.round(data.length / 1024)} kB`);
+  const label = path.endsWith('.ico') ? '32x32' : await sharp(data).metadata().then((m) => `${m.width}x${m.height}`);
+  console.log(`${path.slice(root.length + 1)}  ${label}  ${Math.round(data.length / 1024)} kB`);
 }
