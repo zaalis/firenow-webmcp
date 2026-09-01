@@ -12,14 +12,15 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Tour, { TOUR_PENDING_KEY, type TourStep } from './tour';
+import AgentBridge, { type InitialToolCall } from './agent-bridge';
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
 type WeatherSeriesPoint = { hourFromStart: number; temperature: number; humidity: number; windKph: number; windBearingDegrees: number };
 type Domain = { lng: number; lat: number; boxMetres: number };
 type Exposure = {
-  populationAtteinte: number; populationMenacee: number;
-  surfaceBatieHa: number; pistesCoupeesKm: number; routesCoupeesKm: number;
+  residentsReached: number; residentsAtRisk: number;
+  builtAreaBurnedHa: number; tracksCutKm: number; roadsCutKm: number;
 };
 type Region = 'gironde' | 'marseille' | 'california-basin' | 'california-chaparral' | 'california-sierra';
 type Terrain = { region?: Region; oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
@@ -41,8 +42,8 @@ type Suppression = {
   firelineIntensityKwM: number; meanIntensityKwM: number; activePerimeterM: number;
   headM: number; flankM: number; rearM: number; requiredFlowLpm: number;
   deployedFlowLpm: number; containmentRatio: number; containmentMinutes: number | null;
-  litresPerHour: number; attackViable: boolean; status: 'eteint' | 'maitrise' | 'contenu' | 'libre';
-  attackMode: 'directe' | 'moyens-lourds' | 'indirect'; appliances: number; lineMetresPerHour: number;
+  litresPerHour: number; attackViable: boolean; status: 'out' | 'controlled' | 'contained' | 'spreading';
+  attackMode: 'direct' | 'heavy-units' | 'indirect'; appliances: number; lineMetresPerHour: number;
 };
 type Scenario = {
   id: string; name: string; createdAt: number; preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank';
@@ -131,8 +132,8 @@ const planDescriptions = [
 ];
 const defaultIgnition: Ignition = { lng: -0.4540519, lat: 44.5897472, radiusM: 0 };
 const landirasUnits = (): Deployment[] => [
-  { id: 'ccf22', type: 'CCF', count: 22, sector: 'North-east flank', mission: 'Tenue du flanc gauche', lng: -0.4159, lat: 44.6088, radiusM: 2200, capacity: 0.09 },
-  { id: 'ccf18', type: 'CCF', count: 18, sector: 'Flanc sud-ouest', mission: 'Tenue du flanc droit', lng: -0.4922, lat: 44.5707, radiusM: 2200, capacity: 0.09 },
+  { id: 'ccf22', type: 'CCF', count: 22, sector: 'North-east flank', mission: 'Hold the left flank', lng: -0.4159, lat: 44.6088, radiusM: 2200, capacity: 0.09 },
+  { id: 'ccf18', type: 'CCF', count: 18, sector: 'South-west flank', mission: 'Hold the right flank', lng: -0.4922, lat: 44.5707, radiusM: 2200, capacity: 0.09 },
   { id: 'fpt08', type: 'FPT', count: 8, sector: 'South-east', mission: 'Structure defence', lng: -0.4139, lat: 44.5611, radiusM: 1600, capacity: 0.06 },
   { id: 'cl404', type: 'CL4', count: 4, sector: 'Head', mission: 'Drops on the fire head', lng: -0.4272, lat: 44.5707, radiusM: 2600, capacity: 0.08 },
   { id: 'hbe02', type: 'HBE', count: 2, sector: 'North-east flank', mission: 'Helicopter support', lng: -0.4362, lat: 44.6025, radiusM: 1800, capacity: 0.08 },
@@ -171,7 +172,7 @@ const ETOILE_TERRAIN: Terrain = {
   ],
 };
 const etoileWeather = (): Weather => ({
-  windSpeed: 55, windDirection: 'Nord-ouest', windBearing: 135, gusts: 82,
+  windSpeed: 55, windDirection: 'North-west', windBearing: 135, gusts: 82,
   temperature: 34, humidity: 24, droughtIndex: 0.88,
 });
 const etoileUnits = (): Deployment[] => [
@@ -182,34 +183,34 @@ const etoileUnits = (): Deployment[] => [
 ];
 
 // Bug Fire: Long Valley, Lassen County. Sagebrush, grass and pinyon-juniper,
-// vent d'ouest soutenu (Washoe Zephyr), moyens tres legers.
+// sustained west wind (Washoe Zephyr), very light units.
 const BUG_IGNITION: Ignition = { lng: -120.0366, lat: 39.7229, radiusM: 0 };
 const BUG_DOMAIN: Domain = { lng: -119.90, lat: 39.72, boxMetres: 50000 };
 const BUG_TERRAIN: Terrain = { region: 'california-basin' };
 const bugWeather = (): Weather => ({
-  windSpeed: 28, windDirection: 'Ouest', windBearing: 95, gusts: 56,
+  windSpeed: 28, windDirection: 'West', windBearing: 95, gusts: 56,
   temperature: 38, humidity: 12, droughtIndex: 0.92,
 });
 const bugUnits = (): Deployment[] => [
-  { id: 'bccf1', type: 'CCF', count: 12, sector: 'South flank', mission: 'Tenue du flanc', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
+  { id: 'bccf1', type: 'CCF', count: 12, sector: 'South flank', mission: 'Hold the flank', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
   { id: 'bdoz1', type: 'DOZ', count: 4, sector: 'East', mission: 'Control line', lng: -119.9700, lat: 39.7420, radiusM: 4000, capacity: 0.05, autonomy: 70 },
   { id: 'bhbe1', type: 'HBE', count: 2, sector: 'Head', mission: 'Helicopter support', lng: -119.9800, lat: 39.7229, radiusM: 4000, capacity: 0.08, autonomy: 60 },
 ];
 const saumosWeather = (): Weather => ({
-  windSpeed: 26, windDirection: 'Nord-est', windBearing: 225, gusts: 42,
+  windSpeed: 26, windDirection: 'North-east', windBearing: 225, gusts: 42,
   temperature: 38, humidity: 22, droughtIndex: 0.96,
 });
 // 3,300 firefighters, 18 aircraft, 121 km of firebreak, 105 wildland units.
 const saumosUnits = (): Deployment[] => [
-  { id: 'sccf1', type: 'CCF', count: 45, sector: 'South flank', mission: 'Tenue du flanc sud', lng: -0.9870, lat: 44.8671, radiusM: 5000, capacity: 0.09 },
-  { id: 'sccf2', type: 'CCF', count: 45, sector: 'Flanc sud-est', mission: 'Tenue du flanc est', lng: -0.9330, lat: 44.8828, radiusM: 5000, capacity: 0.09 },
+  { id: 'sccf1', type: 'CCF', count: 45, sector: 'South flank', mission: 'Hold the south flank', lng: -0.9870, lat: 44.8671, radiusM: 5000, capacity: 0.09 },
+  { id: 'sccf2', type: 'CCF', count: 45, sector: 'South-east flank', mission: 'Hold the east flank', lng: -0.9330, lat: 44.8828, radiusM: 5000, capacity: 0.09 },
   { id: 'sccf3', type: 'CCF', count: 40, sector: 'Le Porge', mission: 'Structure defence', lng: -1.0678, lat: 44.8639, radiusM: 5000, capacity: 0.09 },
-  { id: 'sfpt1', type: 'FPT', count: 30, sector: 'Littoral', mission: 'Protection du littoral', lng: -1.1298, lat: 44.8841, radiusM: 4500, capacity: 0.06 },
+  { id: 'sfpt1', type: 'FPT', count: 30, sector: 'Littoral', mission: 'Protect the coastline', lng: -1.1298, lat: 44.8841, radiusM: 4500, capacity: 0.06 },
   { id: 'scl41', type: 'CL4', count: 9, sector: 'Head', mission: 'Drops on the head', lng: -1.0872, lat: 44.9085, radiusM: 6000, capacity: 0.08 },
   { id: 'shbe1', type: 'HBE', count: 9, sector: 'South flank', mission: 'Helicopter support', lng: -1.0170, lat: 44.8618, radiusM: 5000, capacity: 0.08 },
   { id: 'sdoz1', type: 'DOZ', count: 30, sector: 'West', mission: 'Firebreak (121 km cut)', lng: -1.1521, lat: 44.9210, radiusM: 5500, capacity: 0.05 },
 ];
-const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'Ouest', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
+const blankWeather = (): Weather => ({ windSpeed: 12, windDirection: 'West', windBearing: 90, gusts: 18, temperature: 24, humidity: 45, droughtIndex: 0.40 });
 const LANDIRAS_INCIDENT: Incident = { ref: 'INCIDENT 33-2022-0712', dateLabel: '12 JULY 2022', startHour: 14, startMinute: 0, startDate: '2022-07-12', endDate: '2022-07-20' };
 const ETOILE_INCIDENT: Incident = { ref: 'EXERCISE 13-ETOILE', dateLabel: 'EXERCISE', startHour: 13, startMinute: 0 };
 const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AUGUST 2026', startHour: 13, startMinute: 0, startDate: '2026-08-08', endDate: '2026-08-15' };
@@ -242,7 +243,7 @@ const MAPLIBRE_WORKER_URL = '/maplibre/maplibre-gl-worker.mjs';
 // Secondary ignitions accepted on top of the primary one. The engine enforces
 // the same bound on its side, so map and simulation cannot drift apart.
 const MAX_EXTRA_IGNITIONS = 11;
-// Zoom a partir duquel chaque moyen retrouve son marqueur propre et redevient
+// The zoom at which each unit gets its own marker back and becomes
 // draggable; below it the units are clustered.
 const UNIT_CLUSTER_ZOOM = 10.2;
 const BASEMAP_STYLE = {
@@ -251,7 +252,7 @@ const BASEMAP_STYLE = {
     // The service advertises 23 levels but really covers only up to 16 over
     // the massif: past that it returns a "Map data not yet available" tile.
     // Bounding the source makes MapLibre stretch the last real tile
-    // valide au lieu d'aller chercher ce placeholder.
+    // valid one instead of reaching for this placeholder.
     fondEsri: {
       type: 'raster' as const,
       tiles: [ESRI + '/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
@@ -371,7 +372,7 @@ const scenarioPresets: { id: Scenario['preset']; name: string; kind: 'historical
 
 const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 Jul 2022', 'landiras')];
 
-export default function FireNowClient({ userEmail }: { userEmail: string }) {
+export default function FireNowClient({ userEmail, initialCall = null }: { userEmail: string; initialCall?: InitialToolCall | null }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   // Markers are keyed by what they contain: while the key holds, the marker and
@@ -436,7 +437,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const [isNarrowViewport, setIsNarrowViewport] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<'resources' | 'situation' | null>(null);
   const [exposure, setExposure] = useState<Exposure | null>(null);
-  const [composition, setComposition] = useState<{ nom: string; strate: string; part: number }[]>([]);
+  const [composition, setComposition] = useState<{ name: string; stratum: string; share: number }[]>([]);
   const [landscapeAsset, setLandscapeAsset] = useState<LandscapeAsset | null>(null);
   const [landscapeStatus, setLandscapeStatus] = useState<'loading' | 'real' | 'procedural'>('loading');
   const landscapeRef = useRef<LandscapeAsset | null>(null);
@@ -697,7 +698,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         if (event.data?.id !== requestId) return;
         worker.removeEventListener('message', onMessage);
         if (event.data.ok) resolve(event.data.result);
-        else reject(new Error(event.data.error || 'Erreur du moteur.'));
+        else reject(new Error(event.data.error || 'Engine error.'));
       };
       worker.addEventListener('message', onMessage);
       worker.postMessage({ ...payload, landscape: landscapeRef.current, weatherSeries: weatherSeriesRef.current, id: requestId });
@@ -875,7 +876,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             const element = document.createElement('button');
             element.type = 'button';
             element.className = 'unit-cluster' + (staged ? ' has-staged' : '');
-            element.title = `${group.length} groupes · ${total} moyens. Cliquer pour rapprocher.`;
+            element.title = `${group.length} groups · ${total} units. Click to zoom in.`;
             element.setAttribute('aria-label', element.title);
             const root = createRoot(element);
             root.render(<><strong>{total}</strong><small>{group.length} groupes</small></>);
@@ -958,7 +959,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     if (names.length !== 3) throw new Error('compare_plans requires exactly three strategies.');
     const placementSets: Deployment[][] = [
       [{ id: nextId(), type: 'CCF', count: 12, sector: 'South-east', mission: 'Intercept the fire head', lng: -0.446, lat: 44.5825, radiusM: 1200, capacity: 0.09, staged: true }, { id: nextId(), type: 'DOZ', count: 3, sector: 'East', mission: 'Control line', lng: -0.438, lat: 44.586, radiusM: 700, capacity: 0.07, staged: true }],
-      [{ id: nextId(), type: 'CCF', count: 6, sector: 'Nord', mission: 'Tenir le flanc nord', lng: -0.4541, lat: 44.597, radiusM: 900, capacity: 0.09, staged: true }, { id: nextId(), type: 'CCF', count: 6, sector: 'Sud', mission: 'Tenir le flanc sud', lng: -0.449, lat: 44.584, radiusM: 900, capacity: 0.09, staged: true }],
+      [{ id: nextId(), type: 'CCF', count: 6, sector: 'North', mission: 'Hold the north flank', lng: -0.4541, lat: 44.597, radiusM: 900, capacity: 0.09, staged: true }, { id: nextId(), type: 'CCF', count: 6, sector: 'South', mission: 'Hold the south flank', lng: -0.449, lat: 44.584, radiusM: 900, capacity: 0.09, staged: true }],
       [],
     ];
     const engineRuns = await Promise.all(placementSets.map((deployments) => {
@@ -1079,7 +1080,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       {
         name: 'query_terrain', title: 'Query the terrain', description: 'Analyses slope, aspect, fuel model and road access for a sector.',
         inputSchema: schema({ sector: { type: 'string', maxLength: 80 } }, ['sector']), annotations: readOnly,
-        execute: (input) => ({ sector: textValue(input.sector, 'sector', 80), slopePercent: 7.4, aspect: 'sud-est', fuel: 'Pin maritime · Scott & Burgan TU5', roadAccess: 'D115 et piste P-17', dataSource: 'scenario-mask' }),
+        execute: (input) => ({ sector: textValue(input.sector, 'sector', 80), slopePercent: 7.4, aspect: 'south-east', fuel: 'Pin maritime · Scott & Burgan TU5', roadAccess: 'D115 and DFCI track P-17', dataSource: 'scenario-mask' }),
       },
       {
         name: 'list_scenarios', title: 'List the scenarios', description: 'Lists the available scenarios and their calibration status.',
@@ -1102,7 +1103,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'propose_plan', title: 'Ouvrir un plan provisoire',
+        name: 'propose_plan', title: 'Open a draft plan',
         description: 'Opens a ghost proposal layer. Never modifies the live simulation.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']), annotations: mutating,
         execute: (input) => {
@@ -1138,7 +1139,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_assign_task', title: 'Affecter une mission provisoire', description: 'Affecte une mission sans modifier la simulation active.',
+        name: 'stage_assign_task', title: 'Stage a task', description: 'Assigns a mission without touching the live simulation.',
         inputSchema: schema({ unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
@@ -1204,7 +1205,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'commit_plan', title: 'Submit the plan for approval',
-        description: 'Ouvre la revue et demande une unique validation humaine pour tout le plan.',
+        description: 'Opens the review and asks for a single human approval covering the whole plan.',
         inputSchema: schema({}), annotations: { readOnlyHint: false },
         execute: async (_input, client) => {
           if (!stateRef.current.stagedPlan) throw new Error('No draft plan is open. Call propose_plan and add the actions to review before commit_plan.');
@@ -1322,7 +1323,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'set_view_mode', title: 'Changer le mode de carte', description: 'Bascule entre 2D, relief 3D et globe.',
+        name: 'set_view_mode', title: 'Change the map mode', description: 'Switches between 2D, 3D relief and globe.',
         inputSchema: schema({ mode: { type: 'string', enum: ['2D','3D','globe'] } }, ['mode']), annotations: mutating,
         execute: (input) => { const mode = textValue(input.mode, 'mode', 5) as ViewMode; if (!['2D','3D','globe'].includes(mode)) throw new Error(`Map mode "${mode}" is unknown. Use 2D, 3D or globe.`); changeView(mode); return { mode }; },
       },
@@ -1335,7 +1336,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           logTool(definition.name, toolActivityLabel(definition.name, result));
           return result;
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Erreur inconnue';
+          const message = error instanceof Error ? error.message : 'Unknown error';
           logTool(definition.name, `Failed: ${message}`, 'error');
           throw error;
         }
@@ -1437,12 +1438,12 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
 
   const activeName = scenarioList.find((item) => item.id === activeScenario)?.name || 'Simulation';
   const activeIsBlank = !ignition;
-  const simState: 'active' | 'pause' | 'vierge' = !ignition ? 'vierge' : running ? 'active' : 'pause';
+  const simState: 'active' | 'pause' | 'blank' = !ignition ? 'blank' : running ? 'active' : 'pause';
   const shownBurnedHa = ignition ? burnedHa : null;
   const shownFrontRate = ignition ? frontRate : null;
   const shownSuppression = ignition ? suppression : null;
-  const STATUS_LABEL: Record<string, string> = { eteint: 'Fire out', maitrise: 'Controlled', contenu: 'Contained', libre: 'Spreading freely' };
-  const ATTACK_LABEL: Record<string, string> = { directe: 'Direct attack viable', 'moyens-lourds': 'Heavy units required', indirect: 'Direct attack ineffective' };
+  const STATUS_LABEL: Record<string, string> = { out: 'Fire out', controlled: 'Controlled', contained: 'Contained', spreading: 'Spreading freely' };
+  const ATTACK_LABEL: Record<string, string> = { direct: 'Direct attack viable', 'heavy-units': 'Heavy units required', indirect: 'Direct attack ineffective' };
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
   const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
   const stagedUnitSummary = Object.entries((stagedPlan?.deployments || []).reduce<Record<string, number>>((summary, unit) => {
@@ -1504,7 +1505,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
               </div>
               <div className="scenario-list">{scenarioList.map((item) => {
                 const isActive = item.id === activeScenario;
-                const state = !item.ignition ? 'vierge' : (isActive && running) ? 'active' : 'pause';
+                const state = !item.ignition ? 'blank' : (isActive && running) ? 'active' : 'pause';
                 return <button key={item.id} type="button" className={'scenario-row' + (isActive ? ' current' : '')} onClick={() => { if (!isActive) switchScenario(item.id); setScenarioOpen(false); }}>
                   <span className={'sim-dot ' + state} />
                   <span className="scenario-meta"><strong>{item.name}</strong><small>{!item.ignition ? 'No ignition placed' : (item.burnedHa === null ? '—' : item.burnedHa.toLocaleString('en-US') + ' ha') + ' · H+' + String(Math.floor(item.minutes / 60)).padStart(2,'0') + ':' + String(item.minutes % 60).padStart(2,'0')}</small></span>
@@ -1555,6 +1556,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           </div>
         </div>
       </header>
+
+      <AgentBridge initialCall={initialCall} />
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
@@ -1630,21 +1633,21 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         </div>}
         {composition.length > 0 && <div className="cover-card">
           <span className="cover-head">DOMINANT COVER · {(REGION_LABEL[(terrain?.region) || 'gironde'])}</span>
-          {composition.map((entry) => <div className="cover-row" key={entry.nom}>
-            <i style={{ width: Math.max(4, entry.part * 100) + '%' }} />
-            <span>{entry.nom}</span><b>{(entry.part * 100).toFixed(0)} %</b>
+          {composition.map((entry) => <div className="cover-row" key={entry.name}>
+            <i style={{ width: Math.max(4, entry.share * 100) + '%' }} />
+            <span>{entry.name}</span><b>{(entry.share * 100).toFixed(0)} %</b>
           </div>)}
           {terrain?.region === 'gironde' && <small className={'data-source-status ' + landscapeStatus}>{landscapeStatus === 'real' ? 'IGN BD Forêt / BD TOPO · INSEE 200 m grid · 90 m DEM' : landscapeStatus === 'loading' ? 'Loading territorial data…' : 'Real data unavailable · procedural fallback'}</small>}
         </div>}
         {exposure && <div className="exposure-card">
-          <span className="cover-head">EXPOSURE · {exposure.populationMenacee > 0 ? 'RESIDENTS AT RISK' : 'NO POPULATION EXPOSED'}</span>
+          <span className="cover-head">EXPOSURE · {exposure.residentsAtRisk > 0 ? 'RESIDENTS AT RISK' : 'NO POPULATION EXPOSED'}</span>
           <div className="exposure-grid">
-            <div><span>Residents at risk</span><b className={exposure.populationMenacee > 0 ? 'danger' : ''}>{exposure.populationMenacee.toLocaleString('en-US')}</b></div>
-            <div><span>Residents reached</span><b className={exposure.populationAtteinte > 0 ? 'danger' : ''}>{exposure.populationAtteinte.toLocaleString('en-US')}</b></div>
-            <div><span>Built area burned</span><b>{exposure.surfaceBatieHa.toLocaleString('en-US')} <small>ha</small></b></div>
-            <div><span>Routes cut</span><b>{(exposure.pistesCoupeesKm + exposure.routesCoupeesKm).toLocaleString('en-US')} <small>km</small></b></div>
+            <div><span>Residents at risk</span><b className={exposure.residentsAtRisk > 0 ? 'danger' : ''}>{exposure.residentsAtRisk.toLocaleString('en-US')}</b></div>
+            <div><span>Residents reached</span><b className={exposure.residentsReached > 0 ? 'danger' : ''}>{exposure.residentsReached.toLocaleString('en-US')}</b></div>
+            <div><span>Built area burned</span><b>{exposure.builtAreaBurnedHa.toLocaleString('en-US')} <small>ha</small></b></div>
+            <div><span>Routes cut</span><b>{(exposure.tracksCutKm + exposure.roadsCutKm).toLocaleString('en-US')} <small>km</small></b></div>
           </div>
-          <small>Of which {exposure.routesCoupeesKm.toLocaleString('en-US')} km are public roads — the rest is the DFCI forest track network.</small>
+          <small>Of which {exposure.roadsCutKm.toLocaleString('en-US')} km are public roads — the rest is the DFCI forest track network.</small>
         </div>}
         {shownSuppression && <div className={'suppression-card ' + shownSuppression.status}>
           <div className="supp-head">
@@ -1675,7 +1678,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             <small>Perimeter mean: {shownSuppression.meanIntensityKwM.toLocaleString('en-US')} kW/m — the rear backs into the wind and needs little water.</small>
           </div>
           <p className="supp-verdict">
-            {shownSuppression.status === 'eteint' ? 'The front is no longer advancing.'
+            {shownSuppression.status === 'out' ? 'The front is no longer advancing.'
               : shownSuppression.containmentMinutes !== null
                 ? <>Containment estimated in <b>{shownSuppression.containmentMinutes} min</b> · {shownSuppression.litresPerHour.toLocaleString('en-US')} L consumed per hour</>
                 : shownSuppression.attackViable

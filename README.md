@@ -28,13 +28,31 @@ The **WebMCP log** shows the calls the agent actually executed, with the tool, i
     window.__WEBMCP__.listTools()       // the 21 tools with their schemas
     await window.__WEBMCP__.callTool('get_situation', {})
 
-Three discovery surfaces, for three families of agent:
+Four discovery surfaces, because the agents that open this page do not all have the same reach:
 
 - `document.modelContext` and `navigator.modelContext`, for a native WebMCP client;
-- `window.__WEBMCP__`, for an agent that runs JavaScript in the tab;
-- a **same-origin only** `postMessage` channel for an extension content script, and a `<script type="application/json" id="webmcp-manifest">` manifest for an agent that reads the DOM.
+- `window.__WEBMCP__`, for an agent that evaluates JavaScript in the main world;
+- a **same-origin only** `postMessage` channel and a `webmcp:call` / `webmcp:result` DOM event pair, for an extension content script — which runs in an isolated world and can therefore see neither of the two above;
+- the DOM itself: a `<script type="application/json" id="webmcp-manifest">` manifest, and the **agent bridge** described below.
 
 Retirement follows the specification: tools are registered with an `AbortSignal` that the component teardown fires.
+
+### The agent bridge
+
+Every surface above is JavaScript. An agent that drives a tab through screenshots and the accessibility tree — which is what ChatGPT does today — reaches none of them. It reads "21 WebMCP tools live" in the header, finds no way to call any of them, and correctly reports that the tools are not exposed to its session.
+
+`app/agent-bridge.tsx` is the missing transport. Directly under the header, in the DOM where any agent can read and type:
+
+- the **directive**, repeated verbatim in the manifest, in an `agent-instructions` `<meta>` tag and on the landing page: call the tools, do not drive the map with the mouse;
+- the **catalogue** — the 21 names, their signatures and their descriptions, present in the accessibility tree;
+- a **call form**: pick the tool, type its JSON arguments, submit, read the JSON result back from `#agent-bridge-result`;
+- **invocation by navigation**, for an agent whose only verb is opening a URL:
+
+      /?tool=get_situation&args=%7B%7D
+
+Both routes run the same `callTool` the JavaScript surfaces use: same validation, same WebMCP log, same single human approval on `commit_plan` — which is the one tool the URL route refuses, so that committing resources is never one navigation away.
+
+The front door registers two read-only tools of its own, `get_capabilities` and `open_console`, so that an agent arriving before sign-in finds a model context that answers rather than an empty one.
 
 ## The engine
 
@@ -103,12 +121,17 @@ In the browser, with the console open, the header must read "21 WebMCP tools liv
     window.__WEBMCP__.listTools().length          // 21
     await window.__WEBMCP__.callTool('get_situation', {})
 
+Without a JavaScript console — the check that matters for an agent driving the page — open the **Agent bridge** panel under the header, pick `propose_plan`, type `{"name": "West flank", "intention": "Hold the DFCI track"}` and run it. The draft plan bar must appear, and the WebMCP log must show the call.
+
 The `test-simulation.mjs` suite carries **48 assertions**: spread rates against published ranges, regional composition, geographic anchoring of the landscape, perimeter geometry, weather response, suppression response, sustainable duty, DFCI grid behaviour and numerical robustness.
 
 ## Architecture
 
     app/
       firenow-client.tsx        map, state, review and WebMCP tools
+      agent-bridge.tsx          the DOM transport for the tools
+      landing-tools.tsx         the two read-only tools of the front door
+      tool-names.ts             the catalogue quoted to agents before sign-in
       landing.tsx               public presentation page
       login-client.tsx          human authentication
       tour.tsx                  six-step spotlight tutorial

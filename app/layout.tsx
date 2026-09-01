@@ -21,6 +21,12 @@ export const metadata: Metadata = {
     locale: 'en_US',
     images: [{ url: '/og.png', width: 1200, height: 630, alt: 'FireNow — Agent-native wildfire command' }],
   },
+  /* Read by an agent that parses the head before it drives the page. The same
+     sentence is repeated in the WebMCP manifest and in the page itself, so the
+     rule is the same wherever the agent happens to look first. */
+  other: {
+    'agent-instructions': 'FireNow is tool-driven. Call the WebMCP tools registered on document.modelContext instead of clicking or dragging the map. Read with get_situation, draft with propose_plan and the stage_* tools, then call commit_plan, which asks the human operator for one approval. Clients without WebMCP support can drive the same tools from the "Agent bridge" panel (#agent-bridge) in the page, or by navigating to /?tool=NAME&args=URL_ENCODED_JSON.',
+  },
   twitter: {
     card: 'summary_large_image',
     title: 'FireNow',

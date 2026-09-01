@@ -6,17 +6,41 @@
  * Chrome, an MCP extension - sees nothing but a mute map.
  *
  * This file never replaces a native implementation: it detects one and steps
- * aside, building a fallback context only when there is none. Either way it
- * publishes a single entry point, `window.__WEBMCP__`, so an agent able to run
- * JavaScript in the tab can list the page's tools and call them.
+ * aside, building a fallback context only when there is none.
+ *
+ * It then publishes the tools on four surfaces, because the agents that open
+ * this page do not all have the same reach:
+ *
+ *   1. `document.modelContext` / `navigator.modelContext` - a native client;
+ *   2. `window.__WEBMCP__` - an agent evaluating JavaScript in the main world;
+ *   3. `postMessage` and DOM events - an extension content script, which runs
+ *      in an isolated world and can therefore see neither 1 nor 2;
+ *   4. the DOM itself - the manifest below, plus the agent bridge the page
+ *      renders, for an agent that can only read the page and type into it.
+ *
+ * Surfaces 3 and 4 are the reason this file exists in its current shape: an
+ * agent that drives a tab through the accessibility tree - which is what
+ * ChatGPT does today - reaches none of the JavaScript surfaces at all.
  *
  * Loaded at the top of the document, before React hydrates.
  */
 (function () {
   'use strict';
 
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var MANIFEST_ID = 'webmcp-manifest';
+
+  /* Repeated verbatim on every surface: the manifest, the <meta> tag in the
+     document head, and the agent bridge in the page. An agent that reads any
+     one of them learns the same rule. */
+  var DIRECTIVE = 'FireNow is tool-driven. To act on this page, call its WebMCP '
+    + 'tools - do not click, drag or type on the map. Read the situation with '
+    + 'get_situation first, open a draft with propose_plan, add the actions with '
+    + 'the stage_* tools, then call commit_plan, which asks the human operator '
+    + 'for the single approval that applies the whole plan. If your client has '
+    + 'no WebMCP support, use the "Agent bridge" panel in the page: pick the '
+    + 'tool, type its JSON arguments, submit, and read the result back from the '
+    + 'page. Every route runs the same tool implementation.';
 
   function reportError(error) {
     if (typeof console !== 'undefined' && console.debug) console.debug('[webmcp]', error);
@@ -52,7 +76,7 @@
 
     registerTool(tool, options) {
       if (!tool || typeof tool.name !== 'string' || !tool.name) {
-        return Promise.reject(new TypeError('Un outil WebMCP doit porter un nom.'));
+        return Promise.reject(new TypeError('A WebMCP tool must carry a name.'));
       }
       if (typeof tool.execute !== 'function') {
         return Promise.reject(new TypeError('Tool "' + tool.name + '" has no execute function.'));
@@ -98,7 +122,14 @@
 
     callTool(name, input, options) {
       const tool = this._tools.get(name);
-      if (!tool) return Promise.reject(new Error('Outil WebMCP inconnu : ' + name));
+      if (!tool) {
+        var known = Array.from(this._tools.keys());
+        return Promise.reject(new Error(
+          'Unknown WebMCP tool "' + name + '". '
+          + (known.length ? 'Available tools: ' + known.join(', ') + '.'
+                          : 'No tool is registered on this page yet: sign in and open the console first.'),
+        ));
+      }
       const callOptions = {
         signal: (options && options.signal) || new AbortController().signal,
         /* `commit_plan` uses this to suspend the agent during human review. */
@@ -155,7 +186,18 @@
       node.id = MANIFEST_ID;
       document.head.appendChild(node);
     }
-    node.textContent = JSON.stringify({ webmcp: VERSION, mode: mode, origin: location.origin, tools: tools });
+    node.textContent = JSON.stringify({
+      webmcp: VERSION,
+      mode: mode,
+      origin: location.origin,
+      instructions: DIRECTIVE,
+      /* Named here so an agent that only reads the DOM knows where to type. */
+      fallbackTransport: {
+        domForm: '#agent-bridge',
+        urlTemplate: location.origin + '/?tool=TOOL_NAME&args=URL_ENCODED_JSON',
+      },
+      tools: tools,
+    });
     /* The attributes stay on the manifest: writing on <html> would break React
        hydration, which owns that element. */
     node.setAttribute('data-webmcp', mode);
@@ -182,12 +224,13 @@
   var bridge = {
     version: VERSION,
     mode: mode,
+    directive: DIRECTIVE,
     get context() { return context; },
     isAvailable: function () { return listTools().length > 0; },
     listTools: listTools,
     callTool: function (name, input) {
       if (typeof context.callTool === 'function') return context.callTool(name, input);
-      return Promise.reject(new Error('Le contexte natif n’expose pas d’appel direct depuis la page.'));
+      return Promise.reject(new Error('The native context exposes no direct call from the page.'));
     },
     onToolsChanged: function (listener) {
       var handler = function () { listener(listTools()); };
@@ -211,9 +254,36 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * postMessage channel, for an extension content script.
-   * Same origin only: a third-party frame cannot drive the map.
+   * Channels for a content script.
+   *
+   * A Chrome extension content script runs in an isolated world: it shares the
+   * DOM with the page but not a single JavaScript object, so neither
+   * `document.modelContext` nor `window.__WEBMCP__` is reachable from it. Both
+   * channels below cross that boundary, and both stay same-origin, so a
+   * third-party frame cannot drive the map.
+   *
+   * Neither channel widens what an agent may do: read and staging tools change
+   * nothing that is committed, and `commit_plan` still opens the review and
+   * waits for a human click.
    * ------------------------------------------------------------------ */
+
+  function dispatchResult(id, payload) {
+    document.dispatchEvent(new CustomEvent('webmcp:result', {
+      detail: Object.assign({ id: id }, payload),
+    }));
+  }
+
+  document.addEventListener('webmcp:call', function (event) {
+    var data = (event && event.detail) || {};
+    if (data.type === 'list-tools' || !data.name) {
+      dispatchResult(data.id, { type: 'tools', tools: listTools(), mode: mode, instructions: DIRECTIVE });
+      return;
+    }
+    bridge.callTool(data.name, data.input).then(
+      function (result) { dispatchResult(data.id, { type: 'result', result: result }); },
+      function (error) { dispatchResult(data.id, { type: 'error', error: String((error && error.message) || error) }); },
+    );
+  });
 
   window.addEventListener('message', function (event) {
     if (event.source !== window || event.origin !== location.origin) return;
@@ -225,7 +295,7 @@
     };
 
     if (data.type === 'list-tools') {
-      reply({ type: 'tools', tools: listTools(), mode: mode });
+      reply({ type: 'tools', tools: listTools(), mode: mode, instructions: DIRECTIVE });
       return;
     }
     if (data.type === 'call-tool') {

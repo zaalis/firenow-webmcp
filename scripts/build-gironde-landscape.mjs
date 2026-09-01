@@ -21,7 +21,7 @@ const cellFor = (lng, lat) => ({
 });
 
 function epsg3035(lng, lat) {
-  // ETRS89 / LAEA Europe (EPSG:3035), projection portee par idcar_200m.
+  // ETRS89 / LAEA Europe (EPSG:3035), the projection idcar_200m carries.
   const a = 6378137, eccentricity = 0.0818191910428158, e2 = eccentricity ** 2;
   const phi = lat * Math.PI / 180, lambda = lng * Math.PI / 180;
   const phi0 = 52 * Math.PI / 180, lambda0 = 10 * Math.PI / 180;
@@ -98,7 +98,7 @@ async function wfs(typeName) {
 const forests = await wfs('LANDCOVER.FORESTINVENTORY.V2:formation_vegetale');
 for (const feature of forests) {
   const label = `${feature.properties?.essence || ''} ${feature.properties?.tfv || ''}`.toLowerCase();
-  const speciesIndex = label.includes('feuillu') || label.includes('chêne') ? 6 : 0;
+  const speciesIndex = label.includes('feuillu') || label.includes('chêne') // IGN source labels are French ? 6 : 0;
   burnPolygon(feature.geometry, speciesIndex);
 }
 const roads = await wfs('BDTOPO_V3:troncon_de_route');
@@ -169,7 +169,7 @@ const output = {
     forest: 'IGN BD Forêt v2 via Géoplateforme WFS, Licence Ouverte Etalab 2.0',
     infrastructure: 'IGN BD TOPO v3 via Géoplateforme WFS, Licence Ouverte Etalab 2.0',
     population: 'INSEE Filosofi 2021, carreaux 200 m, février 2026, Licence Ouverte Etalab 2.0',
-    elevation: 'Open-Meteo Elevation API, DEM 90 m, CC BY 4.0; Copernicus GLO-30 non embarqué car accès authentifié requis depuis le 28/07/2026',
+    elevation: 'Open-Meteo Elevation API, DEM 90 m, CC BY 4.0; Copernicus GLO-30 not bundled, as authenticated access has been required since 28/07/2026',
   },
   encoding: 'base64 raw typed arrays; people10 is little-endian uint16 in tenths of a person',
   fuel: Buffer.from(fuel).toString('base64'), infra: Buffer.from(infra).toString('base64'),

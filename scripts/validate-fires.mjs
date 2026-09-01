@@ -144,12 +144,12 @@ for (const fire of FIRES) {
 }
 
 console.log(`FireNow validation · worker ${path.relative(ROOT, workerPath)}`);
-console.log('| Feu | Échéance | Réel (ha) | Modèle (ha) | Écart | Jaccard |');
+console.log('| Fire | Horizon | Real (ha) | Model (ha) | Deviation | Jaccard |');
 console.log('| --- | ---: | ---: | ---: | ---: | ---: |');
 for (const row of rows) console.log(`| ${row.fire} | ${row.deadline} | ${row.actualHa.toFixed(0)} | ${row.modelHa.toFixed(0)} | ${row.errorPct >= 0 ? '+' : ''}${row.errorPct.toFixed(1)} % | ${row.jaccard === null ? 'n/d' : row.jaccard.toFixed(3)} |`);
 for (const summary of summaries) {
   console.log(`${summary.fire} · croissance nocturne estimée: ${summary.nightSharePct === null ? 'n/d' : `${summary.nightSharePct.toFixed(1)} %`}`);
-  if (summary.nightGrowthHa !== null) console.log(`${summary.fire} · croissance par régime: ${summary.dayGrowthHa.toFixed(0)} ha de jour / ${summary.nightGrowthHa.toFixed(0)} ha de nuit`);
-  if (summary.withoutSuppressionHa !== null) console.log(`${summary.fire} · effet des moyens: ${summary.withoutSuppressionHa.toFixed(0)} ha sans / ${summary.withSuppressionHa.toFixed(0)} ha avec (${(100 * (1 - summary.withSuppressionHa / summary.withoutSuppressionHa)).toFixed(1)} % évités)`);
+  if (summary.nightGrowthHa !== null) console.log(`${summary.fire} · growth by regime: ${summary.dayGrowthHa.toFixed(0)} ha by day / ${summary.nightGrowthHa.toFixed(0)} ha overnight`);
+  if (summary.withoutSuppressionHa !== null) console.log(`${summary.fire} · effect of the units: ${summary.withoutSuppressionHa.toFixed(0)} ha without / ${summary.withSuppressionHa.toFixed(0)} ha with (${(100 * (1 - summary.withSuppressionHa / summary.withoutSuppressionHa)).toFixed(1)} % avoided)`);
 }
-console.log('Mesure uniquement : ce script ne modifie ni les coefficients ni les données du moteur.');
+console.log('Measurement only: this script changes neither the coefficients nor the engine data.');
