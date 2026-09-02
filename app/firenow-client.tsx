@@ -516,6 +516,33 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     if (plan) setDraftPlan(plan);
     return plan;
   }, [setDraftPlan]);
+  const loadDurableDraft = useCallback(async (): Promise<{ plan: Plan | null; status: string | null }> => {
+    const response = await fetch('/api/draft', { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error('The shared operational draft is unavailable.');
+    return response.json() as Promise<{ plan: Plan | null; status: string | null }>;
+  }, []);
+  const saveDurableDraft = useCallback(async (plan: Plan, status: 'draft' | 'review' = 'draft') => {
+    const response = await fetch('/api/draft', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan, status }) });
+    if (!response.ok) throw new Error('The shared operational draft could not be saved.');
+  }, []);
+  const clearDurableDraft = useCallback(async () => {
+    await fetch('/api/draft', { method: 'DELETE', credentials: 'same-origin' });
+  }, []);
+
+  useEffect(() => {
+    let stopped = false;
+    const sync = async () => {
+      try {
+        const { plan, status } = await loadDurableDraft();
+        if (stopped || !plan) return;
+        if (stateRef.current.stagedPlan?.id !== plan.id) setDraftPlan(plan);
+        if (status === 'review') setReviewOpen(true);
+      } catch { /* unauthenticated and offline sessions keep their local draft */ }
+    };
+    void sync();
+    const timer = window.setInterval(() => void sync(), 1_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [loadDurableDraft, setDraftPlan]);
 
   useEffect(() => {
     // Tool calls can update the draft synchronously between React renders. Do
@@ -611,18 +638,20 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     ]);
     setCommittedFirebreaks((current) => [...current, ...stagedPlan.firebreaks]);
     setDraftPlan(null);
+    void clearDurableDraft();
     setReviewOpen(false);
     reviewResolver.current?.(true);
     reviewResolver.current = null;
     notify('Plan applied. Every action remains reversible.');
     return true;
-  }, [committed, committedFirebreaks, notify, setDraftPlan, stagedPlan]);
+  }, [clearDurableDraft, committed, committedFirebreaks, notify, setDraftPlan, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
+    void clearDurableDraft();
     reviewResolver.current?.(false);
     reviewResolver.current = null;
     notify('Plan rejected. The live situation was not changed.');
-  }, [notify]);
+  }, [clearDurableDraft, notify]);
   const revertPlan = useCallback(() => {
     let reverted = false;
     setUndoStack((stack) => {
@@ -1105,8 +1134,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     if (!mc || typeof mc.registerTool !== 'function') return;
     const readOnly = { readOnlyHint: true };
     const mutating = { readOnlyHint: false };
-    const requireStagedPlan = () => {
-      const plan = stateRef.current.stagedPlan || recoverDraftPlan();
+    const requireStagedPlan = async () => {
+      const durable = await loadDurableDraft();
+      const plan = durable.plan || stateRef.current.stagedPlan || recoverDraftPlan();
       if (!plan) throw new Error('No draft plan is open. Call propose_plan first, then retry this action.');
       return plan;
     };
@@ -1177,8 +1207,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         name: 'propose_plan', title: 'Open a draft plan',
         description: 'Opens a ghost proposal layer. Never modifies the live simulation.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']), annotations: mutating,
-        execute: (input) => {
+        execute: async (input) => {
           const plan = makePlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300));
+          await saveDurableDraft(plan);
           return { staged: true, plan, planSummary: summarizePlan(plan), liveSimulationChanged: false };
         },
       },
@@ -1191,8 +1222,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
           radiusM: { type: 'number', minimum: 100, maximum: 5000 },
         }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM']) } }, ['units']), annotations: mutating,
-        execute: (input) => {
-          const plan = requireStagedPlan();
+        execute: async (input) => {
+          const plan = await requireStagedPlan();
           if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Field "units" must be an array of 1 to 50 unit groups.');
           const deployments = input.units.map((raw, index) => {
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Item units[${index}] must be an object describing a unit group.`);
@@ -1206,25 +1237,27 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           if (resultingUnits > 50) throw new Error(`This batch would take the plan to ${resultingUnits} units; 50 is the maximum. Reduce the "count" values by at least ${resultingUnits - 50}.`);
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
           setDraftPlan(nextPlan);
+          await saveDurableDraft(nextPlan);
           return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_assign_task', title: 'Stage a task', description: 'Assigns a mission without touching the live simulation.',
         inputSchema: schema({ unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']), annotations: mutating,
-        execute: (input) => {
-          const plan = requireStagedPlan();
+        execute: async (input) => {
+          const plan = await requireStagedPlan();
           const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
           const nextPlan = { ...plan, tasks: [...plan.tasks, task] };
           setDraftPlan(nextPlan);
+          await saveDurableDraft(nextPlan);
           return { staged: true, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_firebreak', title: 'Draw a control line', description: 'Adds a draft geographic polyline. Once committed it becomes a persistent break in the engine.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']), annotations: mutating,
-        execute: (input) => {
-          const plan = requireStagedPlan();
+        execute: async (input) => {
+          const plan = await requireStagedPlan();
           if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Field "coordinates" must hold between 2 and 64 [longitude, latitude] points.');
           const coordinates = input.coordinates.map((raw, index) => {
             if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Point coordinates[${index}] must be exactly [longitude, latitude].`);
@@ -1238,14 +1271,15 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: input.staffed !== false };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
           setDraftPlan(nextPlan);
+          await saveDurableDraft(nextPlan);
           return { staged: true, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_tactical_burn', title: 'Prepare a tactical burn', description: 'Draws a held line and prepares a deliberate ignition on the fire side. Nothing is lit before human approval.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']), annotations: mutating,
-        execute: (input) => {
-          const plan = requireStagedPlan();
+        execute: async (input) => {
+          const plan = await requireStagedPlan();
           if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Field "coordinates" must hold between 2 and 64 [longitude, latitude] points.');
           const coordinates = input.coordinates.map((raw, index) => {
             if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Point coordinates[${index}] must be exactly [longitude, latitude].`);
@@ -1259,6 +1293,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: true, tacticalBurn: true };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
           setDraftPlan(nextPlan);
+          await saveDurableDraft(nextPlan);
           return { staged: true, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
         },
       },
@@ -1266,11 +1301,12 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         name: 'stage_evacuation_zone', title: 'Prepare an evacuation zone',
         description: 'Outlines a draft zone. No order is ever transmitted.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']), annotations: mutating,
-        execute: (input) => {
-          const plan = requireStagedPlan();
+        execute: async (input) => {
+          const plan = await requireStagedPlan();
           const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
           const nextPlan = { ...plan, evacuations: [...plan.evacuations, zone] };
           setDraftPlan(nextPlan);
+          await saveDurableDraft(nextPlan);
           return { staged: true, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
         },
       },
@@ -1279,7 +1315,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         description: 'Opens the review and asks for a single human approval covering the whole plan.',
         inputSchema: schema({}), annotations: { readOnlyHint: false },
         execute: async (_input, options) => {
-          if (!stateRef.current.stagedPlan && !recoverDraftPlan()) throw new Error('No draft plan is open. Call propose_plan and add the actions to review before commit_plan.');
+          const plan = await requireStagedPlan();
+          setDraftPlan(plan);
+          await saveDurableDraft(plan, 'review');
           const approved = await new Promise<boolean>((resolve) => {
             const finish = (decision: boolean) => {
               options?.signal.removeEventListener('abort', cancel);
@@ -1434,7 +1472,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, recoverDraftPlan, revertPlan, runWorker, setDraftPlan]);
+  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, loadDurableDraft, logTool, makePlan, modelContextReady, recoverDraftPlan, revertPlan, runWorker, saveDurableDraft, setDraftPlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
