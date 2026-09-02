@@ -371,21 +371,33 @@ const unmountLater = (root: Root) => { queueMicrotask(() => root.unmount()); };
 // it and the next stage_* call answered "No draft plan is open". Mirroring it in
 // sessionStorage keeps a draft alive for the tab that opened it, and only that tab.
 const DRAFT_PLAN_STORAGE_KEY = 'firenow.draft-plan';
+// WebMCP calls can arrive from isolated browser worlds. React state (and, in
+// some browsers, sessionStorage) is not guaranteed to be shared between those
+// calls, while the page document is. Keep a short-lived mirror on the document
+// as the hand-off channel between propose_plan and the following stage_* call.
+const DRAFT_PLAN_DOCUMENT_KEY = 'firenowDraftPlan';
 const readStoredDraftPlan = (): Plan | null => {
-  let raw: string | null = null;
-  try { raw = window.sessionStorage.getItem(DRAFT_PLAN_STORAGE_KEY); } catch { return null; }
-  if (!raw) return null;
-  try {
-    const plan = JSON.parse(raw) as Plan;
-    if (!plan || typeof plan !== 'object' || !Array.isArray(plan.deployments)) return null;
-    return plan;
-  } catch { return null; }
+  const candidates: (string | null)[] = [];
+  try { candidates.push(window.sessionStorage.getItem(DRAFT_PLAN_STORAGE_KEY)); } catch { /* use the document mirror */ }
+  try { candidates.push(document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY] ?? null); } catch { /* document unavailable during SSR */ }
+  for (const raw of candidates) {
+    if (!raw) continue;
+    try {
+      const plan = JSON.parse(raw) as Plan;
+      if (plan && typeof plan === 'object' && Array.isArray(plan.deployments)) return plan;
+    } catch { /* try the next mirror */ }
+  }
+  return null;
 };
 const writeStoredDraftPlan = (plan: Plan | null) => {
   try {
     if (plan) window.sessionStorage.setItem(DRAFT_PLAN_STORAGE_KEY, JSON.stringify(plan));
     else window.sessionStorage.removeItem(DRAFT_PLAN_STORAGE_KEY);
   } catch { /* private mode or quota: the draft simply does not survive the reload */ }
+  try {
+    if (plan) document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY] = JSON.stringify(plan);
+    else delete document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY];
+  } catch { /* document unavailable during SSR */ }
 };
 const emptyPlan = (name = 'Agent plan', intention = 'Reinforce village protection under a shifting wind.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
