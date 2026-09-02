@@ -1013,11 +1013,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       if (!detectModelContext()) return;
       window.clearInterval(detector);
     }, 250);
-    const giveUp = window.setTimeout(() => window.clearInterval(detector), 5000);
     return () => {
       stopped = true;
       window.clearInterval(detector);
-      window.clearTimeout(giveUp);
     };
   }, []);
 

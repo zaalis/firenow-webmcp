@@ -71,13 +71,13 @@ export default function LandingTools() {
     };
 
     if (register()) return () => { stopped = true; teardown.abort(); };
-    // The browser may expose its native site-tools API shortly after hydration.
+    // The browser can expose its native site-tools API after hydration. Keep
+    // listening until the page unmounts: a fixed timeout can make the page
+    // permanently miss a late WebMCP injection.
     const detector = window.setInterval(() => { if (register()) window.clearInterval(detector); }, 250);
-    const giveUp = window.setTimeout(() => window.clearInterval(detector), 5000);
     return () => {
       stopped = true;
       window.clearInterval(detector);
-      window.clearTimeout(giveUp);
       teardown.abort();
     };
   }, []);
