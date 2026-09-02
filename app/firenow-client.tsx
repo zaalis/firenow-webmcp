@@ -1320,16 +1320,16 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           await saveDurableDraft(plan, 'review');
           const approved = await new Promise<boolean>((resolve) => {
             const finish = (decision: boolean) => {
-              options?.signal.removeEventListener('abort', cancel);
+              options?.signal?.removeEventListener('abort', cancel);
               resolve(decision);
             };
             const cancel = () => finish(false);
-            if (options?.signal.aborted) {
+            if (options?.signal?.aborted) {
               resolve(false);
               return;
             }
             reviewResolver.current = finish;
-            options?.signal.addEventListener('abort', cancel, { once: true });
+            options?.signal?.addEventListener('abort', cancel, { once: true });
             setReviewOpen(true);
           });
           return { approved, planApplied: approved };
