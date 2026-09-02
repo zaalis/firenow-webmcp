@@ -85,17 +85,11 @@ const units: UnitCatalogue[] = [
   { code: 'CREW', count: 8,  label: 'Hand crews (20 firefighters)', family: 'engineering', tank: '90 m/h' },
 ];
 const UNIT_CODES = units.map((unit) => unit.code);
-const deploymentCapacityFor = (type: string) => ({
-  VLHR: 0.04, CCF: 0.09, CCFS: 0.12, FPT: 0.06, CCGC: 0.11,
-  HBE: 0.08, HELIT: 0.12, AT8: 0.10, CL4: 0.10, DASH: 0.12,
-  A400: 0.15, DOZ: 0.05, CREW: 0.03,
-}[type] ?? 0.05);
 const UNIT_ICONS: Record<string, LucideIcon> = {
   VLHR: CarFront, CCF: Truck, CCFS: Truck, FPT: FireExtinguisher, CCGC: ContainerIcon,
   HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
   A400: Plane, DOZ: Tractor, CREW: Users,
 };
-const UNIT_CODES = units.map((unit) => unit.code);
 const unitSuppressionCapacity = (type: string) => {
   const family = units.find((unit) => unit.code === type)?.family;
   if (type === 'CCF' || type === 'CCFS') return 0.09;
@@ -1554,8 +1548,6 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           </div>
         </div>
       </header>
-
-      <AgentBridge initialCall={initialCall} />
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
