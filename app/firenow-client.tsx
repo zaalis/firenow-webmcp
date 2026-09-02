@@ -88,6 +88,12 @@ const units: UnitCatalogue[] = [
   { code: 'DOZ',  count: 3,  label: 'Bulldozers', family: 'engineering', tank: '320 m/h' },
   { code: 'CREW', count: 8,  label: 'Hand crews (20 firefighters)', family: 'engineering', tank: '90 m/h' },
 ];
+const UNIT_CODES = units.map((unit) => unit.code);
+const deploymentCapacityFor = (type: string) => ({
+  VLHR: 0.04, CCF: 0.09, CCFS: 0.12, FPT: 0.06, CCGC: 0.11,
+  HBE: 0.08, HELIT: 0.12, AT8: 0.10, CL4: 0.10, DASH: 0.12,
+  A400: 0.15, DOZ: 0.05, CREW: 0.03,
+}[type] ?? 0.05);
 const UNIT_ICONS: Record<string, LucideIcon> = {
   VLHR: CarFront, CCF: Truck, CCFS: Truck, FPT: FireExtinguisher, CCGC: ContainerIcon,
   HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
@@ -445,6 +451,12 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario });
+  // WebMCP callbacks run outside React's event system. Update the tool-facing
+  // snapshot immediately so a following call sees the draft it just created.
+  const setDraftPlan = useCallback((plan: Plan | null) => {
+    stateRef.current = { ...stateRef.current, stagedPlan: plan };
+    setStagedPlan(plan);
+  }, []);
 
   useEffect(() => {
     stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario };
@@ -513,17 +525,15 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   }, []);
   const makePlan = useCallback((name: string, intention: string) => {
     const plan = emptyPlan(name, intention);
-    setStagedPlan(plan);
+    setDraftPlan(plan);
     return plan;
-  }, []);
+  }, [setDraftPlan]);
   const stageUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged'>) => {
     const deployment = { ...unit, id: nextId(), staged: true };
-    setStagedPlan((current) => {
-      const plan = current || emptyPlan();
-      return { ...plan, deployments: [...plan.deployments, deployment] };
-    });
+    const plan = stateRef.current.stagedPlan || emptyPlan();
+    setDraftPlan({ ...plan, deployments: [...plan.deployments, deployment] });
     return deployment;
-  }, []);
+  }, [setDraftPlan]);
   const applyPlan = useCallback(() => {
     if (!stagedPlan) return false;
     setUndoStack((stack) => [...stack, { deployments: committed, firebreaks: committedFirebreaks }]);
@@ -533,13 +543,13 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       ...stagedPlan.deployments.map((item) => ({ ...item, staged: false })),
     ]);
     setCommittedFirebreaks((current) => [...current, ...stagedPlan.firebreaks]);
-    setStagedPlan(null);
+    setDraftPlan(null);
     setReviewOpen(false);
     reviewResolver.current?.(true);
     reviewResolver.current = null;
     notify('Plan applied. Every action remains reversible.');
     return true;
-  }, [committed, committedFirebreaks, notify, stagedPlan]);
+  }, [committed, committedFirebreaks, notify, setDraftPlan, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
     reviewResolver.current?.(false);
@@ -1053,7 +1063,13 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         execute: () => {
           const s = stateRef.current;
           const currentScenario = s.scenarios.find((item) => item.id === s.activeScenario);
-          return { scenario: currentScenario ? { id: currentScenario.id, preset: currentScenario.preset, name: currentScenario.name } : null, incident: s.incident, minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate, weather: s.weather, engagedUnits: s.committed, calibrationStatus: 'not_performed' };
+          const ignition = ignitionRef.current;
+          return {
+            scenario: currentScenario ? { id: currentScenario.id, preset: currentScenario.preset, name: currentScenario.name } : null,
+            incident: s.incident, domain: s.domain, ignition, requiresIgnition: ignition === null,
+            minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate,
+            weather: s.weather, engagedUnits: s.committed, calibrationStatus: 'not_performed',
+          };
         },
       },
       {
@@ -1115,26 +1131,32 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         name: 'stage_deploy_units', title: 'Stage units',
         description: 'Places up to 50 units in the draft plan. Commits nothing.',
         inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
-          type: { type: 'string', enum: ['CCF', 'FPT', 'HBE', 'DOZ'] }, count: { type: 'integer', minimum: 1, maximum: 50 },
+          type: { type: 'string', enum: UNIT_CODES }, count: { type: 'integer', minimum: 1, maximum: 50 },
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
-          lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
-          radiusM: { type: 'number', minimum: 100, maximum: 5000 }, capacity: { type: 'number', minimum: 0, maximum: 0.35 },
-        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM', 'capacity']) } }, ['units']), annotations: mutating,
+          lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 }, radiusM: { type: 'number', minimum: 100, maximum: 5000 },
+        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM']) } }, ['units']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
           if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Field "units" must be an array of 1 to 50 unit groups.');
+          const requestedByType = new Map<string, number>();
           const deployments = input.units.map((raw, index) => {
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Item units[${index}] must be an object describing a unit group.`);
             const item = raw as Record<string, unknown>;
-            const type = textValue(item.type, 'type', 3);
-            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error(`Unit type "${type}" is not supported here. Use CCF, FPT, HBE or DOZ.`);
-            return { type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: numberValue(item.capacity, 'capacity', 0, 0.35), id: nextId(), staged: true };
+            const type = textValue(item.type, 'type', 8);
+            const catalogue = units.find((unit) => unit.code === type);
+            if (!catalogue) throw new Error(`Unit type "${type}" is not available. Call list_units and use one of the returned codes.`);
+            const count = numberValue(item.count, 'count', 1, 50);
+            const alreadyStaged = plan.deployments.filter((deployment) => deployment.type === type).reduce((sum, deployment) => sum + deployment.count, 0);
+            const requested = requestedByType.get(type) || 0;
+            if (alreadyStaged + requested + count > catalogue.count) throw new Error(`Only ${catalogue.count - alreadyStaged - requested} ${type} units remain available for this draft.`);
+            requestedByType.set(type, requested + count);
+            return { type, count, sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: deploymentCapacityFor(type), id: nextId(), staged: true };
           });
           const requestedUnits = deployments.reduce((sum, item) => sum + item.count, 0);
           const resultingUnits = summarizePlan(plan).totalUnits + requestedUnits;
           if (resultingUnits > 50) throw new Error(`This batch would take the plan to ${resultingUnits} units; 50 is the maximum. Reduce the "count" values by at least ${resultingUnits - 50}.`);
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1145,7 +1167,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           const plan = requireStagedPlan();
           const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
           const nextPlan = { ...plan, tasks: [...plan.tasks, task] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1166,7 +1188,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: input.staffed !== false };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1187,7 +1209,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: true, tacticalBurn: true };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
         },
       },
@@ -1199,7 +1221,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           const plan = requireStagedPlan();
           const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
           const nextPlan = { ...plan, evacuations: [...plan.evacuations, zone] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
         },
       },
@@ -1355,7 +1377,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker]);
+  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker, setDraftPlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();

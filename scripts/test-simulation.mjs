@@ -300,6 +300,14 @@ const quotedTools = [...fs.readFileSync(new URL('../app/tool-names.ts', import.m
 assert.ok(registeredTools.length >= 21, `Only ${registeredTools.length} tool definitions found in firenow-client.tsx.`);
 assert.deepEqual(quotedTools, registeredTools,
   'app/tool-names.ts has drifted from the tools registered in firenow-client.tsx.');
+assert.match(clientSource, /const setDraftPlan = useCallback\(\(plan: Plan \| null\) => \{[\s\S]*?stateRef\.current = \{ \.\.\.stateRef\.current, stagedPlan: plan \};/,
+  'WebMCP plan changes must update the tool-facing state synchronously.');
+assert.match(clientSource, /const makePlan = useCallback\([\s\S]*?setDraftPlan\(plan\);/,
+  'propose_plan must persist its draft before its response is returned.');
+assert.match(clientSource, /domain: s\.domain, ignition, requiresIgnition: ignition === null/,
+  'get_situation must tell an agent when it needs to place the exercise ignition.');
+assert.match(clientSource, /type: \{ type: 'string', enum: UNIT_CODES \}/,
+  'stage_deploy_units must accept every unit advertised by list_units.');
 
 console.log(JSON.stringify({
   species: e.SPECIES.length,
