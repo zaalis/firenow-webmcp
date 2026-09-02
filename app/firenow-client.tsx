@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Tour, { TOUR_PENDING_KEY, type TourStep } from './tour';
-import AgentBridge, { type InitialToolCall } from './agent-bridge';
 
 type ViewMode = '2D' | '3D' | 'globe';
 type Weather = { windSpeed: number; windDirection: string; windBearing: number; gusts: number; temperature: number; humidity: number; droughtIndex: number; plumeDriven?: boolean };
@@ -370,7 +369,7 @@ const scenarioPresets: { id: Scenario['preset']; name: string; kind: 'historical
 
 const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 Jul 2022', 'landiras')];
 
-export default function FireNowClient({ userEmail, initialCall = null }: { userEmail: string; initialCall?: InitialToolCall | null }) {
+export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   // Markers are keyed by what they contain: while the key holds, the marker and
@@ -1539,8 +1538,6 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           </div>
         </div>
       </header>
-
-      <AgentBridge initialCall={initialCall} />
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">

@@ -14,13 +14,11 @@
  *   1. `document.modelContext` / `navigator.modelContext` - a native client;
  *   2. `window.__WEBMCP__` - an agent evaluating JavaScript in the main world;
  *   3. `postMessage` and DOM events - an extension content script, which runs
- *      in an isolated world and can therefore see neither 1 nor 2;
- *   4. the DOM itself - the manifest below, plus the agent bridge the page
- *      renders, for an agent that can only read the page and type into it.
+ *      in an isolated world and can therefore see neither 1 nor 2.
  *
- * Surfaces 3 and 4 are the reason this file exists in its current shape: an
- * agent that drives a tab through the accessibility tree - which is what
- * ChatGPT does today - reaches none of the JavaScript surfaces at all.
+ * All three are read by the agent, none of them by a human: the page carries
+ * no visible tool panel, catalogue or call form. What an operator sees is the
+ * map, and what an agent sees is the tools.
  *
  * Loaded at the top of the document, before React hydrates.
  */
@@ -30,17 +28,18 @@
   var VERSION = '1.2.0';
   var MANIFEST_ID = 'webmcp-manifest';
 
-  /* Repeated verbatim on every surface: the manifest, the <meta> tag in the
-     document head, and the agent bridge in the page. An agent that reads any
-     one of them learns the same rule. */
+  /* Repeated verbatim on every surface: the manifest and the <meta> tag in
+     the document head. An agent that reads either one learns the same rule. */
   var DIRECTIVE = 'FireNow is tool-driven. To act on this page, call its WebMCP '
     + 'tools - do not click, drag or type on the map. Read the situation with '
     + 'get_situation first, open a draft with propose_plan, add the actions with '
     + 'the stage_* tools, then call commit_plan, which asks the human operator '
-    + 'for the single approval that applies the whole plan. If the browser does '
-    + 'not expose native site tools, do not use the mouse: use the webmcp:call '
-    + 'DOM event channel described in #webmcp-manifest, or navigate to the URL '
-    + 'fallback. Every transport runs the same tool implementation.';
+    + 'for the single approval that applies the whole plan. The console tools '
+    + 'register only once a human operator has signed in; never enter '
+    + 'credentials on their behalf. If the browser does not expose native site '
+    + 'tools, do not use the mouse: use the webmcp:call DOM event channel '
+    + 'described in #webmcp-manifest. Every transport runs the same tool '
+    + 'implementation.';
 
   function reportError(error) {
     if (typeof console !== 'undefined' && console.debug) console.debug('[webmcp]', error);
@@ -222,10 +221,9 @@
       mode: mode,
       origin: location.origin,
       instructions: DIRECTIVE,
-      /* Named here so an agent that only reads the DOM knows where to type. */
+      /* The transport for a client that shares the DOM but not the page's
+         JavaScript, such as an extension content script. */
       fallbackTransport: {
-        domForm: '#agent-bridge',
-        urlTemplate: location.origin + '/?tool=TOOL_NAME&args=URL_ENCODED_JSON',
         domEvents: {
           request: 'webmcp:call',
           response: 'webmcp:result',

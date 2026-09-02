@@ -108,15 +108,6 @@ export default function Landing() {
       <div className="nav-sentinel" aria-hidden="true" />
 
       <main id="content">
-        <p className="agent-directive-line" role="note">
-          <Bot size={13} aria-hidden="true" />
-          <span>
-            <b>Agents:</b> this site is tool-driven. Two read-only tools are registered on <code>document.modelContext</code> here
-            &mdash; call <code>get_capabilities</code> for what FireNow does and what unlocks after sign-in. The 21 command tools appear
-            once a human operator has signed in; never enter credentials on their behalf.
-          </span>
-        </p>
-
         <section className="landing-hero">
           <img
             className="hero-photo"

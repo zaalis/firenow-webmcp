@@ -25,13 +25,14 @@ Every other browser gets the same context from `public/webmcp.js`, loaded before
 
 The risk a page-owned fallback carries is that it squats the namespace the browser means to use: if the native implementation is installed *after* the page scripts run, a getter-only property makes that installation fail silently and the page keeps talking to a private map no agent can discover. The bridge is written so that cannot happen. It steps aside when a native context already exists, and the property it defines otherwise is read **and** write: the setter adopts the incoming native implementation and re-registers every tool onto it. Native always wins, whenever it arrives.
 
-On top of the model context the bridge publishes the same implementation on three further surfaces, because the agents that open this page do not all have the same reach:
+On top of the model context the bridge publishes the same implementation on two further surfaces, because the agents that open this page do not all have the same reach:
 
 - `window.__WEBMCP__` — an agent evaluating JavaScript in the main world;
-- `webmcp:call` / `webmcp:result` DOM events and same-origin `postMessage` — an extension content script, which runs in an isolated world and can see neither the model context nor `window.__WEBMCP__`;
-- the DOM itself — a `#webmcp-manifest` JSON block, the **agent bridge** panel under the header, and `/?tool=NAME&args=URL_ENCODED_JSON` — for an agent that can only read the page and type into it.
+- `webmcp:call` / `webmcp:result` DOM events and same-origin `postMessage`, described in the `#webmcp-manifest` JSON block — an extension content script, which runs in an isolated world and can see neither the model context nor `window.__WEBMCP__`.
 
-Every transport runs the same tool implementation: same validation, same journal, same human approval on `commit_plan`, which the URL route refuses outright.
+Every transport runs the same tool implementation: same validation, same journal, same human approval on `commit_plan`.
+
+All of this is addressed to agents and none of it to operators. The page carries no tool panel, no MCP catalogue and no manual call form: what a human sees is the map, and the WebMCP log of the calls an agent actually made.
 
 Retirement follows the specification: tools are registered with an `AbortSignal` that the component teardown fires.
 
@@ -107,7 +108,7 @@ In a browser without native WebMCP support, the page bridge supplies the context
     window.__WEBMCP__.listTools().length          // 21 once signed in
     await window.__WEBMCP__.callTool('get_situation', {})
 
-Without a JavaScript console — the check that matters for an agent driving the page — open the **Agent bridge** panel under the header, pick `propose_plan`, type `{"name": "West flank", "intention": "Hold the DFCI track"}` and run it. The draft plan bar must appear, and the WebMCP log must show the call.
+A staging call is the check that matters, because it proves the agent path end to end: `await window.__WEBMCP__.callTool('propose_plan', { name: 'West flank', intention: 'Hold the DFCI track' })` must raise the draft plan bar and appear in the WebMCP log.
 
 The `test-simulation.mjs` suite carries **48 assertions**: spread rates against published ranges, regional composition, geographic anchoring of the landscape, perimeter geometry, weather response, suppression response, sustainable duty, DFCI grid behaviour and numerical robustness.
 
@@ -115,7 +116,6 @@ The `test-simulation.mjs` suite carries **48 assertions**: spread rates against 
 
     app/
       firenow-client.tsx        map, state, review and WebMCP tools
-      agent-bridge.tsx          the DOM transport for the tools
       landing-tools.tsx         the two read-only tools of the front door
       tool-names.ts             the catalogue quoted to agents before sign-in
       landing.tsx               public presentation page
