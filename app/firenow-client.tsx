@@ -1134,7 +1134,15 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     if (!mc || typeof mc.registerTool !== 'function') return;
     const readOnly = { readOnlyHint: true };
     const mutating = { readOnlyHint: false };
-    const requireStagedPlan = async () => {
+    const requireStagedPlan = async (input?: Record<string, unknown>) => {
+      // WebMCP executes each tool in an isolated context. Carrying the exact
+      // draft returned by the preceding tool makes the workflow deterministic
+      // even when browser or network state cannot be shared.
+      const supplied = input?.plan;
+      if (supplied && typeof supplied === 'object' && !Array.isArray(supplied)) {
+        const plan = supplied as Plan;
+        if (typeof plan.id === 'string' && Array.isArray(plan.deployments) && Array.isArray(plan.tasks) && Array.isArray(plan.firebreaks) && Array.isArray(plan.evacuations)) return plan;
+      }
       const durable = await loadDurableDraft();
       const plan = durable.plan || stateRef.current.stagedPlan || recoverDraftPlan();
       if (!plan) throw new Error('No draft plan is open. Call propose_plan first, then retry this action.');
@@ -1216,14 +1224,14 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       {
         name: 'stage_deploy_units', title: 'Stage units',
         description: 'Stages up to 50 units from the available fleet in the draft plan. Commits nothing. Call list_units first to choose unit codes and positions.',
-        inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
+        inputSchema: schema({ plan: { type: 'object' }, units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
           type: { type: 'string', enum: UNIT_CODES }, count: { type: 'integer', minimum: 1, maximum: 50 },
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
           lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
           radiusM: { type: 'number', minimum: 100, maximum: 5000 },
         }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM']) } }, ['units']), annotations: mutating,
         execute: async (input) => {
-          const plan = await requireStagedPlan();
+          const plan = await requireStagedPlan(input);
           if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Field "units" must be an array of 1 to 50 unit groups.');
           const deployments = input.units.map((raw, index) => {
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Item units[${index}] must be an object describing a unit group.`);
@@ -1238,26 +1246,26 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
           setDraftPlan(nextPlan);
           await saveDurableDraft(nextPlan);
-          return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
+          return { staged: true, plan: nextPlan, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_assign_task', title: 'Stage a task', description: 'Assigns a mission without touching the live simulation.',
-        inputSchema: schema({ unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']), annotations: mutating,
+        inputSchema: schema({ plan: { type: 'object' }, unitId: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 180 } }, ['unitId', 'mission']), annotations: mutating,
         execute: async (input) => {
-          const plan = await requireStagedPlan();
+          const plan = await requireStagedPlan(input);
           const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
           const nextPlan = { ...plan, tasks: [...plan.tasks, task] };
           setDraftPlan(nextPlan);
           await saveDurableDraft(nextPlan);
-          return { staged: true, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
+          return { staged: true, plan: nextPlan, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_firebreak', title: 'Draw a control line', description: 'Adds a draft geographic polyline. Once committed it becomes a persistent break in the engine.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']), annotations: mutating,
+        inputSchema: schema({ plan: { type: 'object' }, name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 }, staffed: { type: 'boolean' } }, ['name','sector','coordinates']), annotations: mutating,
         execute: async (input) => {
-          const plan = await requireStagedPlan();
+          const plan = await requireStagedPlan(input);
           if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Field "coordinates" must hold between 2 and 64 [longitude, latitude] points.');
           const coordinates = input.coordinates.map((raw, index) => {
             if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Point coordinates[${index}] must be exactly [longitude, latitude].`);
@@ -1272,14 +1280,14 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
           setDraftPlan(nextPlan);
           await saveDurableDraft(nextPlan);
-          return { staged: true, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
+          return { staged: true, plan: nextPlan, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_tactical_burn', title: 'Prepare a tactical burn', description: 'Draws a held line and prepares a deliberate ignition on the fire side. Nothing is lit before human approval.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']), annotations: mutating,
+        inputSchema: schema({ plan: { type: 'object' }, name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']), annotations: mutating,
         execute: async (input) => {
-          const plan = await requireStagedPlan();
+          const plan = await requireStagedPlan(input);
           if (!Array.isArray(input.coordinates) || input.coordinates.length < 2 || input.coordinates.length > 64) throw new Error('Field "coordinates" must hold between 2 and 64 [longitude, latitude] points.');
           const coordinates = input.coordinates.map((raw, index) => {
             if (!Array.isArray(raw) || raw.length !== 2) throw new Error(`Point coordinates[${index}] must be exactly [longitude, latitude].`);
@@ -1294,28 +1302,28 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
           setDraftPlan(nextPlan);
           await saveDurableDraft(nextPlan);
-          return { staged: true, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
+          return { staged: true, plan: nextPlan, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
         },
       },
       {
         name: 'stage_evacuation_zone', title: 'Prepare an evacuation zone',
         description: 'Outlines a draft zone. No order is ever transmitted.',
-        inputSchema: schema({ name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']), annotations: mutating,
+        inputSchema: schema({ plan: { type: 'object' }, name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, population: { type: 'integer', minimum: 0, maximum: 100000 } }, ['name','sector','population']), annotations: mutating,
         execute: async (input) => {
-          const plan = await requireStagedPlan();
+          const plan = await requireStagedPlan(input);
           const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
           const nextPlan = { ...plan, evacuations: [...plan.evacuations, zone] };
           setDraftPlan(nextPlan);
           await saveDurableDraft(nextPlan);
-          return { staged: true, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
+          return { staged: true, plan: nextPlan, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
         },
       },
       {
         name: 'commit_plan', title: 'Submit the plan for approval',
         description: 'Opens the review and asks for a single human approval covering the whole plan.',
-        inputSchema: schema({}), annotations: { readOnlyHint: false },
-        execute: async (_input, options) => {
-          const plan = await requireStagedPlan();
+        inputSchema: schema({ plan: { type: 'object' } }), annotations: { readOnlyHint: false },
+        execute: async (input, options) => {
+          const plan = await requireStagedPlan(input);
           setDraftPlan(plan);
           await saveDurableDraft(plan, 'review');
           const approved = await new Promise<boolean>((resolve) => {
