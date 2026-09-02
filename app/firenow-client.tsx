@@ -500,7 +500,15 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   }, [setDraftPlan]);
 
   useEffect(() => {
-    stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario };
+    // Tool calls can update the draft synchronously between React renders. Do
+    // not let this render-synchronisation effect put an older `stagedPlan`
+    // value back into the tool-facing ref: that made a just-created plan
+    // disappear before the following stage_* action could read it.
+    stateRef.current = {
+      weather, minutes, burnedHa, frontRate,
+      stagedPlan: stateRef.current.stagedPlan,
+      committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario,
+    };
   }, [weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario]);
 
   useEffect(() => {
