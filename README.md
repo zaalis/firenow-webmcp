@@ -1,6 +1,6 @@
 # FireNow
 
-FireNow is an agent-native wildfire decision-support and training simulator. The map stays under human control, while a WebMCP-capable agent can read the situation, build a complete plan in a ghost layer, compare several strategies, and submit the batch for a single human approval.
+FireNow is a wildfire decision-support and training simulator. It combines the incident picture, a local fire-behaviour model and proposed actions in one workspace. The operator stays in control while a WebMCP-capable agent can read the situation, prepare a draft plan, compare options and submit the batch for one human approval.
 
 > **Training beta.** FireNow is not a certified incident command system. It replaces neither the incident commander, nor field data, nor local procedure. The engine is not calibrated: see [Engine validation](#engine-validation) for the measured deviations.
 
@@ -37,6 +37,12 @@ All of this is addressed to agents and none of it to operators. The page carries
 Retirement follows the specification: tools are registered with an `AbortSignal` that the component teardown fires.
 
 The front door registers two read-only tools of its own, `get_capabilities` and `open_console`, so that an agent arriving before sign-in finds a model context that answers rather than an empty one.
+
+## Operator-focused interface
+
+The public page explains the workflow in operational terms: establish the situation, prepare a proportionate response, review the whole plan, then apply only the approved actions. The signed-in console keeps the map, resources, situation and timeline in view without a persistent technical tools panel.
+
+The product states its limits plainly. FireNow supports structured exercises and option comparison; it is not a certified operational forecast. Detailed landscape coverage is uneven, and better field observations, shift handovers, shared plan review and role-based decision history are future collaboration improvements rather than present-day capabilities.
 
 ## The engine
 
@@ -188,7 +194,7 @@ The application therefore serves the official worker from `public/maplibre/` and
 - No usable vector perimeter was found for Saumos 2026, so the shape score is available for 2022 only.
 - Evacuation orders are never transmitted to any external system.
 - Site tools require a current ChatGPT desktop built-in browser, an eligible model and account rollout, and the Enable site tools permission. Ordinary Chrome does not receive a page-owned fallback.
-- Field mobile testing and professional validation by firefighters have not been done.
+- Field mobile testing and professional validation by firefighters have not been done. Shared field observations, role-based review and shift handover are future collaboration improvements, not present-day capabilities.
 - The basemap is served up to zoom level 16; beyond that the last tile is stretched.
 - The MapLibre bundle exceeds the 500 kB warning and would benefit from code splitting.
 - `npm run start` does not boot locally: the server imports `cloudflare:workers`, which the Node ESM loader refuses. `npm run dev` already runs the server code inside the Workers runtime through the Cloudflare Vite plugin; that is where local verification happens.

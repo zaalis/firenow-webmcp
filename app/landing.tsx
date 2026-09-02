@@ -1,6 +1,6 @@
 import {
   ArrowRight, Bot, Check, Eye, ExternalLink, Layers3, Radar,
-  ShieldCheck, Terminal, TriangleAlert, Wind,
+  ShieldCheck, TriangleAlert, Wind,
 } from 'lucide-react';
 import LandingMotion from './landing-motion';
 import LandingTools from './landing-tools';
@@ -55,11 +55,11 @@ const ENGINE = [
   { title: 'Suppression sized from real units', text: '13 unit types with manufacturer tank, pump rate and refill time. Sustainable duty bounds the flow actually held.' },
 ];
 
-const GAPS = [
-  { measure: 'Saumos 2026', value: '− 92 %', detail: 'final area under-predicted', tone: 'deviation' },
-  { measure: 'Saumos 2022', value: '+ 158 %', detail: 'final area over-predicted', tone: 'deviation' },
-  { measure: 'Perimeter overlap', value: '0.171', detail: 'Jaccard index against Copernicus EMS', tone: 'deviation' },
-  { measure: 'Overnight growth', value: '19.4 %', detail: 'of final area, down from 27 % before the fix', tone: 'progress' },
+const EVOLUTION = [
+  { title: 'Training, not prediction', text: 'The model is useful for comparing options and understanding fire behaviour. It is not calibrated to certify a real incident outcome.' },
+  { title: 'Coverage is still uneven', text: 'Terrain, road and exposure detail is strongest in the areas currently represented by the project. Other exercise areas use a lighter landscape model.' },
+  { title: 'One shared operational picture', text: 'The next step is a clearer handover between roles: field observations, planning assumptions and command decisions should stay attached to the same incident view.' },
+  { title: 'Coordination that stays accountable', text: 'Future collaboration can add team notes, role-based reviews and a traceable decision history while keeping the incident commander in control.' },
 ];
 
 const SCENARIOS = [
@@ -77,15 +77,6 @@ const CREDITS = [
   { title: 'Fires and smoke in British Columbia', author: 'Jeff Schmaltz, MODIS Rapid Response, NASA GSFC', href: 'https://commons.wikimedia.org/wiki/File:Fires_and_smoke_in_British_Columbia_(MODIS_2015-07-27).jpg' },
 ];
 
-const SNIPPET = `document.modelContext.registerTool({
-  name: 'stage_deploy_units',
-  title: 'Stage units',
-  description: 'Places units in the draft plan. Nothing is committed.',
-  inputSchema: { /* JSON Schema, validated as untrusted input */ },
-  annotations: { readOnlyHint: false },
-  execute: (input) => stageUnits(input),
-}, { signal: teardown.signal });`;
-
 export default function Landing() {
   return (
     <div className="landing-shell">
@@ -98,9 +89,9 @@ export default function Landing() {
         </a>
         <nav aria-label="Page sections">
           <a href="#flow">The flow</a>
-          <a href="#webmcp">WebMCP</a>
+          <a href="#webmcp">How it works</a>
           <a href="#engine">The engine</a>
-          <a href="#validation">Validation</a>
+          <a href="#validation">Limits &amp; next steps</a>
         </nav>
         <a className="nav-cta" href="#access">Open the console<ArrowRight size={14} aria-hidden="true" /></a>
       </header>
@@ -129,7 +120,7 @@ export default function Landing() {
             </p>
             <div className="hero-actions">
               <a className="landing-primary" href="#access">Open the console<ArrowRight size={15} aria-hidden="true" /></a>
-              <a className="landing-secondary" href="#webmcp">See the 21 tools</a>
+              <a className="landing-secondary" href="#webmcp">See how it works</a>
             </div>
             <p className="hero-warning">
               <TriangleAlert size={14} aria-hidden="true" />
@@ -180,31 +171,29 @@ export default function Landing() {
         <section id="webmcp" className="landing-section landing-section-alt">
           <div className="split" data-reveal>
             <div>
-              <p className="landing-eyebrow"><Terminal size={13} aria-hidden="true" />THE INTEGRATION</p>
-              <h2>The page is the tool server</h2>
+              <p className="landing-eyebrow"><Layers3 size={13} aria-hidden="true" />HOW IT WORKS</p>
+              <h2>One workspace for the team and the plan</h2>
               <p className="section-lede">
-                FireNow calls no language model. The page registers its 21 domain tools on
-                <code> document.modelContext</code>, falling back to <code>navigator.modelContext</code>.
-                ChatGPT discovers them natively in its built-in browser; every other browser gets the same
-                context from the page&apos;s own bridge. Either way the agent works inside the session already
-                open in the tab: no API key, no OAuth, no second backend. The tools disappear when the page
-                unmounts, and therefore at sign-out.
+                FireNow brings the incident picture, a local simulation and proposed actions into one
+                working space. An agent can help read the situation and prepare a plan; the operator
+                reviews every decision that changes the exercise.
               </p>
               <ul className="checklist">
-                <li><Check size={14} aria-hidden="true" />Tools designed around intent, not as CRUD wrappers</li>
-                <li><Check size={14} aria-hidden="true" />Every parameter validated as untrusted input</li>
-                <li><Check size={14} aria-hidden="true" />A log of the calls actually executed, visible in the console</li>
-                <li><Check size={14} aria-hidden="true" />Native registration for ChatGPT site tools, plus a bridge for browsers without the API</li>
+                <li><Check size={14} aria-hidden="true" />Read weather, terrain, resources and projected fire behaviour before planning</li>
+                <li><Check size={14} aria-hidden="true" />Build and compare draft actions without interrupting the live exercise</li>
+                <li><Check size={14} aria-hidden="true" />Keep field judgement, local procedure and the final decision with the operator</li>
+                <li><Check size={14} aria-hidden="true" />Record the plan and the actions taken so the exercise can be reviewed afterwards</li>
               </ul>
-              <p className="probe">
-                <span>CHECK IT FROM ANY BROWSER</span>
-                <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
-              </p>
             </div>
-            <figure className="code-card glass-panel" data-reveal>
-              <figcaption>app/firenow-client.tsx</figcaption>
-              <pre><code>{SNIPPET}</code></pre>
-            </figure>
+            <aside className="workflow-card glass-panel" data-reveal aria-label="Operational workflow">
+              <p>OPERATIONAL FLOW</p>
+              <ol>
+                <li><b>1</b><span>Establish the current situation.</span></li>
+                <li><b>2</b><span>Prepare a proportionate response.</span></li>
+                <li><b>3</b><span>Review the whole plan together.</span></li>
+                <li><b>4</b><span>Apply only what the operator approves.</span></li>
+              </ol>
+            </aside>
           </div>
         </section>
 
@@ -241,35 +230,26 @@ export default function Landing() {
 
         <section id="validation" className="landing-section landing-section-alt">
           <header className="section-head" data-reveal>
-            <p className="landing-eyebrow"><TriangleAlert size={13} aria-hidden="true" />WHAT THE MODEL CANNOT DO YET</p>
-            <h2>The engine is not calibrated, and the repository says so</h2>
+            <p className="landing-eyebrow"><TriangleAlert size={13} aria-hidden="true" />CURRENT LIMITS &amp; NEXT STEPS</p>
+            <h2>Useful for training today, designed to improve with the team</h2>
             <p className="section-lede">
-              The <code>validate-fires.mjs</code> harness replays reference fires and measures perimeter
-              overlap against Copernicus EMS data. It changes no coefficient. These are the deviations
-              measured on 28 August 2026, published rather than hidden behind a tuning factor.
+              FireNow is deliberately clear about what it can and cannot represent. It supports a
+              structured exercise and informed discussion; it does not replace operational intelligence,
+              local command procedures or professional judgement.
             </p>
           </header>
           <div className="gaps" data-reveal>
-            {GAPS.map((gap) => (
-              <article key={gap.measure} className={'gap-card glass-panel ' + gap.tone}>
-                <p className="gap-measure">{gap.measure}</p>
-                <p className="gap-value">{gap.value}</p>
-                <p className="gap-detail">{gap.detail}</p>
+            {EVOLUTION.map((item) => (
+              <article key={item.title} className="gap-card glass-panel evolution-card">
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
               </article>
             ))}
           </div>
           <p className="validation-note" data-reveal>
-            The two runs miss in opposite directions, so <code>ablate-calibration.mjs</code> varies one
-            engine term at a time to find out which. The answer is a single rule: a perimeter cell is
-            extinguished <em>for good</em> once it holds below 500 kW/m for 45 minutes. Switching that
-            off alone brings Saumos 2026 to 43,701 ha against 42,000 observed, and inflates Saumos 2022
-            sixteenfold. One fixed threshold, in absolute kW/m, is bounding both fires — too weakly for
-            a mild one, far too strongly for a severe one — and it is irreversible, so a front that lies
-            down overnight can never run again the next afternoon. The measurement is published; the
-            fix is not written yet, and the &ldquo;not calibrated&rdquo; banner stays until it is. Over
-            a few hours the model is still useful for comparing options: front intensity, feasible
-            attack mode, whether committed flow is sufficient, who is exposed. Over several days it is
-            not, and the interface says so.
+            The practical direction is collaboration, not automation for its own sake: richer field
+            observations, clearer shift handovers and shared plan reviews can make an exercise more
+            useful without making unsupported claims about real-world prediction.
           </p>
         </section>
 
