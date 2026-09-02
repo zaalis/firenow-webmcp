@@ -56,7 +56,7 @@ export default function LoginClient() {
         <label>
           <span>Password</span>
           <input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === 'register' ? 12 : 1} maxLength={128} placeholder="12 characters minimum" />
-          {mode === 'register' && <small className="field-help">12 characters minimum. A new account opens the console on a six-step tour.</small>}
+          {mode === 'register' && <small className="field-help">12 characters minimum. A new account opens the console on a five-step tour.</small>}
         </label>
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button className="login-submit" type="submit" disabled={busy}>

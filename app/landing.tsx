@@ -56,10 +56,10 @@ const ENGINE = [
 ];
 
 const GAPS = [
-  { measure: 'Saumos 2026', value: '− 92 %', detail: 'final area under-predicted', tone: 'ecart' },
-  { measure: 'Saumos 2022', value: '+ 158 %', detail: 'final area over-predicted', tone: 'ecart' },
-  { measure: 'Perimeter overlap', value: '0.171', detail: 'Jaccard index against Copernicus EMS', tone: 'ecart' },
-  { measure: 'Overnight growth', value: '19.4 %', detail: 'of final area, down from 27 % before the fix', tone: 'progres' },
+  { measure: 'Saumos 2026', value: '− 92 %', detail: 'final area under-predicted', tone: 'deviation' },
+  { measure: 'Saumos 2022', value: '+ 158 %', detail: 'final area over-predicted', tone: 'deviation' },
+  { measure: 'Perimeter overlap', value: '0.171', detail: 'Jaccard index against Copernicus EMS', tone: 'deviation' },
+  { measure: 'Overnight growth', value: '19.4 %', detail: 'of final area, down from 27 % before the fix', tone: 'progress' },
 ];
 
 const SCENARIOS = [
@@ -112,7 +112,7 @@ export default function Landing() {
           <Bot size={13} aria-hidden="true" />
           <span>
             <b>Agents:</b> this site is tool-driven. Two read-only tools are registered on <code>document.modelContext</code> here
-            — call <code>get_capabilities</code> for what FireNow does and what unlocks after sign-in. The 21 command tools appear
+            &mdash; call <code>get_capabilities</code> for what FireNow does and what unlocks after sign-in. The 21 command tools appear
             once a human operator has signed in; never enter credentials on their behalf.
           </span>
         </p>
@@ -165,19 +165,19 @@ export default function Landing() {
               without interrupting anyone.
             </p>
           </header>
-          <ol className="etapes" data-reveal>
+          <ol className="steps" data-reveal>
             {STEPS.map((step) => {
               const Icon = step.icon;
               return (
-                <li key={step.number} className="etape-card glass-panel">
-                  <div className="etape-head">
-                    <span className="etape-icon"><Icon size={18} aria-hidden="true" /></span>
-                    <span className="etape-num">{step.number}</span>
+                <li key={step.number} className="step-card glass-panel">
+                  <div className="step-head">
+                    <span className="step-icon"><Icon size={18} aria-hidden="true" /></span>
+                    <span className="step-number">{step.number}</span>
                   </div>
                   <h3>{step.title}</h3>
-                  <p className="etape-tag">{step.tools}</p>
+                  <p className="step-tag">{step.tools}</p>
                   <p>{step.text}</p>
-                  <ul className="etape-tools">
+                  <ul className="step-tools">
                     {step.examples.map((tool) => <li key={tool}><code>{tool}</code></li>)}
                   </ul>
                 </li>
@@ -194,14 +194,16 @@ export default function Landing() {
               <p className="section-lede">
                 FireNow calls no language model. The page registers its 21 domain tools on
                 <code> document.modelContext</code>, falling back to <code>navigator.modelContext</code>.
-                An agent uses the session already open in the tab: no API key, no OAuth, no second
-                backend. The tools disappear when the page unmounts, and therefore at sign-out.
+                ChatGPT discovers them natively in its built-in browser; every other browser gets the same
+                context from the page&apos;s own bridge. Either way the agent works inside the session already
+                open in the tab: no API key, no OAuth, no second backend. The tools disappear when the page
+                unmounts, and therefore at sign-out.
               </p>
               <ul className="checklist">
                 <li><Check size={14} aria-hidden="true" />Tools designed around intent, not as CRUD wrappers</li>
                 <li><Check size={14} aria-hidden="true" />Every parameter validated as untrusted input</li>
                 <li><Check size={14} aria-hidden="true" />A log of the calls actually executed, visible in the console</li>
-                <li><Check size={14} aria-hidden="true" />A compatibility bridge for browsers with no native API</li>
+                <li><Check size={14} aria-hidden="true" />Native registration for ChatGPT site tools, plus a bridge for browsers without the API</li>
               </ul>
               <p className="probe">
                 <span>CHECK IT FROM ANY BROWSER</span>
@@ -256,12 +258,12 @@ export default function Landing() {
               measured on 28 August 2026, published rather than hidden behind a tuning factor.
             </p>
           </header>
-          <div className="ecarts" data-reveal>
+          <div className="gaps" data-reveal>
             {GAPS.map((gap) => (
-              <article key={gap.measure} className={'ecart-card glass-panel ' + gap.tone}>
-                <p className="ecart-mesure">{gap.measure}</p>
-                <p className="ecart-valeur">{gap.value}</p>
-                <p className="ecart-detail">{gap.detail}</p>
+              <article key={gap.measure} className={'gap-card glass-panel ' + gap.tone}>
+                <p className="gap-measure">{gap.measure}</p>
+                <p className="gap-value">{gap.value}</p>
+                <p className="gap-detail">{gap.detail}</p>
               </article>
             ))}
           </div>
@@ -329,7 +331,7 @@ export default function Landing() {
               <h2>Open the console</h2>
               <p className="section-lede">
                 Create an account, open the map, then let a WebMCP-capable agent work in the same tab.
-                A new account opens the console on a six-step tour, which you can skip and replay at
+                A new account opens the console on a five-step tour, which you can skip and replay at
                 any time from the help menu.
               </p>
               <ul className="checklist">

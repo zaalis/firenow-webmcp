@@ -168,7 +168,7 @@ const output = {
   sources: {
     forest: 'IGN BD Forêt v2 via Géoplateforme WFS, Licence Ouverte Etalab 2.0',
     infrastructure: 'IGN BD TOPO v3 via Géoplateforme WFS, Licence Ouverte Etalab 2.0',
-    population: 'INSEE Filosofi 2021, carreaux 200 m, février 2026, Licence Ouverte Etalab 2.0',
+    population: 'INSEE Filosofi 2021, 200 m grid, February 2026, Licence Ouverte Etalab 2.0',
     elevation: 'Open-Meteo Elevation API, DEM 90 m, CC BY 4.0; Copernicus GLO-30 not bundled, as authenticated access has been required since 28/07/2026',
   },
   encoding: 'base64 raw typed arrays; people10 is little-endian uint16 in tenths of a person',

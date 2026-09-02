@@ -52,17 +52,14 @@ type Scenario = {
 };
 // The header used to show the Landiras date whatever scenario was open.
 type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number; startDate?: string; endDate?: string };
-type ToolClient = { requestUserInteraction?: <T>(handler: () => Promise<T>) => Promise<T> };
 type ToolDefinition = {
   name: string; title: string; description: string; inputSchema: Record<string, unknown>;
   annotations?: { readOnlyHint?: boolean };
-  execute: (input: Record<string, unknown>, client?: ToolClient) => unknown | Promise<unknown>;
+  execute: (input: Record<string, unknown>, options?: WebMCP.ToolExecuteCallbackOptions) => unknown | Promise<unknown>;
 };
 type ModelContextLike = {
   registerTool: (tool: ToolDefinition, options?: { signal?: AbortSignal }) => Promise<void> | void;
-  unregisterTool?: (name: string) => Promise<void> | void;
 };
-type WebMcpBridge = { mode: 'native' | 'polyfill'; version: string };
 
 type UnitFamily = 'ground' | 'air' | 'engineering';
 type UnitCatalogue = { code: string; count: number; label: string; family: UnitFamily; tank: string; capacityLitres?: number };
@@ -93,7 +90,15 @@ const UNIT_ICONS: Record<string, LucideIcon> = {
   HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
   A400: Plane, DOZ: Tractor, CREW: Users,
 };
-const unitFamilyClass = (family: UnitFamily) => family === 'air' ? 'aerien' : family === 'engineering' ? 'genie' : 'terrestre';
+const UNIT_CODES = units.map((unit) => unit.code);
+const unitSuppressionCapacity = (type: string) => {
+  const family = units.find((unit) => unit.code === type)?.family;
+  if (type === 'CCF' || type === 'CCFS') return 0.09;
+  if (family === 'air') return 0.08;
+  if (family === 'engineering') return 0.05;
+  return 0.06;
+};
+const unitFamilyClass = (family: UnitFamily) => family;
 const unitCapacityLevel = (unit: UnitCatalogue) => unit.family === 'engineering' || (unit.capacityLitres || 0) > 9000
   ? 3 : (unit.capacityLitres || 0) >= 3000 ? 2 : 1;
 const REGION_LABEL: Record<string, string> = {
@@ -253,14 +258,14 @@ const BASEMAP_STYLE = {
     // the massif: past that it returns a "Map data not yet available" tile.
     // Bounding the source makes MapLibre stretch the last real tile
     // valid one instead of reaching for this placeholder.
-    fondEsri: {
+    esriBase: {
       type: 'raster' as const,
       tiles: [ESRI + '/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256,
       maxzoom: BASEMAP_MAX_ZOOM,
       attribution: 'Esri, HERE, Garmin, © OpenStreetMap',
     },
-    etiquettesEsri: {
+    esriLabels: {
       type: 'raster' as const,
       tiles: [ESRI + '/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256,
@@ -268,22 +273,15 @@ const BASEMAP_STYLE = {
     },
   },
   layers: [
-    { id: 'fond', type: 'background' as const, paint: { 'background-color': '#08090A' } },
+    { id: 'background', type: 'background' as const, paint: { 'background-color': '#08090A' } },
     // The basemap stays recessive: the fire outranks the map.
-    { id: 'basemap', type: 'raster' as const, source: 'fondEsri',
+    { id: 'basemap', type: 'raster' as const, source: 'esriBase',
       paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.62, 'raster-opacity': 0.95 } },
-    { id: 'basemap-labels', type: 'raster' as const, source: 'etiquettesEsri',
+    { id: 'basemap-labels', type: 'raster' as const, source: 'esriLabels',
       paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.9, 'raster-opacity': 0.8 } },
   ],
 };
 const emptyGeoJSON = { type: 'FeatureCollection', features: [] } as const;
-const toolNames = [
-  'get_situation', 'list_units', 'get_fire_forecast', 'get_weather', 'query_terrain', 'list_scenarios',
-  'propose_plan', 'stage_deploy_units', 'stage_assign_task', 'stage_firebreak', 'stage_tactical_burn', 'stage_evacuation_zone',
-  'commit_plan', 'revert_plan', 'run_simulation', 'set_time', 'set_weather', 'ignite', 'compare_plans',
-  'focus_region', 'set_view_mode',
-];
-
 // bearing = the heading the fire spreads towards; `from` = where the wind blows from, shown to the operator.
 const COMPASS = [
   { index: 0, short: 'N',  label: 'Driving north',      from: 'South',      bearing: 0 },
@@ -299,11 +297,11 @@ const WEATHER_PRESETS: { label: string; values: Partial<Weather> }[] = [
   { label: 'Calm', values: { windSpeed: 8, gusts: 14, humidity: 55, temperature: 24, droughtIndex: 0.35 } },
   { label: 'Hot and dry', values: { windSpeed: 22, gusts: 34, humidity: 22, temperature: 36, droughtIndex: 0.82 } },
   { label: 'NW shift 40 km/h', values: { windSpeed: 40, gusts: 62, windBearing: 135, windDirection: 'North-west', humidity: 18, temperature: 38, droughtIndex: 0.91 } },
-  { label: 'Rafales 70 km/h', values: { windSpeed: 55, gusts: 70, humidity: 15, temperature: 39, droughtIndex: 0.95 } },
-  { label: 'Panache orageux', values: { windSpeed: 38, gusts: 60, humidity: 18, temperature: 38, droughtIndex: 0.97, plumeDriven: true } },
+  { label: 'Gusts 70 km/h', values: { windSpeed: 55, gusts: 70, humidity: 15, temperature: 39, droughtIndex: 0.95 } },
+  { label: 'Convective plume', values: { windSpeed: 38, gusts: 60, humidity: 18, temperature: 38, droughtIndex: 0.97, plumeDriven: true } },
 ];
 const nextId = () => Math.random().toString(36).slice(2, 9);
-const atNow = () => new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(new Date());
+const atNow = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const textValue = (value: unknown, field: string, max = 240) => {
   if (typeof value !== 'string') throw new Error(`Field "${field}" must be a non-empty string of at most ${max} characters.`);
@@ -382,8 +380,6 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
-  const [toolStatus, setToolStatus] = useState<'registering' | 'available' | 'unavailable'>('registering');
-  const [toolTransport, setToolTransport] = useState<'native' | 'polyfill'>('polyfill');
   const [modelContextReady, setModelContextReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [ignition, setIgnition] = useState<Ignition | null>(defaultIgnition);
@@ -395,7 +391,6 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   const pickingRef = useRef(false);
   useEffect(() => { pickingRef.current = pickingIgnition; }, [pickingIgnition]);
   useEffect(() => { ignitionRef.current = ignition; }, [ignition]);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -464,7 +459,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   useEffect(() => {
     let cancelled = false;
     fetch('/data/gironde-landscape.json').then((response) => {
-      if (!response.ok) throw new Error('Asset Gironde indisponible');
+      if (!response.ok) throw new Error('Gironde landscape asset unavailable');
       return response.json() as Promise<LandscapeAsset>;
     }).then((asset) => {
       if (cancelled) return;
@@ -735,7 +730,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         const node = document.createElement('div');
         node.className = 'ignition-marker' + (index === 0 ? ' primary' : ' secondary');
         node.dataset.label = String(index + 1);
-        node.title = index === 0 ? 'Foyer principal' : `Foyer secondaire ${index}`;
+        node.title = index === 0 ? 'Main ignition' : `Secondary ignition ${index}`;
         node.setAttribute('role', 'img');
         node.setAttribute('aria-label', node.title);
         if (shown.radiusM > 0) {
@@ -899,7 +894,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           }
           const catalogueUnit = units.find((item) => item.code === unit.type);
           const UnitIcon = UNIT_ICONS[unit.type] || Truck;
-          const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.family) : 'terrestre';
+          const familyClass = catalogueUnit ? unitFamilyClass(catalogueUnit.family) : 'ground';
           const element = document.createElement('button');
           element.type = 'button';
           element.className = 'unit-marker fam-' + familyClass + (unit.staged ? ' ghost' : '');
@@ -1005,39 +1000,28 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
   useEffect(() => {
     let stopped = false;
     const detectModelContext = () => {
-      const modelContext = (document as Document & { modelContext?: ModelContextLike }).modelContext
-        || (navigator as Navigator & { modelContext?: ModelContextLike }).modelContext;
+      const modelContext = document.modelContext as ModelContextLike | undefined;
       if (!modelContext || typeof modelContext.registerTool !== 'function') return false;
-      if (!stopped) {
-        const bridge = (window as Window & { __WEBMCP__?: WebMcpBridge }).__WEBMCP__;
-        setToolTransport(bridge?.mode === 'native' ? 'native' : 'polyfill');
-        setToolStatus('registering');
-        setModelContextReady(true);
-      }
+      if (!stopped) setModelContextReady(true);
       return true;
     };
     if (detectModelContext()) return () => { stopped = true; };
-    const unavailableTimer = window.setTimeout(() => {
-      if (!stopped) setToolStatus('unavailable');
-    }, 3000);
     const detector = window.setInterval(() => {
       if (!detectModelContext()) return;
       window.clearInterval(detector);
-      window.clearTimeout(unavailableTimer);
     }, 250);
+    const giveUp = window.setTimeout(() => window.clearInterval(detector), 5000);
     return () => {
       stopped = true;
       window.clearInterval(detector);
-      window.clearTimeout(unavailableTimer);
+      window.clearTimeout(giveUp);
     };
   }, []);
 
   useEffect(() => {
     if (!modelContextReady) return;
-    const mc = (document as Document & { modelContext?: ModelContextLike }).modelContext
-      || (navigator as Navigator & { modelContext?: ModelContextLike }).modelContext;
+    const mc = document.modelContext as ModelContextLike | undefined;
     if (!mc || typeof mc.registerTool !== 'function') return;
-    const registered: string[] = [];
     const readOnly = { readOnlyHint: true };
     const mutating = { readOnlyHint: false };
     const requireStagedPlan = () => {
@@ -1080,7 +1064,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       {
         name: 'query_terrain', title: 'Query the terrain', description: 'Analyses slope, aspect, fuel model and road access for a sector.',
         inputSchema: schema({ sector: { type: 'string', maxLength: 80 } }, ['sector']), annotations: readOnly,
-        execute: (input) => ({ sector: textValue(input.sector, 'sector', 80), slopePercent: 7.4, aspect: 'south-east', fuel: 'Pin maritime · Scott & Burgan TU5', roadAccess: 'D115 and DFCI track P-17', dataSource: 'scenario-mask' }),
+        execute: (input) => ({ sector: textValue(input.sector, 'sector', 80), slopePercent: 7.4, aspect: 'south-east', fuel: 'Maritime pine · Scott & Burgan TU5', roadAccess: 'D115 and DFCI track P-17', dataSource: 'scenario-mask' }),
       },
       {
         name: 'list_scenarios', title: 'List the scenarios', description: 'Lists the available scenarios and their calibration status.',
@@ -1113,22 +1097,22 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       },
       {
         name: 'stage_deploy_units', title: 'Stage units',
-        description: 'Places up to 50 units in the draft plan. Commits nothing.',
+        description: 'Stages up to 50 units from the available fleet in the draft plan. Commits nothing. Call list_units first to choose unit codes and positions.',
         inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
-          type: { type: 'string', enum: ['CCF', 'FPT', 'HBE', 'DOZ'] }, count: { type: 'integer', minimum: 1, maximum: 50 },
+          type: { type: 'string', enum: UNIT_CODES }, count: { type: 'integer', minimum: 1, maximum: 50 },
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
           lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
-          radiusM: { type: 'number', minimum: 100, maximum: 5000 }, capacity: { type: 'number', minimum: 0, maximum: 0.35 },
-        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM', 'capacity']) } }, ['units']), annotations: mutating,
+          radiusM: { type: 'number', minimum: 100, maximum: 5000 },
+        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM']) } }, ['units']), annotations: mutating,
         execute: (input) => {
           const plan = requireStagedPlan();
           if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Field "units" must be an array of 1 to 50 unit groups.');
           const deployments = input.units.map((raw, index) => {
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Item units[${index}] must be an object describing a unit group.`);
             const item = raw as Record<string, unknown>;
-            const type = textValue(item.type, 'type', 3);
-            if (!['CCF','FPT','HBE','DOZ'].includes(type)) throw new Error(`Unit type "${type}" is not supported here. Use CCF, FPT, HBE or DOZ.`);
-            return { type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: numberValue(item.capacity, 'capacity', 0, 0.35), id: nextId(), staged: true };
+            const type = textValue(item.type, 'type', 5);
+            if (!UNIT_CODES.includes(type)) throw new Error(`Unit type "${type}" is not supported. Call list_units and use one of the returned unit codes.`);
+            return { type, count: numberValue(item.count, 'count', 1, 50), sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng: numberValue(item.lng, 'lng', -180, 180), lat: numberValue(item.lat, 'lat', -90, 90), radiusM: numberValue(item.radiusM, 'radiusM', 100, 5000), capacity: unitSuppressionCapacity(type), id: nextId(), staged: true };
           });
           const requestedUnits = deployments.reduce((sum, item) => sum + item.count, 0);
           const resultingUnits = summarizePlan(plan).totalUnits + requestedUnits;
@@ -1207,13 +1191,22 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         name: 'commit_plan', title: 'Submit the plan for approval',
         description: 'Opens the review and asks for a single human approval covering the whole plan.',
         inputSchema: schema({}), annotations: { readOnlyHint: false },
-        execute: async (_input, client) => {
+        execute: async (_input, options) => {
           if (!stateRef.current.stagedPlan) throw new Error('No draft plan is open. Call propose_plan and add the actions to review before commit_plan.');
-          const interaction = async () => new Promise<boolean>((resolve) => {
-            reviewResolver.current = resolve;
+          const approved = await new Promise<boolean>((resolve) => {
+            const finish = (decision: boolean) => {
+              options?.signal.removeEventListener('abort', cancel);
+              resolve(decision);
+            };
+            const cancel = () => finish(false);
+            if (options?.signal.aborted) {
+              resolve(false);
+              return;
+            }
+            reviewResolver.current = finish;
+            options?.signal.addEventListener('abort', cancel, { once: true });
             setReviewOpen(true);
           });
-          const approved = client?.requestUserInteraction ? await client.requestUserInteraction(interaction) : await interaction();
           return { approved, planApplied: approved };
         },
       },
@@ -1303,8 +1296,8 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       },
       {
         name: 'compare_plans', title: 'Compare strategies',
-        description: 'Simulates 2 or 3 strategies and returns a quantified comparison at T+6h.',
-        inputSchema: schema({ planNames: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 80 } }, horizonHours: { type: 'integer', enum: [1,3,6] } }, ['planNames']), annotations: readOnly,
+        description: 'Simulates exactly 3 named strategies and returns a quantified comparison at T+1h, T+3h or T+6h.',
+        inputSchema: schema({ planNames: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 80 } }, horizonHours: { type: 'integer', enum: [1,3,6] } }, ['planNames']), annotations: mutating,
         execute: async (input) => {
           if (!Array.isArray(input.planNames) || input.planNames.length !== 3) throw new Error('Field "planNames" must hold exactly 3 strategy names to compare.');
           const names = input.planNames.map((name) => textValue(name, 'planName', 80));
@@ -1343,15 +1336,14 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       },
     }));
     const teardown = new AbortController();
-    Promise.all(definitionsWithJournal.map(async (definition) => {
-      await mc.registerTool(definition, { signal: teardown.signal });
-      registered.push(definition.name);
-    })).then(() => setToolStatus('available')).catch(() => setToolStatus('unavailable'));
+    void Promise.all(definitionsWithJournal.map((definition) => (
+      mc.registerTool(definition, { signal: teardown.signal })
+    ))).catch((error) => {
+      console.error('Native WebMCP tool registration failed.', error);
+    });
     return () => {
-      // `signal` is the retirement the specification defines; `unregisterTool`
-      // is only a fallback for implementations that ignore it.
+      // Aborting the registration signal retires every tool per the WebMCP specification.
       teardown.abort();
-      registered.forEach((name) => { try { void mc.unregisterTool?.(name); } catch { /* teardown */ } });
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
@@ -1364,7 +1356,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
     const rect = event.currentTarget.getBoundingClientRect();
     const coordinate = mapRef.current?.unproject([event.clientX - rect.left, event.clientY - rect.top]);
     if (!coordinate) return;
-    stageUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: type === 'CCF' ? 0.09 : type === 'HBE' ? 0.08 : 0.06 });
+    stageUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: unitSuppressionCapacity(type) });
     notify(type + ' added to the draft plan. No resource committed.');
   };
   const signOut = async () => {
@@ -1392,7 +1384,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       body: 'Every simulation keeps its own ignition, weather and units. Landiras and Saumos replay fires from the Gironde, Étoile is an exercise, and the blank simulation starts from an empty map.',
     },
     {
-      id: 'moyens', target: '#resources-panel',
+      id: 'resources', target: '#resources-panel',
       title: 'Commit the fleet',
       body: 'Thirteen unit types, with manufacturer tank and pump figures. Click to stage a unit, or drag it onto the map. Nothing is committed until you approve the plan.',
       before: () => openPanel('resources'),
@@ -1404,19 +1396,14 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
       before: () => openPanel('situation'),
     },
     {
-      id: 'carte', target: '[data-tour="carte"]',
+      id: 'map', target: '[data-tour="map"]',
       title: 'Place the ignition, change the view',
       body: '"Ignition" adds a start point — hold and drag to widen it. 2D, 3D and globe change the projection without losing anything of the running simulation.',
     },
     {
-      id: 'chronologie', target: '[data-tour="chronologie"]',
+      id: 'timeline', target: '[data-tour="timeline"]',
       title: 'Move the clock',
       body: 'The button runs or pauses the simulation. The slider moves it from H+0 to H+12, and the multiplier sets how fast simulated time passes.',
-    },
-    {
-      id: 'webmcp', target: '[data-tour="webmcp"]',
-      title: 'Let the agent work',
-      body: 'This button reports the 21 tools the page exposes to an agent. Open it for the catalogue, then ask your agent to analyse the situation: it drafts a complete plan, and only you commit it.',
     },
   ];
   const finishTour = useCallback((completed: boolean) => {
@@ -1517,10 +1504,6 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
           </>}
         </div>
         <div className="top-actions">
-          <button className={'webmcp-status-button ' + toolStatus} data-tour="webmcp" type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} aria-label="View the WebMCP tools">
-            {toolStatus === 'available' ? <Check size={14} /> : <Bot size={14} />}
-            <span>{toolStatus === 'available' ? `${toolNames.length} WebMCP tools live` : toolStatus === 'registering' ? 'WebMCP registering' : 'WebMCP unavailable'}</span>
-          </button>
           <span className={'status-chip ' + simState}><i />{simState === 'active' ? 'Simulation running' : simState === 'pause' ? 'Simulation paused' : 'No ignition'}</span>
           <div className="pop-anchor">
             <button className={'icon-button' + (helpOpen ? ' active' : '')} type="button" aria-label="Help" aria-expanded={helpOpen} onClick={() => setHelpOpen((value) => !value)}><CircleHelp size={17} /></button>
@@ -1581,7 +1564,7 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
             <div className="unit-list">{units.filter((unit) => unit.family === family).map((unit) => {
               const UnitIcon = UNIT_ICONS[unit.code] || Truck;
               const capacityLevel = unitCapacityLevel(unit);
-              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: 0.08, autonomy }); notify(unit.code + ' added. No resource committed.'); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
+              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }); notify(unit.code + ' added. No resource committed.'); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
                 <span className={'unit-visual fam-' + unitFamilyClass(unit.family)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
                 <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.tank} · duty {autonomy}%</small></span>
                 <b>{String(unit.count).padStart(2,'0')}</b>
@@ -1703,8 +1686,8 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         <span><i className="lg-active" />Active flame front</span>
         <span><i className="lg-forecast" />Projected position at +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel" data-tour="carte" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
-      <section className="timeline glass-panel" data-tour="chronologie">
+      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <section className="timeline glass-panel" data-tour="timeline">
         <div className="time-readout"><span>INCIDENT CLOCK</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} since ignition</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Pause the simulation' : 'Run the simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
         <div className="timeline-track">
@@ -1719,32 +1702,6 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         </div>
         <div className="speed-control"><span>SPEED</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)} aria-label={`Simulation speed is currently ${speed} times real time. Change the speed.`}>× {speed}</button></div>
       </section>
-
-      {toolsOpen && <Modal labelledBy="tool-catalog-title" onClose={() => setToolsOpen(false)}><section className="tool-catalog glass-panel"><ModalHead titleId="tool-catalog-title" icon={<Bot size={18} />} eyebrow="WEBMCP · TOOLS ON THIS PAGE" title="What the agent can do" onClose={() => setToolsOpen(false)} /><div className={'connect-state ' + toolStatus}>
-  <span className="connect-dot" />
-  <div>
-    <strong>{toolStatus === 'available'
-      ? toolTransport === 'native' ? 'Native WebMCP API · tools registered' : 'WebMCP bridge active · tools registered'
-      : toolStatus === 'registering' ? 'Registering…' : 'No model context in this tab'}</strong>
-    <span>{toolStatus === 'available'
-      ? toolTransport === 'native'
-        ? `This browser exposes document.modelContext. The ${toolNames.length} tools below are registered on it and visible to the agent.`
-        : `This browser has no native API yet, so the page provides its own model context. The ${toolNames.length} tools are registered on document.modelContext and callable through window.__WEBMCP__.`
-      : 'Reload the page. If it persists, a script blocker is preventing /webmcp.js from loading.'}</span>
-  </div>
-</div>
-<ol className="connect-steps">
-  <li><b>1</b><span>For native site tools, open this tab in the ChatGPT desktop browser or a browser that exposes document.modelContext.</span></li>
-  <li><b>2</b><span>Stay signed in: the agent inherits your session, with no API key and no OAuth.</span></li>
-  <li><b>3</b><span>Ask in plain language. The agent calls the page&apos;s tools, never the other way round.</span></li>
-  <li><b>4</b><span>It drafts a ghost plan without interrupting you, then asks for <em>one</em> approval to commit it all.</span></li>
-</ol>
-<div className="bridge-probe">
-  <span>CHECK IT FROM THE BROWSER CONSOLE</span>
-  <code>await window.__WEBMCP__.callTool(&apos;get_situation&apos;, {})</code>
-  <small>{toolTransport === 'native' ? 'document.modelContext comes from the browser.' : 'The page bridge also exposes a no-mouse DOM event transport for isolated extensions.'}</small>
-</div>
-<div className="security-note"><ShieldCheck size={18} /><div><strong>No API key, no access beyond this page</strong><span>The agent acts inside your live session. Every parameter is validated before it runs.</span></div></div><div className="tool-groups">{[['Read',toolNames.slice(0,6)],['Draft',toolNames.slice(6,12)],['Commit',toolNames.slice(12,14)],['Simulation & map',toolNames.slice(14)]].map(([label,names]) => <details className="tool-group" open key={String(label)}><summary><span>{String(label)}</span><b>{(names as string[]).length}</b><ChevronDown size={13} /></summary><div>{(names as string[]).map((name) => <div className="tool-row" key={name}><code>{name}</code><span>{label === 'Read' ? 'Read-only' : label === 'Draft' ? 'Ghost · no confirmation' : label === 'Commit' ? 'Traceable & reversible' : 'Local simulation'}</span></div>)}</div></details>)}</div></section></Modal>}
 
       {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 WORKER RUNS · T+6H" title="Strategy comparison" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Recommended strategy' : undefined}><header><div><small>{index === 0 ? 'SMALLEST AREA' : strategy.resources === 0 ? 'BASELINE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Computed result</span>}</header><p>{strategy.description}</p><dl><div><dt>Area burned</dt><dd>{strategy.burnedHa.toLocaleString('en-US')} ha</dd></div><div><dt>Head rate</dt><dd>{strategy.rateOfSpread.toLocaleString('en-US')} m/min</dd></div><div><dt>Units</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Model not calibrated · results computed locally</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Take the smallest result</button></div></section></Modal>}
 

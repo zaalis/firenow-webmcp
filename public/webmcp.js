@@ -153,10 +153,41 @@
   var context = nativeContext;
   var mode = 'native';
 
+  /* The fallback must never squat the namespace the browser means to use.
+     ChatGPT installs its own `document.modelContext`, and it does not always
+     do so before this script runs: a getter-only property would make that
+     installation fail silently, and the page would go on talking to a private
+     map no agent can see. So the property defined below is read *and* write,
+     and the setter hands the page over to the real implementation the moment
+     one arrives - carrying every tool already registered across with it. */
+  function adoptNative(incoming) {
+    if (!incoming || incoming === context || typeof incoming.registerTool !== 'function') return false;
+    var inherited = (context && context._tools instanceof Map) ? Array.from(context._tools.values()) : [];
+    context = incoming;
+    mode = 'native';
+    bridge.mode = 'native';
+    inherited.forEach(function (tool) {
+      try { Promise.resolve(incoming.registerTool(tool)).catch(reportError); } catch (error) { reportError(error); }
+    });
+    if (typeof incoming.addEventListener === 'function') {
+      incoming.addEventListener('toolchange', refreshNativeManifest);
+    }
+    refreshNativeManifest();
+    document.dispatchEvent(new CustomEvent('webmcp:toolschanged', {
+      detail: { count: inherited.length, names: inherited.map(function (tool) { return tool.name; }) },
+    }));
+    return true;
+  }
+
   if (!context || typeof context.registerTool !== 'function') {
     context = new PolyfilledModelContext();
     mode = 'polyfill';
-    var descriptor = { configurable: true, enumerable: false, get: function () { return context; } };
+    var descriptor = {
+      configurable: true,
+      enumerable: false,
+      get: function () { return context; },
+      set: function (incoming) { adoptNative(incoming); },
+    };
     try { Object.defineProperty(Document.prototype, 'modelContext', descriptor); } catch (error) { reportError(error); }
     try { Object.defineProperty(Navigator.prototype, 'modelContext', descriptor); } catch (error) { reportError(error); }
     /* If defining on the prototype failed, fall back to the instance. */
@@ -214,6 +245,13 @@
     writeManifest(listToolsSync());
   }
 
+  /* A native context owns its own registry, so the manifest has to be pulled
+     from it rather than read out of the polyfill's map. */
+  function refreshNativeManifest() {
+    if (!context || typeof context.getTools !== 'function') return;
+    Promise.resolve(context.getTools()).then(writeManifest, reportError);
+  }
+
   /* ------------------------------------------------------------------ *
    * Single entry point for an agent running JavaScript in the tab.
    * ------------------------------------------------------------------ */
@@ -253,10 +291,7 @@
 
   /* A native context does not keep the manifest current, so hook it up. */
   if (mode === 'native' && typeof context.addEventListener === 'function') {
-    context.addEventListener('toolchange', function () {
-      if (typeof context.getTools !== 'function') return;
-      context.getTools().then(writeManifest, reportError);
-    });
+    context.addEventListener('toolchange', refreshNativeManifest);
   }
 
   /* ------------------------------------------------------------------ *

@@ -45,7 +45,7 @@ const FIRES = [
     checkpoints: [{ label: '20/09 · Monit01', minutes: 8 * 1440, actualHa: 3248.39648665, perimeter: saumos2022Perimeter }],
   },
   {
-    name: 'Saumos 2026 · surfaces publiées', ignition: SAUMOS_IGNITION,
+    name: 'Saumos 2026 · published areas', ignition: SAUMOS_IGNITION,
     domain: { lng: -1.10, lat: 44.80, boxMetres: 50000 }, terrain: SAUMOS_TERRAIN,
     startHour: 13.5, weather: { temperature: 38, humidity: 22, droughtIndex: 0.96, windKph: 26, windBearingDegrees: 225 },
     weatherSeries: weather2026,
@@ -146,9 +146,9 @@ for (const fire of FIRES) {
 console.log(`FireNow validation · worker ${path.relative(ROOT, workerPath)}`);
 console.log('| Fire | Horizon | Real (ha) | Model (ha) | Deviation | Jaccard |');
 console.log('| --- | ---: | ---: | ---: | ---: | ---: |');
-for (const row of rows) console.log(`| ${row.fire} | ${row.deadline} | ${row.actualHa.toFixed(0)} | ${row.modelHa.toFixed(0)} | ${row.errorPct >= 0 ? '+' : ''}${row.errorPct.toFixed(1)} % | ${row.jaccard === null ? 'n/d' : row.jaccard.toFixed(3)} |`);
+for (const row of rows) console.log(`| ${row.fire} | ${row.deadline} | ${row.actualHa.toFixed(0)} | ${row.modelHa.toFixed(0)} | ${row.errorPct >= 0 ? '+' : ''}${row.errorPct.toFixed(1)} % | ${row.jaccard === null ? 'n/a' : row.jaccard.toFixed(3)} |`);
 for (const summary of summaries) {
-  console.log(`${summary.fire} · croissance nocturne estimée: ${summary.nightSharePct === null ? 'n/d' : `${summary.nightSharePct.toFixed(1)} %`}`);
+  console.log(`${summary.fire} · estimated overnight growth: ${summary.nightSharePct === null ? 'n/a' : `${summary.nightSharePct.toFixed(1)} %`}`);
   if (summary.nightGrowthHa !== null) console.log(`${summary.fire} · growth by regime: ${summary.dayGrowthHa.toFixed(0)} ha by day / ${summary.nightGrowthHa.toFixed(0)} ha overnight`);
   if (summary.withoutSuppressionHa !== null) console.log(`${summary.fire} · effect of the units: ${summary.withoutSuppressionHa.toFixed(0)} ha without / ${summary.withSuppressionHa.toFixed(0)} ha with (${(100 * (1 - summary.withSuppressionHa / summary.withoutSuppressionHa)).toFixed(1)} % avoided)`);
 }

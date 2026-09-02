@@ -257,15 +257,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
 .ghost-evac span { left: 50%; bottom: -27px; transform: translateX(-50%); }
 .view-globe .ghost-firebreak,.view-globe .ghost-evac { opacity: 0; transition: opacity .25s var(--ease); }
 
-.webmcp-status-button {
-  min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; cursor: pointer;
-  border: 1px solid rgba(191,122,240,.34); border-radius: 11px; background: rgba(191,122,240,.10); color: var(--text);
-  font-size: 10px; font-weight: 650; transition: background .24s var(--ease), border-color .24s var(--ease);
-}
-.webmcp-status-button.available { border-color: rgba(48,209,88,.42); background: rgba(48,209,88,.12); }
-.webmcp-status-button.available svg { color: var(--ok); }
-.webmcp-status-button:hover { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.28); }
-
 .proposal-bar {
   position: absolute; z-index: 12; left: 306px; right: 342px; bottom: 106px; min-height: 58px;
   display: grid; grid-template-columns: auto minmax(130px,1fr) auto auto auto; align-items: center; gap: 11px;
@@ -305,12 +296,11 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   animation: fade-in .2s var(--ease) both;
 }
 .modal-backdrop:focus { outline: none; }
-.tool-catalog,.compare-modal,.review-panel {
+.compare-modal,.review-panel {
   width: min(920px, 100%); max-height: min(780px, calc(100vh - 48px)); overflow: auto;
   padding: 18px; border-radius: 18px; background: rgba(24,24,27,.96); box-shadow: 0 30px 90px rgba(0,0,0,.5);
   animation: modal-in .28s var(--ease) both;
 }
-.tool-catalog { width: min(760px,100%); }
 .review-panel { width: min(570px,100%); }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .drawer-heading > div { display: flex; align-items: center; gap: 11px; }
@@ -320,25 +310,6 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer;
   border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.045); color: var(--muted);
 }
-.security-note {
-  display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 12px;
-  border: 1px solid var(--border-strong); border-radius: 13px; background: rgba(255,255,255,.06); color: var(--text);
-}
-.security-note div { display: flex; flex-direction: column; }
-.security-note strong { color: var(--text); font-size: 10px; }
-.security-note span { margin-top: 3px; color: var(--muted); font-size: 8px; }
-.tool-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
-.tool-group { min-width: 0; }
-.tool-group summary { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; color: #d5d5da; font-size: 10px; list-style: none; }
-.tool-group summary::-webkit-details-marker { display: none; }
-.tool-group summary span { font-weight: 700; }
-.tool-group summary b { min-width: 18px; padding: 3px 5px; border-radius: 999px; background: rgba(255,255,255,.07); color: var(--muted); text-align: center; font: 600 8px/1 "SF Mono",Consolas,monospace; }
-.tool-group summary svg { margin-left: auto; color: var(--muted); transition: transform .2s var(--ease); }
-.tool-group[open] summary svg { transform: rotate(180deg); }
-.tool-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 35px; padding: 0 9px; border-top: 1px solid rgba(255,255,255,.055); }
-.tool-row code { color: var(--text); font: 600 9px/1 "SF Mono",Consolas,monospace; }
-.tool-row span { color: var(--faint); font-size: 7px; text-align: right; }
-
 .compare-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 18px; }
 .compare-grid article { padding: 14px; border: 1px solid var(--border); border-radius: 15px; background: rgba(255,255,255,.035); }
 .compare-grid article.recommended { border-color: var(--border-strong); background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.10); }
@@ -416,15 +387,12 @@ strong,b,dd,time,code,.unit-marker { font-variant-numeric: tabular-nums; }
   .compare-grid article > p { min-height: 0; }
 }
 @media (max-width: 620px) {
-  .webmcp-status-button { padding: 0 9px; }
-  .webmcp-status-button span { font-size: 9px; }
   .proposal-bar { left: 14px; right: 14px; bottom: 287px; grid-template-columns: auto 1fr auto; }
   .proposal-bar .secondary-button,.proposal-summary { display: none; }
   .proposal-bar .primary-button { font-size: 0; width: 36px; padding: 0; }
   .proposal-bar .primary-button::after { content: '›'; font-size: 18px; }
-  .tool-groups { grid-template-columns: 1fr; }
   .modal-backdrop { padding: 12px; }
-  .tool-catalog,.compare-modal,.review-panel { max-height: calc(100vh - 24px); padding: 14px; }
+  .compare-modal,.review-panel { max-height: calc(100vh - 24px); padding: 14px; }
   .compare-grid { gap: 7px; }
   .decision-row { grid-template-columns: 82px minmax(54px,1fr) auto; gap: 7px; }
   .agent-drawer { left: 12px; right: 12px; top: 88px; bottom: 96px; width: auto; }
@@ -479,7 +447,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 .nav-cta:hover { background: #E7E7E9; }
 
-/* --- Titres et blocs partages --- */
+/* --- Shared headings and content blocks --- */
 .landing-eyebrow {
   display: inline-flex; align-items: center; gap: 7px; margin: 0 0 18px;
   color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .14em;
@@ -488,7 +456,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .landing-shell h2 { margin: 0 0 16px; font-size: clamp(26px, 3.4vw, 40px); line-height: 1.15; letter-spacing: -.03em; text-wrap: balance; }
 .landing-shell h3 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.015em; }
 .section-lede { max-width: 62ch; margin: 0; color: var(--muted); font-size: 16px; }
-.section-lede code, .probe code, .landing-shell p code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); color: var(--text); font: 500 14px/1.5 "SF Mono", Consolas, monospace; overflow-wrap: anywhere; }
+.section-lede code, .landing-shell p code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); color: var(--text); font: 500 14px/1.5 "SF Mono", Consolas, monospace; overflow-wrap: anywhere; }
 .landing-section { padding: clamp(64px, 9vw, 128px) clamp(16px, 4vw, 48px); }
 .landing-section-alt { background: linear-gradient(180deg, rgba(255,255,255,.028), transparent); border-block: 1px solid var(--border); }
 .section-head { max-width: var(--measure); margin: 0 auto 44px; }
@@ -536,23 +504,23 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 /* These cards sit on a flat fill, not on a map: the backdrop blur shows nothing
    and costs a compositing layer per card. Only the access card, resting on a
    photograph, keeps the glass. */
-.etape-card, .code-card, .ecart-card, .scenario-cards li {
+.step-card, .code-card, .gap-card, .scenario-cards li {
   background: rgba(20,21,23,.72); backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: 0 12px 32px rgba(0,0,0,.28);
 }
 
 /* --- The flow --- */
-.etapes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; max-width: var(--measure); margin: 0 auto; padding: 0; list-style: none; }
-.etape-card { padding: 26px; border-radius: 18px; }
-.etape-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.etape-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border-strong); background: rgba(255,255,255,.06); }
-.etape-num { color: var(--faint); font: 700 13px/1 "SF Mono", Consolas, monospace; letter-spacing: .08em; }
-.etape-tag { margin: 0 0 14px; color: var(--agent); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .09em; }
-.etape-card > p:last-of-type { margin: 0; color: var(--muted); font-size: 15px; }
-.etape-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 0; padding: 18px 0 0; border-top: 1px solid var(--border); list-style: none; }
-.etape-tools code { padding: 5px 9px; border-radius: 7px; background: rgba(255,255,255,.06); color: #CFCFD3; font: 500 12px/1 "SF Mono", Consolas, monospace; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; max-width: var(--measure); margin: 0 auto; padding: 0; list-style: none; }
+.step-card { padding: 26px; border-radius: 18px; }
+.step-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.step-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border-strong); background: rgba(255,255,255,.06); }
+.step-number { color: var(--faint); font: 700 13px/1 "SF Mono", Consolas, monospace; letter-spacing: .08em; }
+.step-tag { margin: 0 0 14px; color: var(--agent); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .09em; }
+.step-card > p:last-of-type { margin: 0; color: var(--muted); font-size: 15px; }
+.step-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 0; padding: 18px 0 0; border-top: 1px solid var(--border); list-style: none; }
+.step-tools code { padding: 5px 9px; border-radius: 7px; background: rgba(255,255,255,.06); color: #CFCFD3; font: 500 12px/1 "SF Mono", Consolas, monospace; }
 
-/* --- Blocs a deux colonnes --- */
+/* --- Two-column blocks --- */
 .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: clamp(28px, 5vw, 64px); align-items: center; max-width: var(--measure); margin: 0 auto; }
 .split.reverse > figure { order: 1; }
 .checklist { display: grid; gap: 11px; margin: 26px 0 0; padding: 0; list-style: none; }
@@ -572,13 +540,13 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .moteur-list dd { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
 
 /* --- Validation --- */
-.ecarts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; max-width: var(--measure); margin: 0 auto; }
-.ecart-card { padding: 22px; border-radius: 16px; }
-.ecart-mesure { margin: 0; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .09em; }
-.ecart-valeur { margin: 12px 0 6px; font-size: clamp(28px, 3.2vw, 38px); font-weight: 700; letter-spacing: -.035em; }
-.ecart-card.ecart .ecart-valeur { color: var(--fire-intense); }
-.ecart-card.progres .ecart-valeur { color: var(--ok); }
-.ecart-detail { margin: 0; color: var(--faint); font-size: 14px; }
+.gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; max-width: var(--measure); margin: 0 auto; }
+.gap-card { padding: 22px; border-radius: 16px; }
+.gap-measure { margin: 0; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .09em; }
+.gap-value { margin: 12px 0 6px; font-size: clamp(28px, 3.2vw, 38px); font-weight: 700; letter-spacing: -.035em; }
+.gap-card.deviation .gap-value { color: var(--fire-intense); }
+.gap-card.progress .gap-value { color: var(--ok); }
+.gap-detail { margin: 0; color: var(--faint); font-size: 14px; }
 .validation-note { max-width: 78ch; margin: 34px auto 0; color: var(--muted); font-size: 15px; }
 
 /* --- Scenarios --- */
@@ -588,7 +556,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .scenario-lieu { margin: 0; color: var(--muted); font-size: 14px; }
 .scenario-couvert { margin: 6px 0 0; color: var(--faint); font-size: 13px; }
 
-/* --- Acces --- */
+/* --- Access --- */
 .landing-access { position: relative; overflow: hidden; }
 .access-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; }
 .access-veil { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,9,10,.95), rgba(8,9,10,.88)); }
@@ -714,13 +682,13 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 
 /* --- Grids arrive item by item: the container only fades, the items rise --- */
 .landing-shell[data-motion="on"] .hero-stats,
-.landing-shell[data-motion="on"] .etapes,
-.landing-shell[data-motion="on"] .ecarts,
+.landing-shell[data-motion="on"] .steps,
+.landing-shell[data-motion="on"] .gaps,
 .landing-shell[data-motion="on"] .scenario-cards { transform: none; }
 
 .landing-shell[data-motion="on"] .hero-stats.is-visible > div,
-.landing-shell[data-motion="on"] .etapes.is-visible > li,
-.landing-shell[data-motion="on"] .ecarts.is-visible > article,
+.landing-shell[data-motion="on"] .steps.is-visible > li,
+.landing-shell[data-motion="on"] .gaps.is-visible > article,
 .landing-shell[data-motion="on"] .scenario-cards.is-visible > li {
   animation: rise-in .5s var(--ease) backwards;
 }
@@ -731,10 +699,10 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 
 /* --- Hover, for pointers that have one --- */
 @media (hover: hover) {
-  .etape-card, .ecart-card, .scenario-cards li, .media-card img {
+  .step-card, .gap-card, .scenario-cards li, .media-card img {
     transition: transform .28s var(--ease), border-color .28s var(--ease), box-shadow .28s var(--ease);
   }
-  .etape-card:hover, .ecart-card:hover, .scenario-cards li:hover {
+  .step-card:hover, .gap-card:hover, .scenario-cards li:hover {
     transform: translateY(-3px);
     border-color: var(--border-strong);
     box-shadow: 0 18px 40px rgba(0,0,0,.36);
@@ -745,8 +713,8 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 
 /* The catalogue chips answer the pointer without moving their own box. */
-.etape-tools code { transition: background .2s var(--ease), color .2s var(--ease); }
-.etape-card:hover .etape-tools code { background: rgba(255,255,255,.1); color: var(--text); }
+.step-tools code { transition: background .2s var(--ease), color .2s var(--ease); }
+.step-card:hover .step-tools code { background: rgba(255,255,255,.1); color: var(--text); }
 
 @media (prefers-reduced-motion: reduce) {
   .landing-shell * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -843,14 +811,14 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .status-chip.blank i { background: var(--faint); box-shadow: none; animation: none; }
 .icon-button.active,.avatar-button.active { background: rgba(255,255,255,.16); border-color: var(--border-strong); }
 
-/* ---------- Aide ---------- */
+/* ---------- Help ---------- */
 .help-pop { width: 348px; }
 .help-list { margin: 0; display: flex; flex-direction: column; gap: 9px; }
 .help-list div { display: flex; flex-direction: column; gap: 3px; }
 .help-list dt { color: var(--text); font-size: 10px; font-weight: 650; }
 .help-list dd { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 
-/* ---------- Compte ---------- */
+/* ---------- Account ---------- */
 .account-pop { width: 286px; }
 .account-head { display: flex; align-items: center; gap: 10px; padding-bottom: 11px; border-bottom: 1px solid var(--border); }
 .account-avatar {
@@ -877,7 +845,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 }
 .account-signout:hover { background: rgba(255,59,48,.16); border-color: rgba(255,59,48,.42); }
 
-/* ---------- Meteo ---------- */
+/* ---------- Weather ---------- */
 .weather-card { width: 100%; cursor: pointer; text-align: left; transition: background .2s var(--ease); }
 .weather-card:hover { background: rgba(255,255,255,.07); }
 .weather-main { display: flex; flex-direction: column; gap: 2px; }
@@ -953,7 +921,7 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .weather-source a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
 .weather-source.error { color: #b8b8b8; }
 
-/* ---------- Carte blank ---------- */
+/* ---------- Blank map ---------- */
 .blank-cta {
   position: absolute; z-index: 15; left: 50%; top: 50%; transform: translate(-50%,-50%);
   width: 296px; padding: 20px; border-radius: 20px; text-align: center;
@@ -967,33 +935,13 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .blank-cta p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .blank-cta .primary-button { margin-top: 3px; }
 
-/* ---------- Foyer ---------- */
+/* ---------- Ignition ---------- */
 .ignition-marker i {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
   border-radius: 50%; border: 1.5px dashed rgba(255,59,48,.85); background: rgba(255,59,48,.14);
   pointer-events: none;
 }
 .pick-hint span b { color: var(--fire-extreme); }
-
-/* ---------- Connexion WebMCP ---------- */
-.connect-state {
-  display: flex; align-items: flex-start; gap: 10px; padding: 12px;
-  border: 1px solid var(--border); border-radius: 14px; background: rgba(255,255,255,.04);
-}
-.connect-dot { flex: none; margin-top: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
-.connect-state.available .connect-dot { background: #30D158; box-shadow: 0 0 0 3px rgba(48,209,88,.20); }
-.connect-state.registering .connect-dot { background: var(--fire-active); box-shadow: 0 0 0 3px rgba(255,159,10,.18); }
-.connect-state.unavailable .connect-dot { background: var(--fire-extreme); box-shadow: 0 0 0 3px rgba(255,59,48,.18); }
-.connect-state strong { display: block; margin-bottom: 3px; font-size: 11px; font-weight: 650; }
-.connect-state span { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.connect-steps { margin: 11px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
-.connect-steps li { display: flex; align-items: flex-start; gap: 9px; color: var(--muted); font-size: 10px; line-height: 1.5; }
-.connect-steps b {
-  flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
-  border: 1px solid var(--border-strong); background: rgba(255,255,255,.06); color: var(--text);
-  font: 650 9px/1 "SF Mono", Consolas, monospace;
-}
-.connect-steps em { color: var(--text); font-style: normal; font-weight: 650; }
 
 /* ---------- Menus: opaque, the map must not read through them ---------- */
 .popover, .weather-editor {
@@ -1014,14 +962,13 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
 .activity-pill svg:first-child { color: var(--agent); }
 .beta-chip { color: var(--water); border-color: rgba(90,200,250,.32); }
 .rail-footer i { background: var(--ok); box-shadow: 0 0 0 3px rgba(48,209,88,.18); }
-.security-note svg { color: var(--ok); }
 .review-legal svg { color: var(--ok); }
 .account-note svg { color: var(--ok); }
 
 /* Tint per family: the icon and the gauge carry the meaning, with no solid fill. */
-.unit-visual.fam-terrestre,.unit-marker.fam-terrestre svg { color: var(--water); }
-.unit-visual.fam-aerien,.unit-marker.fam-aerien svg { color: #9FD8FF; }
-.unit-visual.fam-genie,.unit-marker.fam-genie svg { color: var(--earth); }
+.unit-visual.fam-ground,.unit-marker.fam-ground svg { color: var(--water); }
+.unit-visual.fam-air,.unit-marker.fam-air svg { color: #9FD8FF; }
+.unit-visual.fam-engineering,.unit-marker.fam-engineering svg { color: var(--earth); }
 .unit-marker.ghost svg { color: var(--agent); }
 
 /* ---------- Bloc hydraulique ---------- */
@@ -1234,12 +1181,10 @@ body:has(.landing-shell) { overflow-y: auto; overflow-x: hidden; height: auto; }
   .tour, .tour-hole, .tour-card { transition: none; }
 }
 
-/* --- Agent bridge --------------------------------------------------------
- * The DOM transport for the WebMCP tools. It sits directly under the header
- * because an agent reads the page from the top, and the directive is the first
- * thing it must find. Collapsed it is one line; the tool names stay in the DOM
- * even when the line is visually clipped, so an agent that only reads text
- * still learns what this page can do. */
+/* ------------------------------------------------------------------ *
+ * The agent bridge: the DOM surface for an agent that drives the tab
+ * through the accessibility tree rather than through page JavaScript.
+ * ------------------------------------------------------------------ */
 .agent-bridge {
   position: absolute; z-index: 13; left: 306px; right: 342px; top: 90px;
   border-radius: 14px; border-color: rgba(191,122,240,.30); background: var(--panel-hi);

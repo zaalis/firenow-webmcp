@@ -6,7 +6,7 @@ FireNow is an agent-native wildfire decision-support and training simulator. The
 
 ## Why WebMCP
 
-FireNow calls no language model. The page registers **21 domain tools** on `document.modelContext`, falling back to `navigator.modelContext`. A capable agent uses the session already open in the page:
+FireNow calls no language model. The page registers **21 domain tools** on the browser-provided `document.modelContext`. ChatGPT discovers them as site tools in its built-in desktop browser and uses the session already open in the page:
 
 - read tools marked `readOnlyHint`;
 - staging tools that only ever draw into a ghost plan;
@@ -15,42 +15,25 @@ FireNow calls no language model. The page registers **21 domain tools** on `docu
 
 `commit_plan` is the only stopping point in the normal flow: it calls `requestUserInteraction()` when the client provides one, opens the plan review, and waits for the human decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
 
-The **WebMCP log** shows the calls the agent actually executed, with the tool, its result and a timestamp. There is no simulated agent in the page.
+The **WebMCP log** shows the calls the agent actually executed, with the tool, its result and a timestamp. There is no simulated agent or manual tool runner in the page.
 
-### The compatibility bridge
+### Native first, and a bridge that yields to it
 
-`document.modelContext` exists today only behind experimental flags. Without it the page exposed no tools at all and the header read "WebMCP unavailable" in an ordinary Chrome — which is very nearly every browser that will open this page.
+FireNow registers its tools on `document.modelContext`. When ChatGPT's built-in browser supplies that API natively, that is the whole story: top-level registration through `document.modelContext.registerTool()`, discovered as site tools, nothing else in the way.
 
-`public/webmcp.js`, loaded before hydration, fixes that. It **never replaces a native implementation**: it detects one and steps aside. Failing that, it provides a model context shaped like the specification — `registerTool(tool, { signal })`, `getTools()`, a `toolchange` event, plus `provideContext()` for the older shape — and publishes a single entry point:
+Every other browser gets the same context from `public/webmcp.js`, loaded before hydration. Without it the page exposes no tools at all and any agent — Claude in Chrome, an MCP extension, a plain Chrome tab — sees a mute map.
 
-    // From the browser console, or from an agent that runs JavaScript.
-    window.__WEBMCP__.mode              // 'native' or 'polyfill'
-    window.__WEBMCP__.listTools()       // the 21 tools with their schemas
-    await window.__WEBMCP__.callTool('get_situation', {})
+The risk a page-owned fallback carries is that it squats the namespace the browser means to use: if the native implementation is installed *after* the page scripts run, a getter-only property makes that installation fail silently and the page keeps talking to a private map no agent can discover. The bridge is written so that cannot happen. It steps aside when a native context already exists, and the property it defines otherwise is read **and** write: the setter adopts the incoming native implementation and re-registers every tool onto it. Native always wins, whenever it arrives.
 
-Four discovery surfaces, because the agents that open this page do not all have the same reach:
+On top of the model context the bridge publishes the same implementation on three further surfaces, because the agents that open this page do not all have the same reach:
 
-- `document.modelContext` and `navigator.modelContext`, for a native WebMCP client;
-- `window.__WEBMCP__`, for an agent that evaluates JavaScript in the main world;
-- a **same-origin only** `postMessage` channel and a `webmcp:call` / `webmcp:result` DOM event pair, for an extension content script — which runs in an isolated world and can therefore see neither of the two above;
-- the DOM itself: a `<script type="application/json" id="webmcp-manifest">` manifest, and the **agent bridge** described below.
+- `window.__WEBMCP__` — an agent evaluating JavaScript in the main world;
+- `webmcp:call` / `webmcp:result` DOM events and same-origin `postMessage` — an extension content script, which runs in an isolated world and can see neither the model context nor `window.__WEBMCP__`;
+- the DOM itself — a `#webmcp-manifest` JSON block, the **agent bridge** panel under the header, and `/?tool=NAME&args=URL_ENCODED_JSON` — for an agent that can only read the page and type into it.
+
+Every transport runs the same tool implementation: same validation, same journal, same human approval on `commit_plan`, which the URL route refuses outright.
 
 Retirement follows the specification: tools are registered with an `AbortSignal` that the component teardown fires.
-
-### The agent bridge
-
-Every surface above is JavaScript. An agent that drives a tab through screenshots and the accessibility tree — which is what ChatGPT does today — reaches none of them. It reads "21 WebMCP tools live" in the header, finds no way to call any of them, and correctly reports that the tools are not exposed to its session.
-
-`app/agent-bridge.tsx` is the missing transport. Directly under the header, in the DOM where any agent can read and type:
-
-- the **directive**, repeated verbatim in the manifest, in an `agent-instructions` `<meta>` tag and on the landing page: call the tools, do not drive the map with the mouse;
-- the **catalogue** — the 21 names, their signatures and their descriptions, present in the accessibility tree;
-- a **call form**: pick the tool, type its JSON arguments, submit, read the JSON result back from `#agent-bridge-result`;
-- **invocation by navigation**, for an agent whose only verb is opening a URL:
-
-      /?tool=get_situation&args=%7B%7D
-
-Both routes run the same `callTool` the JavaScript surfaces use: same validation, same WebMCP log, same single human approval on `commit_plan` — which is the one tool the URL route refuses, so that committing resources is never one navigation away.
 
 The front door registers two read-only tools of its own, `get_capabilities` and `open_console`, so that an agent arriving before sign-in finds a model context that answers rather than an empty one.
 
@@ -105,7 +88,7 @@ Requirements: Node.js 22.13 or newer.
     npm install
     npm run dev
 
-Open http://localhost:3000. The root serves the presentation page; the "Access" section opens the console. A six-step tutorial runs the first time a new account opens the console, and stays available from the help menu.
+Open http://localhost:3000. The root serves the presentation page; the "Access" section opens the console. A five-step tutorial runs the first time a new account opens the console, and stays available from the help menu.
 
 Authentication routes are served by the same local Worker so that cookies stay same-origin.
 
@@ -116,9 +99,12 @@ Authentication routes are served by the same local Worker so that cookies stay s
     node scripts/test-simulation.mjs
     node scripts/validate-fires.mjs
 
-In the browser, with the console open, the header must read "21 WebMCP tools live". The direct check:
+For the real integration check, open the signed-in console in the ChatGPT desktop app's built-in browser. The address-bar Site tools menu must list 21 tools. Ask ChatGPT to read the operational situation and verify that the WebMCP log records a `get_situation` call; no map click or form submission should occur.
 
-    window.__WEBMCP__.listTools().length          // 21
+In a browser without native WebMCP support, the page bridge supplies the context instead. Check it from any console:
+
+    window.__WEBMCP__.mode                        // 'native' or 'polyfill'
+    window.__WEBMCP__.listTools().length          // 21 once signed in
     await window.__WEBMCP__.callTool('get_situation', {})
 
 Without a JavaScript console — the check that matters for an agent driving the page — open the **Agent bridge** panel under the header, pick `propose_plan`, type `{"name": "West flank", "intention": "Hold the DFCI track"}` and run it. The draft plan bar must appear, and the WebMCP log must show the call.
@@ -134,7 +120,7 @@ The `test-simulation.mjs` suite carries **48 assertions**: spread rates against 
       tool-names.ts             the catalogue quoted to agents before sign-in
       landing.tsx               public presentation page
       login-client.tsx          human authentication
-      tour.tsx                  six-step spotlight tutorial
+      tour.tsx                  five-step spotlight tutorial
       globals.css               visual system
       api/auth/*                CSRF, registration, sign-in, sign-out
     brand/
@@ -201,7 +187,7 @@ The application therefore serves the official worker from `public/maplibre/` and
 - Elevation is sampled at 90 m; the 30 m DEM now requires an authenticated licence acceptance.
 - No usable vector perimeter was found for Saumos 2026, so the shape score is available for 2022 only.
 - Evacuation orders are never transmitted to any external system.
-- The bridge provides the model context when the browser has none; interoperability with a native WebMCP client could not be verified, for want of a stable implementation to test against.
+- Site tools require a current ChatGPT desktop built-in browser, an eligible model and account rollout, and the Enable site tools permission. Ordinary Chrome does not receive a page-owned fallback.
 - Field mobile testing and professional validation by firefighters have not been done.
 - The basemap is served up to zoom level 16; beyond that the last tile is stretched.
 - The MapLibre bundle exceeds the 500 kB warning and would benefit from code splitting.
