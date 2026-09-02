@@ -50,7 +50,7 @@ export default function LandingTools() {
             consoleTools: CONSOLE_TOOL_NAMES,
             consoleToolCount: CONSOLE_TOOL_NAMES.length,
             howToUnlock: 'The console tools register on document.modelContext once a human operator has signed in on this page. Ask the operator to sign in; never enter credentials on their behalf.',
-            fallbackTransport: 'When the console is open, the "Agent bridge" panel (#agent-bridge) runs the same tools from the DOM, for clients without WebMCP support.',
+            fallbackTransport: 'A same-page event bridge is available for isolated clients that cannot use the native WebMCP interface.',
             calibration: 'not_performed',
           }),
         },

@@ -1,6 +1,6 @@
 # FireNow
 
-FireNow is an agent-native wildfire decision-support and training simulator. The map stays under human control, while a WebMCP-capable agent can read the situation, build a complete plan in a ghost layer, compare several strategies, and submit the batch for a single human approval.
+FireNow is a wildfire decision-support and training simulator. It combines the incident picture, a local fire-behaviour model and proposed actions in one workspace. An operator stays in control while a WebMCP-capable agent can read the situation, prepare a draft plan, compare options and submit the batch for one human approval.
 
 > **Training beta.** FireNow is not a certified incident command system. It replaces neither the incident commander, nor field data, nor local procedure. The engine is not calibrated: see [Engine validation](#engine-validation) for the measured deviations.
 
@@ -15,7 +15,7 @@ FireNow calls no language model. The page registers **21 domain tools** on `docu
 
 `commit_plan` is the only stopping point in the normal flow: it calls `requestUserInteraction()` when the client provides one, opens the plan review, and waits for the human decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
 
-The **WebMCP log** shows the calls the agent actually executed, with the tool, its result and a timestamp. There is no simulated agent in the page.
+The **WebMCP log** records the calls actually executed, with the tool, its result and a timestamp. There is no simulated agent in the page. The operational map deliberately keeps this technical transport out of the main interface so incident information remains the focus.
 
 ### The compatibility bridge
 
@@ -28,31 +28,22 @@ The **WebMCP log** shows the calls the agent actually executed, with the tool, i
     window.__WEBMCP__.listTools()       // the 21 tools with their schemas
     await window.__WEBMCP__.callTool('get_situation', {})
 
-Four discovery surfaces, because the agents that open this page do not all have the same reach:
+Three discovery surfaces support clients with different browser capabilities:
 
 - `document.modelContext` and `navigator.modelContext`, for a native WebMCP client;
 - `window.__WEBMCP__`, for an agent that evaluates JavaScript in the main world;
 - a **same-origin only** `postMessage` channel and a `webmcp:call` / `webmcp:result` DOM event pair, for an extension content script — which runs in an isolated world and can therefore see neither of the two above;
-- the DOM itself: a `<script type="application/json" id="webmcp-manifest">` manifest, and the **agent bridge** described below.
+- a `<script type="application/json" id="webmcp-manifest">` manifest, so a client can discover the available tool schemas without altering the map.
 
 Retirement follows the specification: tools are registered with an `AbortSignal` that the component teardown fires.
 
-### The agent bridge
-
-Every surface above is JavaScript. An agent that drives a tab through screenshots and the accessibility tree — which is what ChatGPT does today — reaches none of them. It reads "21 WebMCP tools live" in the header, finds no way to call any of them, and correctly reports that the tools are not exposed to its session.
-
-`app/agent-bridge.tsx` is the missing transport. Directly under the header, in the DOM where any agent can read and type:
-
-- the **directive**, repeated verbatim in the manifest, in an `agent-instructions` `<meta>` tag and on the landing page: call the tools, do not drive the map with the mouse;
-- the **catalogue** — the 21 names, their signatures and their descriptions, present in the accessibility tree;
-- a **call form**: pick the tool, type its JSON arguments, submit, read the JSON result back from `#agent-bridge-result`;
-- **invocation by navigation**, for an agent whose only verb is opening a URL:
-
-      /?tool=get_situation&args=%7B%7D
-
-Both routes run the same `callTool` the JavaScript surfaces use: same validation, same WebMCP log, same single human approval on `commit_plan` — which is the one tool the URL route refuses, so that committing resources is never one navigation away.
-
 The front door registers two read-only tools of its own, `get_capabilities` and `open_console`, so that an agent arriving before sign-in finds a model context that answers rather than an empty one.
+
+## Product experience
+
+The public page explains the workflow in operational terms: establish the situation, prepare a proportionate response, review the whole plan, then apply only the approved actions. It also states the current limits plainly: FireNow is a training tool, its detailed landscape coverage is uneven, and better team handovers, shared plan review and decision history are the intended next improvements.
+
+The signed-in console keeps the map, resources, situation and timeline visible without a persistent technical tools panel. This is a presentation change only: the native WebMCP registration, the compatibility bridge and the tool journal remain available to supported clients.
 
 ## The engine
 
@@ -116,12 +107,10 @@ Authentication routes are served by the same local Worker so that cookies stay s
     node scripts/test-simulation.mjs
     node scripts/validate-fires.mjs
 
-In the browser, with the console open, the header must read "21 WebMCP tools live". The direct check:
+In a WebMCP-capable browser, list the tools and read the situation:
 
     window.__WEBMCP__.listTools().length          // 21
     await window.__WEBMCP__.callTool('get_situation', {})
-
-Without a JavaScript console — the check that matters for an agent driving the page — open the **Agent bridge** panel under the header, pick `propose_plan`, type `{"name": "West flank", "intention": "Hold the DFCI track"}` and run it. The draft plan bar must appear, and the WebMCP log must show the call.
 
 The `test-simulation.mjs` suite carries **48 assertions**: spread rates against published ranges, regional composition, geographic anchoring of the landscape, perimeter geometry, weather response, suppression response, sustainable duty, DFCI grid behaviour and numerical robustness.
 
@@ -129,7 +118,6 @@ The `test-simulation.mjs` suite carries **48 assertions**: spread rates against 
 
     app/
       firenow-client.tsx        map, state, review and WebMCP tools
-      agent-bridge.tsx          the DOM transport for the tools
       landing-tools.tsx         the two read-only tools of the front door
       tool-names.ts             the catalogue quoted to agents before sign-in
       landing.tsx               public presentation page
@@ -196,13 +184,13 @@ The application therefore serves the official worker from `public/maplibre/` and
 
 ## Known limits
 
-- **The engine is not calibrated.** The measured deviations are published above rather than corrected by a tuning factor.
+- **The engine is not calibrated.** It supports option comparison and training, not a certified operational forecast.
 - The real territorial raster covers only the Gironde; other regions use a procedural mosaic anchored to coordinates, with no real roads or buildings.
 - Elevation is sampled at 90 m; the 30 m DEM now requires an authenticated licence acceptance.
 - No usable vector perimeter was found for Saumos 2026, so the shape score is available for 2022 only.
 - Evacuation orders are never transmitted to any external system.
 - The bridge provides the model context when the browser has none; interoperability with a native WebMCP client could not be verified, for want of a stable implementation to test against.
-- Field mobile testing and professional validation by firefighters have not been done.
+- Field mobile testing and professional validation by firefighters have not been done. Shared field observations, role-based review and shift handover are future collaboration improvements, not present-day capabilities.
 - The basemap is served up to zoom level 16; beyond that the last tile is stretched.
 - The MapLibre bundle exceeds the 500 kB warning and would benefit from code splitting.
 - `npm run start` does not boot locally: the server imports `cloudflare:workers`, which the Node ESM loader refuses. `npm run dev` already runs the server code inside the Workers runtime through the Cloudflare Vite plugin; that is where local verification happens.

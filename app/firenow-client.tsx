@@ -1579,7 +1579,9 @@ export default function FireNowClient({ userEmail, initialCall = null }: { userE
         </div>
       </header>
 
-      <AgentBridge initialCall={initialCall} />
+      {/* The programmatic URL fallback remains available for clients that need
+          it, but the console itself stays focused on the operational map. */}
+      {initialCall && <AgentBridge initialCall={initialCall} />}
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
