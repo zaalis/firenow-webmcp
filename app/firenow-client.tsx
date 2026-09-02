@@ -45,7 +45,7 @@ type Suppression = {
   attackMode: 'direct' | 'heavy-units' | 'indirect'; appliances: number; lineMetresPerHour: number;
 };
 type Scenario = {
-  id: string; name: string; createdAt: number; preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank';
+  id: string; name: string; createdAt: number; preset: 'landiras-field' | 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank';
   ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[]; firebreaks: Firebreak[];
   domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
@@ -135,6 +135,26 @@ const planDescriptions = [
   'Reference projection with no additional unit committed.',
 ];
 const defaultIgnition: Ignition = { lng: -0.4540519, lat: 44.5897472, radiusM: 0 };
+// A deliberately modest first alarm for the map's opening sector.  It is an
+// exercise, not a representation of a live incident: its positions give the
+// operator a credible command picture without claiming crews are on scene.
+const fieldWeather = (): Weather => ({
+  windSpeed: 28, windDirection: 'North-west', windBearing: 135, gusts: 46,
+  temperature: 33, humidity: 24, droughtIndex: 0.78,
+});
+const fieldUnits = (): Deployment[] => [
+  { id: 'field-vlhr-1', type: 'VLHR', count: 1, sector: 'Command point', mission: 'Reconnaissance and sector command', lng: -0.4604, lat: 44.5949, radiusM: 900, capacity: 0.06, autonomy: 85 },
+  { id: 'field-ccf-1', type: 'CCF', count: 2, sector: 'North-east flank', mission: 'Anchor and direct attack from DFCI track', lng: -0.4462, lat: 44.5998, radiusM: 1200, capacity: 0.09, autonomy: 85 },
+  { id: 'field-ccfs-1', type: 'CCFS', count: 1, sector: 'South-east flank', mission: 'Protect the running flank and water relay', lng: -0.4421, lat: 44.5826, radiusM: 1400, capacity: 0.09, autonomy: 85 },
+  { id: 'field-fpt-1', type: 'FPT', count: 1, sector: 'Habitat edge', mission: 'Structure defence and point protection', lng: -0.4267, lat: 44.5851, radiusM: 1000, capacity: 0.06, autonomy: 85 },
+  { id: 'field-hbe-1', type: 'HBE', count: 1, sector: 'Fire head', mission: 'Reconnaissance and targeted drops', lng: -0.4335, lat: 44.5788, radiusM: 1800, capacity: 0.08, autonomy: 75 },
+  { id: 'field-doz-1', type: 'DOZ', count: 1, sector: 'South-east', mission: 'Reopen and reinforce DFCI control line', lng: -0.4358, lat: 44.5751, radiusM: 1300, capacity: 0.05, autonomy: 80 },
+  { id: 'field-crew-1', type: 'CREW', count: 2, sector: 'North-east flank', mission: 'Secure the anchor point and mop-up', lng: -0.4495, lat: 44.6012, radiusM: 1000, capacity: 0.05, autonomy: 80 },
+];
+const fieldFirebreaks = (): Firebreak[] => [
+  { name: 'DFCI P-17 · anchor line', sector: 'North-east flank', lengthKm: 1.15, coordinates: [[-0.4567, 44.6030], [-0.4476, 44.6005], [-0.4428, 44.5962]], widthM: 8, staffed: true },
+  { name: 'DFCI P-18 · contingency line', sector: 'South-east', lengthKm: 1.48, coordinates: [[-0.4428, 44.5962], [-0.4369, 44.5891], [-0.4322, 44.5817]], widthM: 10, staffed: false },
+];
 const landirasUnits = (): Deployment[] => [
   { id: 'ccf22', type: 'CCF', count: 22, sector: 'North-east flank', mission: 'Hold the left flank', lng: -0.4159, lat: 44.6088, radiusM: 2200, capacity: 0.09 },
   { id: 'ccf18', type: 'CCF', count: 18, sector: 'South-west flank', mission: 'Hold the right flank', lng: -0.4922, lat: 44.5707, radiusM: 2200, capacity: 0.09 },
@@ -220,8 +240,10 @@ const ETOILE_INCIDENT: Incident = { ref: 'EXERCISE 13-ETOILE', dateLabel: 'EXERC
 const BUG_INCIDENT: Incident = { ref: 'INCIDENT CA-LNU-2026-0808', dateLabel: '8 AUGUST 2026', startHour: 13, startMinute: 0, startDate: '2026-08-08', endDate: '2026-08-15' };
 const SAUMOS_INCIDENT: Incident = { ref: 'INCIDENT 33-2026-0722', dateLabel: '22 JULY 2026', startHour: 13, startMinute: 30, startDate: '2026-07-22', endDate: '2026-07-26' };
 const BLANK_INCIDENT: Incident = { ref: 'FREE SIMULATION', dateLabel: 'T0', startHour: 12, startMinute: 0 };
-const makeScenario = (name: string, preset: 'landiras' | 'saumos' | 'etoile' | 'bug' | 'blank'): Scenario => {
+const FIELD_INCIDENT: Incident = { ref: 'EXERCISE 33-LANDIRAS', dateLabel: 'TERRAIN EXERCISE', startHour: 15, startMinute: 10 };
+const makeScenario = (name: string, preset: Scenario['preset']): Scenario => {
   const base = { id: nextId(), name, createdAt: Date.now(), preset, burnedHa: null };
+  if (preset === 'landiras-field') return { ...base, ignition: { ...defaultIgnition }, minutes: 35, weather: fieldWeather(), committed: fieldUnits(), firebreaks: fieldFirebreaks(), domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: FIELD_INCIDENT };
   if (preset === 'landiras') return { ...base, ignition: { ...defaultIgnition }, minutes: 162, weather: { ...initialWeather }, committed: landirasUnits(), firebreaks: [], domain: LANDIRAS_DOMAIN, terrain: { region: 'gironde' }, incident: LANDIRAS_INCIDENT };
   if (preset === 'etoile') return { ...base, ignition: { ...ETOILE_IGNITION }, minutes: 240, weather: etoileWeather(), committed: etoileUnits(), firebreaks: [], domain: ETOILE_DOMAIN, terrain: ETOILE_TERRAIN, incident: ETOILE_INCIDENT };
   if (preset === 'bug') return { ...base, ignition: { ...BUG_IGNITION }, minutes: 480, weather: bugWeather(), committed: bugUnits(), firebreaks: [], domain: BUG_DOMAIN, terrain: BUG_TERRAIN, incident: BUG_INCIDENT };
@@ -360,6 +382,7 @@ const summarizePlan = (plan: Plan) => ({
   evacuationPopulation: plan.evacuations.reduce((sum, item) => sum + item.population, 0),
 });
 const scenarioPresets: { id: Scenario['preset']; name: string; kind: 'historical' | 'exercise' | 'free'; domain: Domain }[] = [
+  { id: 'landiras-field', name: 'Landiras · field exercise', kind: 'exercise', domain: LANDIRAS_DOMAIN },
   { id: 'landiras', name: 'Landiras · 12 Jul 2022', kind: 'historical', domain: LANDIRAS_DOMAIN },
   { id: 'saumos', name: 'Saumos · 22 Jul 2026', kind: 'historical', domain: SAUMOS_DOMAIN },
   { id: 'etoile', name: 'Marseille · Étoile massif', kind: 'exercise', domain: ETOILE_DOMAIN },
@@ -367,7 +390,7 @@ const scenarioPresets: { id: Scenario['preset']; name: string; kind: 'historical
   { id: 'blank', name: 'Blank simulation', kind: 'free', domain: LANDIRAS_DOMAIN },
 ];
 
-const initialScenarios: Scenario[] = [makeScenario('Landiras · 12 Jul 2022', 'landiras')];
+const initialScenarios: Scenario[] = [makeScenario('Landiras · field exercise', 'landiras-field')];
 
 export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const mapNode = useRef<HTMLDivElement>(null);
@@ -805,10 +828,10 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(false);
   }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, weather]);
 
-  const createScenario = useCallback((preset: 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
+  const createScenario = useCallback((preset: 'landiras-field' | 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
     setRunning(false);
     const NAMES: Record<string, string> = {
-      saumos: 'Saumos · 22 Jul 2026', etoile: 'Marseille · Étoile massif', bug: 'Bug Fire · 8 Aug 2026',
+      'landiras-field': 'Landiras · field exercise', saumos: 'Saumos · 22 Jul 2026', etoile: 'Marseille · Étoile massif', bug: 'Bug Fire · 8 Aug 2026',
     };
     const created = preset === 'blank'
       ? makeScenario('Simulation ' + String(scenarios.length + 1), 'blank')
@@ -824,6 +847,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
     setStagedPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
     const NOTES: Record<string, string> = {
+      'landiras-field': 'Landiras field exercise — pre-positioned crews, DFCI lines and training weather. This is not a live incident.',
       saumos: 'Saumos fire, 22 July 2026 \u2014 47,004 ha burned, 220,000 people evacuated.',
       etoile: 'Étoile massif \u2014 mistral exercise, garrigue and Aleppo pine. This is not a historical fire.',
       bug: 'Bug Fire, 8 August 2026 \u2014 sagebrush and pinyon-juniper, 93,733 acres burned.',
@@ -1313,7 +1337,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'focus_region', title: 'Focus a region', description: 'Centres the map on one of the five available scenarios without changing the live simulation.',
-        inputSchema: schema({ scenarioId: { type: 'string', enum: ['landiras','saumos','etoile','bug','blank'] } }, ['scenarioId']), annotations: mutating,
+        inputSchema: schema({ scenarioId: { type: 'string', enum: ['landiras-field','landiras','saumos','etoile','bug','blank'] } }, ['scenarioId']), annotations: mutating,
         execute: (input) => {
           const scenarioId = textValue(input.scenarioId, 'scenarioId', 20) as Scenario['preset'];
           const preset = scenarioPresets.find((item) => item.id === scenarioId);
@@ -1490,8 +1514,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             <div className="popover scenario-pop glass-panel">
               <div className="popover-head"><span>SIMULATIONS</span><button type="button" onClick={() => { createScenario('blank'); setScenarioOpen(false); }}><Plus size={13} />New</button></div>
               <div className="preset-row">
-                <span>REPLAYS</span>
+                <span>EXERCISES & REPLAYS</span>
                 <div>
+                  <button type="button" onClick={() => { createScenario('landiras-field'); setScenarioOpen(false); }} title="Landiras — terrain exercise with deployed crews and DFCI lines">Landiras terrain</button>
                   <button type="button" onClick={() => { createScenario('saumos'); setScenarioOpen(false); }} title="Gironde — Saumos fire, 22 July 2026">Gironde</button>
                   <button type="button" onClick={() => { createScenario('etoile'); setScenarioOpen(false); }} title="Provence — Étoile massif, mistral exercise">Marseille</button>
                   <button type="button" onClick={() => { createScenario('bug'); setScenarioOpen(false); }} title="California — Bug Fire, 8 August 2026">California</button>
