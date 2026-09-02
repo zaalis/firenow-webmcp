@@ -371,14 +371,16 @@ const unmountLater = (root: Root) => { queueMicrotask(() => root.unmount()); };
 // it and the next stage_* call answered "No draft plan is open". Mirroring it in
 // sessionStorage keeps a draft alive for the tab that opened it, and only that tab.
 const DRAFT_PLAN_STORAGE_KEY = 'firenow.draft-plan';
-// WebMCP calls can arrive from isolated browser worlds. React state (and, in
-// some browsers, sessionStorage) is not guaranteed to be shared between those
-// calls, while the page document is. Keep a short-lived mirror on the document
-// as the hand-off channel between propose_plan and the following stage_* call.
+// WebMCP calls can arrive from isolated browser worlds. React state and
+// sessionStorage are not guaranteed to be shared between those calls. Keep a
+// localStorage mirror as the durable hand-off channel between propose_plan and
+// the following stage_* call; the document mirror is useful when both calls do
+// share the visible page context.
 const DRAFT_PLAN_DOCUMENT_KEY = 'firenowDraftPlan';
 const readStoredDraftPlan = (): Plan | null => {
   const candidates: (string | null)[] = [];
   try { candidates.push(window.sessionStorage.getItem(DRAFT_PLAN_STORAGE_KEY)); } catch { /* use the document mirror */ }
+  try { candidates.push(window.localStorage.getItem(DRAFT_PLAN_STORAGE_KEY)); } catch { /* use the document mirror */ }
   try { candidates.push(document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY] ?? null); } catch { /* document unavailable during SSR */ }
   for (const raw of candidates) {
     if (!raw) continue;
@@ -394,6 +396,10 @@ const writeStoredDraftPlan = (plan: Plan | null) => {
     if (plan) window.sessionStorage.setItem(DRAFT_PLAN_STORAGE_KEY, JSON.stringify(plan));
     else window.sessionStorage.removeItem(DRAFT_PLAN_STORAGE_KEY);
   } catch { /* private mode or quota: the draft simply does not survive the reload */ }
+  try {
+    if (plan) window.localStorage.setItem(DRAFT_PLAN_STORAGE_KEY, JSON.stringify(plan));
+    else window.localStorage.removeItem(DRAFT_PLAN_STORAGE_KEY);
+  } catch { /* private mode or quota: the document mirror remains available */ }
   try {
     if (plan) document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY] = JSON.stringify(plan);
     else delete document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY];
