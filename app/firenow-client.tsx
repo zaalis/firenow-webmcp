@@ -84,6 +84,12 @@ const units: UnitCatalogue[] = [
   { code: 'DOZ',  count: 3,  label: 'Bulldozers', family: 'engineering', tank: '320 m/h' },
   { code: 'CREW', count: 8,  label: 'Hand crews (20 firefighters)', family: 'engineering', tank: '90 m/h' },
 ];
+const UNIT_CODES = units.map((unit) => unit.code);
+const deploymentCapacityFor = (type: string) => ({
+  VLHR: 0.04, CCF: 0.09, CCFS: 0.12, FPT: 0.06, CCGC: 0.11,
+  HBE: 0.08, HELIT: 0.12, AT8: 0.10, CL4: 0.10, DASH: 0.12,
+  A400: 0.15, DOZ: 0.05, CREW: 0.03,
+}[type] ?? 0.05);
 const UNIT_ICONS: Record<string, LucideIcon> = {
   VLHR: CarFront, CCF: Truck, CCFS: Truck, FPT: FireExtinguisher, CCGC: ContainerIcon,
   HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
@@ -439,6 +445,12 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario });
+  // WebMCP callbacks run outside React's event system. Update the tool-facing
+  // snapshot immediately so a following call sees the draft it just created.
+  const setDraftPlan = useCallback((plan: Plan | null) => {
+    stateRef.current = { ...stateRef.current, stagedPlan: plan };
+    setStagedPlan(plan);
+  }, []);
 
   useEffect(() => {
     stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario };
@@ -507,17 +519,15 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   }, []);
   const makePlan = useCallback((name: string, intention: string) => {
     const plan = emptyPlan(name, intention);
-    setStagedPlan(plan);
+    setDraftPlan(plan);
     return plan;
-  }, []);
+  }, [setDraftPlan]);
   const stageUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged'>) => {
     const deployment = { ...unit, id: nextId(), staged: true };
-    setStagedPlan((current) => {
-      const plan = current || emptyPlan();
-      return { ...plan, deployments: [...plan.deployments, deployment] };
-    });
+    const plan = stateRef.current.stagedPlan || emptyPlan();
+    setDraftPlan({ ...plan, deployments: [...plan.deployments, deployment] });
     return deployment;
-  }, []);
+  }, [setDraftPlan]);
   const applyPlan = useCallback(() => {
     if (!stagedPlan) return false;
     setUndoStack((stack) => [...stack, { deployments: committed, firebreaks: committedFirebreaks }]);
@@ -527,13 +537,13 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       ...stagedPlan.deployments.map((item) => ({ ...item, staged: false })),
     ]);
     setCommittedFirebreaks((current) => [...current, ...stagedPlan.firebreaks]);
-    setStagedPlan(null);
+    setDraftPlan(null);
     setReviewOpen(false);
     reviewResolver.current?.(true);
     reviewResolver.current = null;
     notify('Plan applied. Every action remains reversible.');
     return true;
-  }, [committed, committedFirebreaks, notify, stagedPlan]);
+  }, [committed, committedFirebreaks, notify, setDraftPlan, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
     reviewResolver.current?.(false);
@@ -1036,7 +1046,13 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         execute: () => {
           const s = stateRef.current;
           const currentScenario = s.scenarios.find((item) => item.id === s.activeScenario);
-          return { scenario: currentScenario ? { id: currentScenario.id, preset: currentScenario.preset, name: currentScenario.name } : null, incident: s.incident, minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate, weather: s.weather, engagedUnits: s.committed, calibrationStatus: 'not_performed' };
+          const ignition = ignitionRef.current;
+          return {
+            scenario: currentScenario ? { id: currentScenario.id, preset: currentScenario.preset, name: currentScenario.name } : null,
+            incident: s.incident, domain: s.domain, ignition, requiresIgnition: ignition === null,
+            minutesFromIgnition: s.minutes, burnedHa: s.burnedHa, rateOfSpreadMetersPerMinute: s.frontRate,
+            weather: s.weather, engagedUnits: s.committed, calibrationStatus: 'not_performed',
+          };
         },
       },
       {
@@ -1117,7 +1133,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const resultingUnits = summarizePlan(plan).totalUnits + requestedUnits;
           if (resultingUnits > 50) throw new Error(`This batch would take the plan to ${resultingUnits} units; 50 is the maximum. Reduce the "count" values by at least ${resultingUnits - 50}.`);
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1128,7 +1144,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const plan = requireStagedPlan();
           const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
           const nextPlan = { ...plan, tasks: [...plan.tasks, task] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1149,7 +1165,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: input.staffed !== false };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1170,7 +1186,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: true, tacticalBurn: true };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
         },
       },
@@ -1182,7 +1198,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const plan = requireStagedPlan();
           const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
           const nextPlan = { ...plan, evacuations: [...plan.evacuations, zone] };
-          setStagedPlan(nextPlan);
+          setDraftPlan(nextPlan);
           return { staged: true, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
         },
       },
@@ -1346,7 +1362,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker]);
+  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker, setDraftPlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1538,6 +1554,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           </div>
         </div>
       </header>
+
+      <AgentBridge initialCall={initialCall} />
 
       <aside id="resources-panel" className={'left-rail glass-panel' + ((isNarrowViewport ? mobilePanel === 'resources' : railOpen) ? '' : ' collapsed') + (mobilePanel === 'resources' ? ' mobile-open' : '')}>
         <div className="panel-heading">
