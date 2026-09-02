@@ -81,11 +81,9 @@ export default function LandingTools() {
     /* /webmcp.js runs before hydration, but a slow script blocker or a native
        implementation arriving late would otherwise leave the door mute. */
     const detector = window.setInterval(() => { if (register()) window.clearInterval(detector); }, 250);
-    const giveUp = window.setTimeout(() => window.clearInterval(detector), 5000);
     return () => {
       stopped = true;
       window.clearInterval(detector);
-      window.clearTimeout(giveUp);
       teardown.abort();
     };
   }, []);
