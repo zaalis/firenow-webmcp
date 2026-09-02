@@ -367,6 +367,26 @@ const engineDigest = (engine: Record<string, unknown>) => {
 // Unmounting a React root from effect cleanup happens while React is still
 // rendering, so the unmount is pushed out of the render phase.
 const unmountLater = (root: Root) => { queueMicrotask(() => root.unmount()); };
+// The draft plan lives in React state, so a reload or a navigation used to wipe
+// it and the next stage_* call answered "No draft plan is open". Mirroring it in
+// sessionStorage keeps a draft alive for the tab that opened it, and only that tab.
+const DRAFT_PLAN_STORAGE_KEY = 'firenow.draft-plan';
+const readStoredDraftPlan = (): Plan | null => {
+  let raw: string | null = null;
+  try { raw = window.sessionStorage.getItem(DRAFT_PLAN_STORAGE_KEY); } catch { return null; }
+  if (!raw) return null;
+  try {
+    const plan = JSON.parse(raw) as Plan;
+    if (!plan || typeof plan !== 'object' || !Array.isArray(plan.deployments)) return null;
+    return plan;
+  } catch { return null; }
+};
+const writeStoredDraftPlan = (plan: Plan | null) => {
+  try {
+    if (plan) window.sessionStorage.setItem(DRAFT_PLAN_STORAGE_KEY, JSON.stringify(plan));
+    else window.sessionStorage.removeItem(DRAFT_PLAN_STORAGE_KEY);
+  } catch { /* private mode or quota: the draft simply does not survive the reload */ }
+};
 const emptyPlan = (name = 'Agent plan', intention = 'Reinforce village protection under a shifting wind.'): Plan => ({
   id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
@@ -464,10 +484,20 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario });
   // WebMCP callbacks run outside React's event system. Update the tool-facing
   // snapshot immediately so a following call sees the draft it just created.
-  const setDraftPlan = useCallback((plan: Plan | null) => {
+  const setDraftPlan = useCallback((next: Plan | null | ((current: Plan | null) => Plan | null)) => {
+    const plan = typeof next === 'function' ? next(stateRef.current.stagedPlan) : next;
     stateRef.current = { ...stateRef.current, stagedPlan: plan };
     setStagedPlan(plan);
+    writeStoredDraftPlan(plan);
   }, []);
+  // A reload clears React state but not the tab's storage. Recovering the draft
+  // the first time a tool asks for it keeps a staged plan alive across a
+  // navigation, and puts it back on the map, without reading storage in render.
+  const recoverDraftPlan = useCallback(() => {
+    const plan = readStoredDraftPlan();
+    if (plan) setDraftPlan(plan);
+    return plan;
+  }, [setDraftPlan]);
 
   useEffect(() => {
     stateRef.current = { weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario };
@@ -825,8 +855,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed); setCommittedFirebreaks(target.firebreaks);
     setDomain(target.domain); setTerrain(target.terrain); setIncident(target.incident);
     mapRef.current?.jumpTo({ center: [target.domain.lng, target.domain.lat], zoom: target.domain.boxMetres > 35000 ? 10.1 : 11.2 });
-    setStagedPlan(null); setUndoStack([]); setPickingIgnition(false);
-  }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, weather]);
+    setDraftPlan(null); setUndoStack([]); setPickingIgnition(false);
+  }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, setDraftPlan, weather]);
 
   const createScenario = useCallback((preset: 'landiras-field' | 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
     setRunning(false);
@@ -845,7 +875,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed); setCommittedFirebreaks(created.firebreaks);
     setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
-    setStagedPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
+    setDraftPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
     const NOTES: Record<string, string> = {
       'landiras-field': 'Landiras field exercise — pre-positioned crews, DFCI lines and training weather. This is not a live incident.',
       saumos: 'Saumos fire, 22 July 2026 \u2014 47,004 ha burned, 220,000 people evacuated.',
@@ -854,7 +884,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       blank: 'New simulation. Place the ignition point to start.',
     };
     notify(NOTES[preset]);
-  }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, notify, scenarios.length, weather]);
+  }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, notify, scenarios.length, setDraftPlan, weather]);
 
   // The displayed list derives from live state for the open simulation.
   const scenarioList = scenarios.map((item) => item.id === activeScenario
@@ -935,11 +965,11 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             // Moving an already-committed unit goes through the draft plan: the
             // "one approval per batch" rule covers manual gestures too.
             if (unit.staged) {
-              setStagedPlan((plan) => plan
+              setDraftPlan((plan) => plan
                 ? { ...plan, deployments: plan.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
                 : plan);
             } else {
-              setStagedPlan((plan) => {
+              setDraftPlan((plan) => {
                 const base = plan || emptyPlan('Manual redeployment', 'Move a unit that is already committed.');
                 const already = base.deployments.some((item) => item.id === unit.id);
                 return already
@@ -965,7 +995,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       dispose = () => map.off('moveend', renderMarkers);
     }).catch(() => undefined);
     return () => { cancelled = true; dispose?.(); };
-  }, [committed, mapReady, notify, stagedPlan?.deployments, viewMode]);
+  }, [committed, mapReady, notify, setDraftPlan, stagedPlan?.deployments, viewMode]);
 
   // Markers outlive renders: only tearing the component down removes them for
   // good.
@@ -1001,10 +1031,10 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       burnedHa: Number(engineRuns[index].totalBurnedHa),
       rateOfSpread: Number(engineRuns[index].rateOfSpreadMetersPerMinute),
     })).sort((a, b) => a.burnedHa - b.burnedHa);
-    setStagedPlan((plan) => ({ ...(plan || emptyPlan(results[0].name, 'Protect the village after the wind shift.')), comparison: results }));
+    setDraftPlan((plan) => ({ ...(plan || emptyPlan(results[0].name, 'Protect the village after the wind shift.')), comparison: results }));
     setComparisonOpen(true);
     return { horizonHours, strategies: results, recommended: results[0].name, model: 'Rothermel 1972 + Alexander 1985', workerCalls: engineRuns.length };
-  }, [runWorker]);
+  }, [runWorker, setDraftPlan]);
 
   const changeView = useCallback((mode: ViewMode) => {
     setViewMode(mode);
@@ -1050,7 +1080,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     const readOnly = { readOnlyHint: true };
     const mutating = { readOnlyHint: false };
     const requireStagedPlan = () => {
-      const plan = stateRef.current.stagedPlan;
+      const plan = stateRef.current.stagedPlan || recoverDraftPlan();
       if (!plan) throw new Error('No draft plan is open. Call propose_plan first, then retry this action.');
       return plan;
     };
@@ -1223,7 +1253,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         description: 'Opens the review and asks for a single human approval covering the whole plan.',
         inputSchema: schema({}), annotations: { readOnlyHint: false },
         execute: async (_input, options) => {
-          if (!stateRef.current.stagedPlan) throw new Error('No draft plan is open. Call propose_plan and add the actions to review before commit_plan.');
+          if (!stateRef.current.stagedPlan && !recoverDraftPlan()) throw new Error('No draft plan is open. Call propose_plan and add the actions to review before commit_plan.');
           const approved = await new Promise<boolean>((resolve) => {
             const finish = (decision: boolean) => {
               options?.signal.removeEventListener('abort', cancel);
@@ -1378,7 +1408,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, revertPlan, runWorker, setDraftPlan]);
+  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, logTool, makePlan, modelContextReady, recoverDraftPlan, revertPlan, runWorker, setDraftPlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1708,7 +1738,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         <button type="button" className={mobilePanel === 'situation' ? 'active' : ''} aria-controls="situation-panel" aria-expanded={mobilePanel === 'situation'} onClick={() => setMobilePanel((current) => current === 'situation' ? null : 'situation')}>Situation</button>
       </nav>
 
-      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>DRAFT PLAN · NOTHING COMMITTED</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} units · {stagedPlan.firebreaks.length} line · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setStagedPlan(null); notify('Draft plan discarded. No resource was ever committed.'); }}>Discard</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Compare</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Apply</button></section>}
+      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>DRAFT PLAN · NOTHING COMMITTED</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} units · {stagedPlan.firebreaks.length} line · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setDraftPlan(null); notify('Draft plan discarded. No resource was ever committed.'); }}>Discard</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Compare</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Apply</button></section>}
       {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} WebMCP call{activities.length > 1 ? 's' : ''}<ChevronDown size={13} /></button>}
 
       <aside className="map-legend glass-panel" aria-label="Map legend">
@@ -1716,7 +1746,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Active flame front</span>
         <span><i className="lg-forecast" />Projected position at +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setStagedPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setDraftPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel" data-tour="timeline">
         <div className="time-readout"><span>INCIDENT CLOCK</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} since ignition</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Pause the simulation' : 'Run the simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
