@@ -205,6 +205,40 @@
     return [];
   }
 
+  /* A native implementation (ChatGPT, an MCP extension) returns tool
+     descriptors this file did not build, and some carry live references -
+     `window`, DOM nodes, functions - that make JSON.stringify throw on a
+     circular structure. Reduce every descriptor to its serialisable fields and
+     drop anything non-JSON so the manifest can never be crashed from outside. */
+  function safeClone(value, seen) {
+    if (value === null || typeof value !== 'object') {
+      return typeof value === 'function' ? undefined : value;
+    }
+    if (typeof Node !== 'undefined' && value instanceof Node) return undefined;
+    if (typeof Window !== 'undefined' && value instanceof Window) return undefined;
+    if (seen.indexOf(value) !== -1) return undefined;
+    seen.push(value);
+    if (Array.isArray(value)) return value.map(function (item) { return safeClone(item, seen); });
+    var out = {};
+    for (var key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      var cloned = safeClone(value[key], seen);
+      if (cloned !== undefined) out[key] = cloned;
+    }
+    return out;
+  }
+
+  function serialisableTool(tool) {
+    return {
+      name: tool && tool.name,
+      title: (tool && (tool.title || tool.name)) || '',
+      description: (tool && tool.description) || '',
+      inputSchema: safeClone(tool && tool.inputSchema, []),
+      annotations: safeClone(tool && tool.annotations, []),
+      origin: (tool && tool.origin) || location.origin,
+    };
+  }
+
   function writeManifest(tools) {
     var node = document.getElementById(MANIFEST_ID);
     if (!node) {
@@ -214,6 +248,7 @@
       node.id = MANIFEST_ID;
       document.head.appendChild(node);
     }
+    var safeTools = (tools || []).map(serialisableTool);
     node.textContent = JSON.stringify({
       webmcp: VERSION,
       mode: mode,
@@ -229,7 +264,7 @@
           callToolDetail: { id: 'unique-call-id', type: 'call-tool', name: 'TOOL_NAME', input: {} },
         },
       },
-      tools: tools,
+      tools: safeTools,
     });
     /* The attributes stay on the manifest: writing on <html> would break React
        hydration, which owns that element. */
