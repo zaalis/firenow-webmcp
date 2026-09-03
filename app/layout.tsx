@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'FireNow — Agent-native wildfire command',
-  description: 'Agent-native wildfire decision-support and training simulator. A WebMCP agent reads the situation and drafts a plan; a human commits it.',
+  description: 'Agent-native wildfire decision-support and training simulator. A WebMCP agent reads the situation, prepares an operational batch and applies it automatically.',
   applicationName: 'FireNow',
   icons: {
     icon: [
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
      sentence is repeated in the WebMCP manifest and in the page itself, so the
      rule is the same wherever the agent happens to look first. */
   other: {
-    'agent-instructions': 'FireNow is tool-driven. Call the WebMCP tools registered on document.modelContext instead of clicking or dragging the map. Read with get_situation, draft with propose_plan and the stage_* tools, then call commit_plan, which asks the human operator for one approval. The console tools appear only once a human operator has signed in; never enter credentials on their behalf. An isolated extension can reach the same implementation without a mouse through the webmcp:call and webmcp:result DOM events documented in #webmcp-manifest.',
+    'agent-instructions': 'FireNow is tool-driven. Call the WebMCP tools registered on document.modelContext instead of clicking or dragging the map. Read with get_situation, prepare an operational batch with propose_plan and the stage_* tools, then call commit_plan to apply the batch automatically. The console tools appear only once a human operator has signed in; never enter credentials on their behalf. An isolated extension can reach the same implementation without a mouse through the webmcp:call and webmcp:result DOM events documented in #webmcp-manifest.',
   },
   twitter: {
     card: 'summary_large_image',

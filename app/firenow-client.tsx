@@ -120,14 +120,14 @@ const FLEET_TOTAL = units.reduce((sum, unit) => sum + unit.count, 0);
 const TIMELINE_MAX_MINUTES = 12 * 60;
 const toolActivityLabel = (tool: string, result: unknown) => {
   const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
-  if (tool === 'commit_plan') return value.approved === true ? 'Plan approved and applied' : 'Plan rejected by the operator';
+  if (tool === 'commit_plan') return value.planApplied === true ? 'Plan automatically applied' : 'Plan could not be applied';
   if (tool === 'run_simulation') return `Simulation advanced by ${value.advancedMinutes} min`;
   if (tool === 'set_time') return `Timeline set to H+${String(Math.floor(Number(value.minutesFromIgnition || 0) / 60)).padStart(2, '0')}:${String(Number(value.minutesFromIgnition || 0) % 60).padStart(2, '0')}`;
   const labels: Record<string, string> = {
     get_situation: 'Operational situation read', list_units: 'Fleet and committed units read',
     get_fire_forecast: 'T+1 h, T+3 h and T+6 h projection computed', get_weather: 'Current weather read',
     query_terrain: 'Sector terrain analysed', list_scenarios: 'Available scenarios read',
-    propose_plan: 'Draft plan opened', deploy_units: 'Units proposed for approval', stage_deploy_units: 'Units staged in the plan',
+    propose_plan: 'Operational batch opened', deploy_units: 'Units staged for automatic application', stage_deploy_units: 'Units staged in the operational batch',
     stage_assign_task: 'Task added to the draft plan', stage_firebreak: 'Control line added to the plan',
     stage_tactical_burn: 'Tactical burn prepared, not ignited', stage_evacuation_zone: 'Evacuation zone prepared, no order sent',
     revert_plan: 'Last plan reverted', set_weather: 'Simulation weather updated',
@@ -481,11 +481,6 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const markersRef = useRef<globalThis.Map<string, { marker: Marker; root: Root }>>(new globalThis.Map());
   const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
-  const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
-  // Approval is asynchronous. Keep the exact snapshot that was submitted so a
-  // later React render, storage sync or duplicated WebMCP delivery cannot make
-  // the operator apply a different draft.
-  const reviewPlanRef = useRef<Plan | null>(null);
   // Native WebMCP transports may replay a completed request while reconnecting.
   // Applying a plan must therefore be idempotent, not merely "normally once".
   const appliedPlanIdsRef = useRef(new Set<string>());
@@ -502,8 +497,6 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   useEffect(() => { ignitionRef.current = ignition; }, [ignition]);
   const [agentOpen, setAgentOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('2D');
   const [weather, setWeather] = useState(initialWeather);
   const [weatherSeries, setWeatherSeries] = useState<WeatherSeriesPoint[] | null>(null);
@@ -598,10 +591,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     let stopped = false;
     const sync = async () => {
       try {
-        const { plan, status } = await loadDurableDraft();
+        const { plan } = await loadDurableDraft();
         if (stopped || !plan) return;
         if (stateRef.current.stagedPlan?.id !== plan.id) setDraftPlan(plan);
-        if (status === 'review') setReviewOpen(true);
       } catch { /* unauthenticated and offline sessions keep their local draft */ }
     };
     void sync();
@@ -763,8 +755,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     window.addEventListener('pagehide', persistBeforeExit);
     return () => window.removeEventListener('pagehide', persistBeforeExit);
   }, [simulationHydrated, simulationSnapshotJson]);
-  const applyPlan = useCallback(() => {
-    const plan = reviewPlanRef.current || stagedPlan;
+  const applyPlan = useCallback((submittedPlan?: Plan) => {
+    const plan = submittedPlan || stagedPlan;
     if (!plan || appliedPlanIdsRef.current.has(plan.id)) return false;
     const actionCount = plan.deployments.length + plan.tasks.length + plan.firebreaks.length + plan.evacuations.length;
     if (actionCount === 0) return false;
@@ -787,32 +779,11 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       const key = (line: Firebreak) => `${line.name}|${line.sector}|${JSON.stringify(line.coordinates)}`;
       return [...new Map([...current, ...plan.firebreaks].map((line) => [key(line), line] as const)).values()];
     });
-    reviewPlanRef.current = null;
     setDraftPlan(null);
     void clearDurableDraft();
-    setReviewOpen(false);
-    reviewResolver.current?.(true);
-    reviewResolver.current = null;
-    notify('Plan applied. Every action remains reversible.');
+    notify('Plan applied automatically. Every action remains reversible.');
     return true;
   }, [clearDurableDraft, committed, committedFirebreaks, ensureFleetAvailability, notify, setDraftPlan, stagedPlan]);
-  const confirmPlan = useCallback(() => {
-    setApprovalError(null);
-    try {
-      if (!applyPlan()) setApprovalError('This draft has no actions to apply, or has already been applied. Add staged actions, then reopen the review.');
-    } catch (error) {
-      setApprovalError(error instanceof Error ? error.message : 'The plan could not be applied. Review the staged actions and try again.');
-    }
-  }, [applyPlan]);
-  const rejectPlan = useCallback(() => {
-    setReviewOpen(false);
-    setApprovalError(null);
-    reviewPlanRef.current = null;
-    void clearDurableDraft();
-    reviewResolver.current?.(false);
-    reviewResolver.current = null;
-    notify('Plan rejected. The live situation was not changed.');
-  }, [clearDurableDraft, notify]);
   const revertPlan = useCallback(() => {
     const previous = undoStack.at(-1) || readStoredUndo();
     if (!previous) {
@@ -1396,7 +1367,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       },
       {
         name: 'deploy_units', title: 'Propose unit deployment',
-        description: 'Stages units for human validation. It opens an approval-ready action draft automatically; Apply and Commit are required before the live simulation changes.',
+        description: 'Stages units in an operational batch. Calling commit_plan applies the prepared batch automatically.',
         inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
           type: { type: 'string', enum: UNIT_CODES }, count: { type: 'integer', minimum: 1, maximum: 50 },
           sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
@@ -1486,7 +1457,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'stage_tactical_burn', title: 'Prepare a tactical burn', description: 'Draws a held line and prepares a deliberate ignition on the fire side. Nothing is lit before human approval.',
+        name: 'stage_tactical_burn', title: 'Prepare a tactical burn', description: 'Draws a held line and prepares a deliberate ignition on the fire side. Nothing is lit until commit_plan applies the prepared plan.',
         inputSchema: schema({ plan: { type: 'object' }, name: { type: 'string', maxLength: 80 }, sector: { type: 'string', maxLength: 80 }, coordinates: { type: 'array', minItems: 2, maxItems: 64, items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } } }, widthM: { type: 'number', minimum: 2, maximum: 80 } }, ['name','sector','coordinates']), annotations: mutating,
         execute: async (input) => {
           const plan = await requireStagedPlan(input);
@@ -1519,24 +1490,16 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         },
       },
       {
-        name: 'commit_plan', title: 'Submit the plan for approval',
-        description: 'Opens the review and asks for a single human approval covering the whole plan.',
+        name: 'commit_plan', title: 'Apply the prepared plan',
+        description: 'Automatically applies every staged action in the prepared plan. The applied result remains reversible with revert_plan.',
         inputSchema: schema({ plan: { type: 'object' } }), annotations: { readOnlyHint: false },
-        execute: async (input, options) => {
+        execute: async (input) => {
           const plan = await requireStagedPlan(input);
           const actionCount = plan.deployments.length + plan.tasks.length + plan.firebreaks.length + plan.evacuations.length;
           if (actionCount === 0) throw new Error('This draft has no staged actions. Call a stage_* tool before commit_plan.');
-          await saveAndSetDraft(plan, 'review');
-          reviewPlanRef.current = plan;
-          setApprovalError(null);
-          // A WebMCP call has a short-lived execution signal. Waiting for a
-          // human click here lets that signal abort and leaves the visible
-          // dialog without a live approval context. Submitting the review is
-          // the tool's complete action; the dialog's Commit button remains
-          // the only operation that applies the plan.
-          if (options?.signal?.aborted) return { approvalRequired: true, planApplied: false, cancelled: true };
-          setReviewOpen(true);
-          return { approvalRequired: true, planApplied: false, plan };
+          await saveAndSetDraft(plan);
+          if (!applyPlan(plan)) throw new Error('This plan could not be applied. Stage a new operational action and retry.');
+          return { approved: true, approvalRequired: false, planApplied: true, planSummary: summarizePlan(plan) };
         },
       },
       {
@@ -1673,10 +1636,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     return () => {
       // Aborting the registration signal retires every tool per the WebMCP specification.
       teardown.abort();
-      reviewResolver.current?.(false);
-      reviewResolver.current = null;
     };
-  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, ensureFleetAvailability, loadDurableDraft, logTool, modelContextReady, recoverDraftPlan, revertPlan, runWorker, saveAndSetDraft, setDraftPlan]);
+  }, [applyEngineResult, applyExtraIgnitions, applyPlan, changeView, comparePlansWithWorker, ensureFleetAvailability, loadDurableDraft, logTool, modelContextReady, recoverDraftPlan, revertPlan, runWorker, saveAndSetDraft, setDraftPlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1686,7 +1647,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     const coordinate = mapRef.current?.unproject([event.clientX - rect.left, event.clientY - rect.top]);
     if (!coordinate) return;
     void stageUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: unitSuppressionCapacity(type) })
-      .then(() => notify(type + ' staged. Apply then Commit to engage it.'))
+      .then(() => notify(type + ' staged. Submit it with commit_plan to engage it automatically.'))
       .catch((error) => notify(error instanceof Error ? error.message : 'Unable to stage this unit.'));
   };
   const signOut = async () => {
@@ -1716,7 +1677,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     {
       id: 'resources', target: '#resources-panel',
       title: 'Commit the fleet',
-      body: 'Thirteen unit types, with manufacturer tank and pump figures. Click or drag to stage a unit. Apply then Commit keeps every operational action under human validation.',
+      body: 'Thirteen unit types, with manufacturer tank and pump figures. Click or drag to stage a unit. The agent commits its prepared operational batch automatically.',
       before: () => openPanel('resources'),
     },
     {
@@ -1762,20 +1723,6 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const STATUS_LABEL: Record<string, string> = { out: 'Fire out', controlled: 'Controlled', contained: 'Contained', spreading: 'Spreading freely' };
   const ATTACK_LABEL: Record<string, string> = { direct: 'Direct attack viable', 'heavy-units': 'Heavy units required', indirect: 'Direct attack ineffective' };
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
-  const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
-  const stagedActionCount = stagedPlan
-    ? stagedPlan.deployments.length + stagedPlan.tasks.length + stagedPlan.firebreaks.length + stagedPlan.evacuations.length
-    : 0;
-  const stagedUnitSummary = Object.entries((stagedPlan?.deployments || []).reduce<Record<string, number>>((summary, unit) => {
-    summary[unit.type] = (summary[unit.type] || 0) + unit.count;
-    return summary;
-  }, {})).map(([type, count]) => `${count} ${type}`).join(' · ');
-  const noActionResult = stagedPlan?.comparison?.find((strategy) => strategy.resources === 0);
-  const selectedPlanResult = stagedPlan?.comparison?.find((strategy) => strategy.resources > 0);
-  const avoidedHa = noActionResult && selectedPlanResult ? Math.max(0, noActionResult.burnedHa - selectedPlanResult.burnedHa) : null;
-  const selectedImpactWidth = noActionResult && selectedPlanResult && noActionResult.burnedHa > 0
-    ? Math.max(4, Math.min(100, selectedPlanResult.burnedHa / noActionResult.burnedHa * 100))
-    : 100;
   const timeLabel = 'H+' + String(Math.floor(minutes / 60)).padStart(2,'0') + ':' + String(minutes % 60).padStart(2,'0');
   // Incident clock: the scenario's real start time plus simulated time.
   const clockAt = (offset: number) => {
@@ -1896,7 +1843,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             <div className="unit-list">{units.filter((unit) => unit.family === family).map((unit) => {
               const UnitIcon = UNIT_ICONS[unit.code] || Truck;
               const capacityLevel = unitCapacityLevel(unit);
-              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { void stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }).then(() => notify(unit.code + ' staged. Apply then Commit to engage it.')).catch((error) => notify(error instanceof Error ? error.message : 'Unable to stage this unit.')); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
+              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { void stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }).then(() => notify(unit.code + ' staged. Submit it with commit_plan to engage it automatically.')).catch((error) => notify(error instanceof Error ? error.message : 'Unable to stage this unit.')); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
                 <span className={'unit-visual fam-' + unitFamilyClass(unit.family)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
                 <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.tank} · duty {autonomy}%</small></span>
                 <b>{String(unit.count).padStart(2,'0')}</b>
@@ -2010,7 +1957,6 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         <button type="button" className={mobilePanel === 'situation' ? 'active' : ''} aria-controls="situation-panel" aria-expanded={mobilePanel === 'situation'} onClick={() => setMobilePanel((current) => current === 'situation' ? null : 'situation')}>Situation</button>
       </nav>
 
-      {stagedPlan && <section className="proposal-bar glass-panel"><span className="proposal-icon"><Command size={16} /></span><div><small>DRAFT PLAN · NOTHING COMMITTED</small><strong>{stagedPlan.name}</strong></div><span className="proposal-summary">{stagedCount} units · {stagedPlan.firebreaks.length} line · {stagedPlan.evacuations.length} zone</span><button className="danger-button" type="button" onClick={() => { setDraftPlan(null); notify('Draft plan discarded. No resource was ever committed.'); }}>Discard</button><button className="secondary-button" type="button" onClick={() => setComparisonOpen(true)}>Compare</button><button className="primary-button" type="button" onClick={() => setReviewOpen(true)}>Apply</button></section>}
       {activities.length > 0 && <button className="activity-pill glass-panel" type="button" onClick={() => setAgentOpen(true)}><Bot size={14} />{activities.length} WebMCP call{activities.length > 1 ? 's' : ''}<ChevronDown size={13} /></button>}
 
       <aside className="map-legend glass-panel" aria-label="Map legend">
@@ -2035,27 +1981,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         <div className="speed-control"><span>SPEED</span><button type="button" onClick={() => setSpeed((value) => value === 20 ? 50 : value === 50 ? 1 : 20)} aria-label={`Simulation speed is currently ${speed} times real time. Change the speed.`}>× {speed}</button></div>
       </section>
 
-      {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 WORKER RUNS · T+6H" title="Strategy comparison" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Recommended strategy' : undefined}><header><div><small>{index === 0 ? 'SMALLEST AREA' : strategy.resources === 0 ? 'BASELINE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Computed result</span>}</header><p>{strategy.description}</p><dl><div><dt>Area burned</dt><dd>{strategy.burnedHa.toLocaleString('en-US')} ha</dd></div><div><dt>Head rate</dt><dd>{strategy.rateOfSpread.toLocaleString('en-US')} m/min</dd></div><div><dt>Units</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Model not calibrated · results computed locally</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Take the smallest result</button></div></section></Modal>}
-
-      {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}>
-        <section className="review-panel glass-panel">
-          <ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Commit ${stagedCount} units?` : 'Commit operational plan?'} onClose={rejectPlan} />
-          <p className="review-intention">&ldquo;{stagedPlan.intention}&rdquo;</p>
-          {noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Area burned at six hours, compared"><div className="decision-row"><span>No action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('en-US')} ha</strong></div><div className="decision-row selected"><span>With this plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('en-US')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('en-US')} ha at T+6 h</p>}</div>}
-          <div className="plan-contents">
-            <p>{stagedUnitSummary || (stagedActionCount > 0 ? 'No additional units' : 'No action has been staged yet.')}</p>
-            {stagedPlan.tasks.length > 0 && <p>{stagedPlan.tasks.length} assigned task{stagedPlan.tasks.length > 1 ? 's' : ''}</p>}
-            {stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} control line{stagedPlan.firebreaks.length > 1 ? 's' : ''} · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('en-US')} km</p>}
-            {stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('en-US')} people · no order transmitted</p>}
-          </div>
-          <p className="review-warning"><ShieldCheck size={13} />Model not calibrated · training tool</p>
-          {approvalError && <p className="review-error" role="alert">{approvalError}</p>}
-          <form className="review-actions" onSubmit={(event) => { event.preventDefault(); confirmPlan(); }}>
-            <button className="secondary-button" type="button" onClick={rejectPlan}>Reject</button>
-            <button className="primary-button commit-button" type="submit" disabled={stagedActionCount === 0}><Check size={15} />{stagedCount > 0 ? `Commit ${stagedCount} units` : 'Commit plan'}</button>
-          </form>
-        </section>
-      </Modal>}
+      {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 WORKER RUNS · T+6H" title="Strategy comparison" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Recommended strategy' : undefined}><header><div><small>{index === 0 ? 'SMALLEST AREA' : strategy.resources === 0 ? 'BASELINE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Computed result</span>}</header><p>{strategy.description}</p><dl><div><dt>Area burned</dt><dd>{strategy.burnedHa.toLocaleString('en-US')} ha</dd></div><div><dt>Head rate</dt><dd>{strategy.rateOfSpread.toLocaleString('en-US')} m/min</dd></div><div><dt>Units</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Model not calibrated · results computed locally</span><button className="primary-button" type="button" onClick={() => setComparisonOpen(false)}>Close comparison</button></div></section></Modal>}
 
       {agentOpen && <aside className="agent-drawer glass-panel" aria-label="WebMCP call log"><ModalHead icon={<Bot size={18} />} eyebrow="AGENT CALLS" title="WebMCP log" onClose={() => setAgentOpen(false)} /><div className="agent-guidance"><span>TRY ASKING YOUR AGENT</span><ol><li>&ldquo;Analyse the situation and give me two strategies to protect Landiras East.&rdquo;</li><li>&ldquo;The wind shifts to north-west at 40 km/h. Recompute and adapt the plan.&rdquo;</li><li>&ldquo;Compare the plan with and without air units, then submit the better one.&rdquo;</li></ol></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Real WebMCP calls appear here, with the tool and its result. Open FireNow with an agent, then ask for something.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <X size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div></aside>}
       {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan applied · Undo</button>}

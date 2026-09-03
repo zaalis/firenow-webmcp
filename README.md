@@ -1,6 +1,6 @@
 # FireNow
 
-FireNow is a wildfire decision-support and training simulator. It combines the incident picture, a local fire-behaviour model and proposed actions in one workspace. The operator stays in control while a WebMCP-capable agent can read the situation, prepare a draft plan, compare options and submit the batch for one human approval.
+FireNow is a wildfire decision-support and training simulator. It combines the incident picture, a local fire-behaviour model and proposed actions in one workspace. A WebMCP-capable agent can read the situation, prepare an operational batch, compare options and apply the prepared batch automatically.
 
 > **Training beta.** FireNow is not a certified incident command system. It replaces neither the incident commander, nor field data, nor local procedure. The engine is not calibrated: see [Engine validation](#engine-validation) for the measured deviations.
 
@@ -13,7 +13,7 @@ FireNow calls no language model. The page registers **22 domain tools** on the b
 - commit and revert tools;
 - simulation and navigation tools.
 
-`deploy_units` opens an approval-ready action draft. Every operational deployment remains a proposal until the operator selects Apply and then Commit; `commit_plan` calls `requestUserInteraction()` when the client provides one, opens the review, and waits for that decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
+`deploy_units` and the `stage_*` tools prepare an isolated operational batch. `commit_plan` applies its staged units, tasks and lines automatically in one reversible operation; no review modal or separate Apply step is involved. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
 
 The **WebMCP log** shows the calls the agent actually executed, with the tool, its result and a timestamp. There is no simulated agent or manual tool runner in the page.
 
@@ -30,7 +30,7 @@ On top of the model context the bridge publishes the same implementation on two 
 - `window.__WEBMCP__` — an agent evaluating JavaScript in the main world;
 - `webmcp:call` / `webmcp:result` DOM events and same-origin `postMessage`, described in the `#webmcp-manifest` JSON block — an extension content script, which runs in an isolated world and can see neither the model context nor `window.__WEBMCP__`.
 
-Every transport runs the same tool implementation: same validation, same journal, and human approval before any unit deployment changes the live simulation.
+Every transport runs the same tool implementation: the same validation, journal and automatic atomic application at `commit_plan`.
 
 All of this is addressed to agents and none of it to operators. The page carries no tool panel, no MCP catalogue and no manual call form: what a human sees is the map, and the WebMCP log of the calls an agent actually made.
 

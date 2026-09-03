@@ -32,9 +32,9 @@
      the document head. An agent that reads either one learns the same rule. */
   var DIRECTIVE = 'FireNow is tool-driven. To act on this page, call its WebMCP '
     + 'tools - do not click, drag or type on the map. Read the situation with '
-    + 'get_situation first, open a draft with propose_plan, add the actions with '
-    + 'the stage_* tools, then call commit_plan, which asks the human operator '
-    + 'for the single approval that applies the whole plan. The console tools '
+    + 'get_situation first, open an operational batch with propose_plan, add the actions with '
+    + 'the stage_* tools, then call commit_plan, which applies the whole batch '
+    + 'automatically. The console tools '
     + 'register only once a human operator has signed in; never enter '
     + 'credentials on their behalf. If the browser does not expose native site '
     + 'tools, do not use the mouse: use the webmcp:call DOM event channel '
@@ -131,8 +131,6 @@
       }
       const callOptions = {
         signal: (options && options.signal) || new AbortController().signal,
-        /* `commit_plan` uses this to suspend the agent during human review. */
-        requestUserInteraction: (handler) => Promise.resolve(handler()),
       };
       return Promise.resolve().then(() => tool.execute(input || {}, callOptions));
     }
@@ -301,9 +299,8 @@
    * channels below cross that boundary, and both stay same-origin, so a
    * third-party frame cannot drive the map.
    *
-   * Neither channel widens what an agent may do: read and staging tools change
-   * nothing that is committed, and `commit_plan` still opens the review and
-   * waits for a human click.
+   * Neither channel widens what an agent may do: read and staging tools keep
+   * the batch isolated until `commit_plan` applies it atomically.
    * ------------------------------------------------------------------ */
 
   function dispatchResult(id, payload) {
