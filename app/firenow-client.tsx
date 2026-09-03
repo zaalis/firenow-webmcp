@@ -28,7 +28,7 @@ type Deployment = { id: string; type: string; count: number; autonomy?: number; 
 type Firebreak = { name: string; sector: string; lengthKm: number; coordinates: [number, number][]; widthM?: number; staffed?: boolean; tacticalBurn?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
 type Plan = {
-  id: string; name: string; intention: string; deployments: Deployment[];
+  id: string; name: string; intention: string; revision?: number; deployments: Deployment[];
   tasks: { unitId: string; mission: string }[];
   firebreaks: Firebreak[];
   evacuations: { name: string; sector: string; population: number }[];
@@ -406,7 +406,7 @@ const writeStoredDraftPlan = (plan: Plan | null) => {
   } catch { /* document unavailable during SSR */ }
 };
 const emptyPlan = (name = 'Agent plan', intention = 'Reinforce village protection under a shifting wind.'): Plan => ({
-  id: nextId(), name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
+  id: nextId(), revision: 0, name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
 const summarizePlan = (plan: Plan) => ({
   id: plan.id,
@@ -440,6 +440,13 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const engineGeoRef = useRef<{ perimeter: unknown; active: unknown; extinguished: unknown; forecast: unknown }>({ perimeter: emptyGeoJSON, active: emptyGeoJSON, extinguished: emptyGeoJSON, forecast: emptyGeoJSON });
   const simulationWorker = useRef<Worker | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
+  // Approval is asynchronous. Keep the exact snapshot that was submitted so a
+  // later React render, storage sync or duplicated WebMCP delivery cannot make
+  // the operator apply a different draft.
+  const reviewPlanRef = useRef<Plan | null>(null);
+  // Native WebMCP transports may replay a completed request while reconnecting.
+  // Applying a plan must therefore be idempotent, not merely "normally once".
+  const appliedPlanIdsRef = useRef(new Set<string>());
   const [modelContextReady, setModelContextReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [ignition, setIgnition] = useState<Ignition | null>(defaultIgnition);
@@ -496,7 +503,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const [landscapeAsset, setLandscapeAsset] = useState<LandscapeAsset | null>(null);
   const [landscapeStatus, setLandscapeStatus] = useState<'loading' | 'real' | 'procedural'>('loading');
   const landscapeRef = useRef<LandscapeAsset | null>(null);
-  const [undoStack, setUndoStack] = useState<{ deployments: Deployment[]; firebreaks: Firebreak[] }[]>([]);
+  const [undoStack, setUndoStack] = useState<{ planId: string; deployments: Deployment[]; firebreaks: Firebreak[] }[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario });
@@ -519,11 +526,15 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const loadDurableDraft = useCallback(async (): Promise<{ plan: Plan | null; status: string | null }> => {
     const response = await fetch('/api/draft', { credentials: 'same-origin', cache: 'no-store' });
     if (!response.ok) throw new Error('The shared operational draft is unavailable.');
-    return response.json() as Promise<{ plan: Plan | null; status: string | null }>;
+    const stored = await response.json() as { plan: Plan | null; status: string | null; revision?: number };
+    if (stored.plan && Number.isInteger(stored.revision)) stored.plan.revision = stored.revision;
+    return stored;
   }, []);
   const saveDurableDraft = useCallback(async (plan: Plan, status: 'draft' | 'review' = 'draft') => {
-    const response = await fetch('/api/draft', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan, status }) });
+    const response = await fetch('/api/draft', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan, status, expectedRevision: plan.revision ?? 0 }) });
     if (!response.ok) throw new Error('The shared operational draft could not be saved.');
+    const stored = await response.json() as { revision?: number };
+    if (Number.isInteger(stored.revision)) plan.revision = stored.revision;
   }, []);
   const clearDurableDraft = useCallback(async () => {
     await fetch('/api/draft', { method: 'DELETE', credentials: 'same-origin' });
@@ -629,14 +640,25 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     return deployment;
   }, [setDraftPlan]);
   const applyPlan = useCallback(() => {
-    if (!stagedPlan) return false;
-    setUndoStack((stack) => [...stack, { deployments: committed, firebreaks: committedFirebreaks }]);
-    const moved = new Set(stagedPlan.movedFrom || []);
+    const plan = reviewPlanRef.current || stagedPlan;
+    if (!plan || appliedPlanIdsRef.current.has(plan.id)) return false;
+    appliedPlanIdsRef.current.add(plan.id);
+    setUndoStack((stack) => [...stack, { planId: plan.id, deployments: committed, firebreaks: committedFirebreaks }]);
+    const moved = new Set(plan.movedFrom || []);
     setCommitted((current) => [
-      ...current.filter((item) => !moved.has(item.id)),
-      ...stagedPlan.deployments.map((item) => ({ ...item, staged: false })),
+      // A plan may be delivered more than once by an isolated WebMCP context.
+      // Unit-group ids are generated when staged, so they are a stable
+      // idempotency key for the live simulation.
+      ...new Map([
+        ...current.filter((item) => !moved.has(item.id)).map((item) => [item.id, item] as const),
+        ...plan.deployments.map((item) => [item.id, { ...item, staged: false }] as const),
+      ]).values(),
     ]);
-    setCommittedFirebreaks((current) => [...current, ...stagedPlan.firebreaks]);
+    setCommittedFirebreaks((current) => {
+      const key = (line: Firebreak) => `${line.name}|${line.sector}|${JSON.stringify(line.coordinates)}`;
+      return [...new Map([...current, ...plan.firebreaks].map((line) => [key(line), line] as const)).values()];
+    });
+    reviewPlanRef.current = null;
     setDraftPlan(null);
     void clearDurableDraft();
     setReviewOpen(false);
@@ -647,6 +669,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   }, [clearDurableDraft, committed, committedFirebreaks, notify, setDraftPlan, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
+    reviewPlanRef.current = null;
     void clearDurableDraft();
     reviewResolver.current?.(false);
     reviewResolver.current = null;
@@ -659,6 +682,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       if (!previous) return stack;
       setCommitted(previous.deployments);
       setCommittedFirebreaks(previous.firebreaks);
+      appliedPlanIdsRef.current.delete(previous.planId);
       reverted = true;
       return stack.slice(0, -1);
     });
@@ -1141,10 +1165,21 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       const supplied = input?.plan;
       if (supplied && typeof supplied === 'object' && !Array.isArray(supplied)) {
         const plan = supplied as Plan;
-        if (typeof plan.id === 'string' && Array.isArray(plan.deployments) && Array.isArray(plan.tasks) && Array.isArray(plan.firebreaks) && Array.isArray(plan.evacuations)) return plan;
+        if (typeof plan.id === 'string' && Array.isArray(plan.deployments) && Array.isArray(plan.tasks) && Array.isArray(plan.firebreaks) && Array.isArray(plan.evacuations)) {
+          // Keep a valid supplied snapshot available for the next tool call as
+          // well as this one. Previously it was returned without updating the
+          // local reference, so a following commit_plan could see no draft.
+          setDraftPlan(plan);
+          return plan;
+        }
       }
-      const durable = await loadDurableDraft();
-      const plan = durable.plan || stateRef.current.stagedPlan || recoverDraftPlan();
+      // The synchronous ref is updated by setDraftPlan before React renders.
+      // Prefer it; a failed or delayed durable read must not hide a live draft.
+      const inMemory = stateRef.current.stagedPlan;
+      if (inMemory) return inMemory;
+      let durablePlan: Plan | null = null;
+      try { durablePlan = (await loadDurableDraft()).plan; } catch { /* fall through to browser recovery */ }
+      const plan = durablePlan || recoverDraftPlan();
       if (!plan) throw new Error('No draft plan is open. Call propose_plan first, then retry this action.');
       return plan;
     };
@@ -1326,6 +1361,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const plan = await requireStagedPlan(input);
           setDraftPlan(plan);
           await saveDurableDraft(plan, 'review');
+          reviewPlanRef.current = plan;
           const approved = await new Promise<boolean>((resolve) => {
             const finish = (decision: boolean) => {
               options?.signal?.removeEventListener('abort', cancel);
