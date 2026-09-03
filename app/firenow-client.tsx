@@ -723,10 +723,21 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     const timer = window.setTimeout(() => {
       void fetch('/api/simulation', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: simulationSnapshotJson,
+        body: simulationSnapshotJson, keepalive: true,
       }).catch(() => undefined);
     }, 350);
     return () => window.clearTimeout(timer);
+  }, [simulationHydrated, simulationSnapshotJson]);
+  useEffect(() => {
+    if (!simulationHydrated) return;
+    // A reload can happen before the 350 ms debounce expires. Beacon keeps the
+    // last complete snapshot in flight during page teardown, so clearing a map
+    // or deploying a unit cannot silently revert on the next load.
+    const persistBeforeExit = () => {
+      navigator.sendBeacon('/api/simulation', new Blob([simulationSnapshotJson], { type: 'application/json' }));
+    };
+    window.addEventListener('pagehide', persistBeforeExit);
+    return () => window.removeEventListener('pagehide', persistBeforeExit);
   }, [simulationHydrated, simulationSnapshotJson]);
   const applyPlan = useCallback(() => {
     const plan = reviewPlanRef.current || stagedPlan;
