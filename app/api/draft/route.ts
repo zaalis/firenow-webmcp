@@ -27,10 +27,15 @@ export async function POST(request: Request) {
   const expectedRevision = Number(body.expectedRevision);
   const existing = await env.DB.prepare('SELECT revision FROM operational_drafts WHERE user_id = ?').bind(user.id).first<{ revision: number }>();
   if (!existing) {
-    if (expectedRevision !== 0) return NextResponse.json({ error: 'Draft changed.', code: 'revision_conflict', revision: null }, { status: 409 });
+    // A WebMCP tool can run in a fresh execution context immediately after a
+    // successful proposal. If a transient D1 read does not yet observe that
+    // draft, the caller still carries the exact plan and revision returned by
+    // the previous action. Recreate that authoritative draft instead of
+    // rejecting the first stage_* action as a false conflict.
+    const nextRevision = expectedRevision + 1;
     await env.DB.prepare('INSERT INTO operational_drafts (user_id, plan_json, status, revision, updated_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(user.id, planJson, status, 1, Date.now()).run();
-    return NextResponse.json({ ok: true, revision: 1 }, { headers: { 'Cache-Control': 'no-store' } });
+      .bind(user.id, planJson, status, nextRevision, Date.now()).run();
+    return NextResponse.json({ ok: true, revision: nextRevision }, { headers: { 'Cache-Control': 'no-store' } });
   }
   const update = await env.DB.prepare('UPDATE operational_drafts SET plan_json = ?, status = ?, revision = revision + 1, updated_at = ? WHERE user_id = ? AND revision = ?')
     .bind(planJson, status, Date.now(), user.id, expectedRevision).run();
