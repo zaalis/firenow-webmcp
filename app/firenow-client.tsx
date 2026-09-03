@@ -485,6 +485,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const [agentOpen, setAgentOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('2D');
   const [weather, setWeather] = useState(initialWeather);
   const [weatherSeries, setWeatherSeries] = useState<WeatherSeriesPoint[] | null>(null);
@@ -747,6 +748,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const applyPlan = useCallback(() => {
     const plan = reviewPlanRef.current || stagedPlan;
     if (!plan || appliedPlanIdsRef.current.has(plan.id)) return false;
+    const actionCount = plan.deployments.length + plan.tasks.length + plan.firebreaks.length + plan.evacuations.length;
+    if (actionCount === 0) return false;
     const moved = new Set(plan.movedFrom || []);
     ensureFleetAvailability(plan.deployments, committed.filter((item) => !moved.has(item.id)));
     appliedPlanIdsRef.current.add(plan.id);
@@ -773,8 +776,17 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     notify('Plan applied. Every action remains reversible.');
     return true;
   }, [clearDurableDraft, committed, committedFirebreaks, ensureFleetAvailability, notify, setDraftPlan, stagedPlan]);
+  const confirmPlan = useCallback(() => {
+    setApprovalError(null);
+    try {
+      if (!applyPlan()) setApprovalError('This draft has no actions to apply, or has already been applied. Add staged actions, then reopen the review.');
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : 'The plan could not be applied. Review the staged actions and try again.');
+    }
+  }, [applyPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
+    setApprovalError(null);
     reviewPlanRef.current = null;
     void clearDurableDraft();
     reviewResolver.current?.(false);
@@ -1275,6 +1287,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           // Keep a valid supplied snapshot available for the next tool call as
           // well as this one. Previously it was returned without updating the
           // local reference, so a following commit_plan could see no draft.
+          setDraftPlan(plan);
           return plan;
         }
       }
@@ -1491,8 +1504,11 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ plan: { type: 'object' } }), annotations: { readOnlyHint: false },
         execute: async (input, options) => {
           const plan = await requireStagedPlan(input);
+          const actionCount = plan.deployments.length + plan.tasks.length + plan.firebreaks.length + plan.evacuations.length;
+          if (actionCount === 0) throw new Error('This draft has no staged actions. Call a stage_* tool before commit_plan.');
           await saveAndSetDraft(plan, 'review');
           reviewPlanRef.current = plan;
+          setApprovalError(null);
           // A WebMCP call has a short-lived execution signal. Waiting for a
           // human click here lets that signal abort and leaves the visible
           // dialog without a live approval context. Submitting the review is
@@ -1727,6 +1743,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const ATTACK_LABEL: Record<string, string> = { direct: 'Direct attack viable', 'heavy-units': 'Heavy units required', indirect: 'Direct attack ineffective' };
   const committedCount = committed.reduce((sum, item) => sum + item.count, 0);
   const stagedCount = stagedPlan?.deployments.reduce((sum, item) => sum + item.count, 0) || 0;
+  const stagedActionCount = stagedPlan
+    ? stagedPlan.deployments.length + stagedPlan.tasks.length + stagedPlan.firebreaks.length + stagedPlan.evacuations.length
+    : 0;
   const stagedUnitSummary = Object.entries((stagedPlan?.deployments || []).reduce<Record<string, number>>((summary, unit) => {
     summary[unit.type] = (summary[unit.type] || 0) + unit.count;
     return summary;
@@ -1998,7 +2017,25 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
 
       {comparisonOpen && <Modal labelledBy="comparison-title" onClose={() => setComparisonOpen(false)}><section className="compare-modal glass-panel"><ModalHead titleId="comparison-title" icon={<Layers3 size={18} />} eyebrow="3 WORKER RUNS · T+6H" title="Strategy comparison" onClose={() => setComparisonOpen(false)} /><div className="compare-grid">{(stagedPlan?.comparison || []).map((strategy,index) => <article key={strategy.name} className={index === 0 ? 'recommended' : ''} aria-label={index === 0 ? 'Recommended strategy' : undefined}><header><div><small>{index === 0 ? 'SMALLEST AREA' : strategy.resources === 0 ? 'BASELINE' : 'ALTERNATIVE'}</small><strong>{strategy.name}</strong></div>{index === 0 && <span><Check size={12} />Computed result</span>}</header><p>{strategy.description}</p><dl><div><dt>Area burned</dt><dd>{strategy.burnedHa.toLocaleString('en-US')} ha</dd></div><div><dt>Head rate</dt><dd>{strategy.rateOfSpread.toLocaleString('en-US')} m/min</dd></div><div><dt>Units</dt><dd>{strategy.resources}</dd></div></dl></article>)}</div><div className="compare-footer"><span>Model not calibrated · results computed locally</span><button className="primary-button" type="button" onClick={() => { setComparisonOpen(false); setReviewOpen(true); }}>Take the smallest result</button></div></section></Modal>}
 
-      {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}><section className="review-panel glass-panel"><ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Commit ${stagedCount} units?` : 'Commit this plan?'} onClose={rejectPlan} /><p className="review-intention">&ldquo;{stagedPlan.intention}&rdquo;</p>{noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Area burned at six hours, compared"><div className="decision-row"><span>No action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('en-US')} ha</strong></div><div className="decision-row selected"><span>With this plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('en-US')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('en-US')} ha at T+6 h</p>}</div>}<div className="plan-contents"><p>{stagedUnitSummary || 'No additional units'}</p>{stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} control line{stagedPlan.firebreaks.length > 1 ? 's' : ''} · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('en-US')} km</p>}{stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('en-US')} people · no order transmitted</p>}</div><p className="review-warning"><ShieldCheck size={13} />Model not calibrated · training tool</p><div className="review-actions"><button className="secondary-button" type="button" onClick={rejectPlan}>Reject</button><button className="primary-button commit-button" type="button" onClick={applyPlan}><Check size={15} />{stagedCount > 0 ? `Commit ${stagedCount} units` : 'Commit this plan'}</button></div></section></Modal>}
+      {reviewOpen && stagedPlan && <Modal labelledBy="review-title" onClose={rejectPlan}>
+        <section className="review-panel glass-panel">
+          <ModalHead titleId="review-title" icon={<Command size={18} />} title={stagedCount > 0 ? `Commit ${stagedCount} units?` : 'Commit operational plan?'} onClose={rejectPlan} />
+          <p className="review-intention">&ldquo;{stagedPlan.intention}&rdquo;</p>
+          {noActionResult && selectedPlanResult && <div className="decision-impact" aria-label="Area burned at six hours, compared"><div className="decision-row"><span>No action</span><i><b style={{ width: '100%' }} /></i><strong>{noActionResult.burnedHa.toLocaleString('en-US')} ha</strong></div><div className="decision-row selected"><span>With this plan</span><i><b style={{ width: selectedImpactWidth + '%' }} /></i><strong>{selectedPlanResult.burnedHa.toLocaleString('en-US')} ha</strong></div>{avoidedHa !== null && <p>− {avoidedHa.toLocaleString('en-US')} ha at T+6 h</p>}</div>}
+          <div className="plan-contents">
+            <p>{stagedUnitSummary || (stagedActionCount > 0 ? 'No additional units' : 'No action has been staged yet.')}</p>
+            {stagedPlan.tasks.length > 0 && <p>{stagedPlan.tasks.length} assigned task{stagedPlan.tasks.length > 1 ? 's' : ''}</p>}
+            {stagedPlan.firebreaks.length > 0 && <p>{stagedPlan.firebreaks.length} control line{stagedPlan.firebreaks.length > 1 ? 's' : ''} · {stagedPlan.firebreaks.reduce((sum, line) => sum + line.lengthKm, 0).toLocaleString('en-US')} km</p>}
+            {stagedPlan.evacuations.length > 0 && <p>{stagedPlan.evacuations.length} zone{stagedPlan.evacuations.length > 1 ? 's' : ''} · {stagedPlan.evacuations.reduce((sum, zone) => sum + zone.population, 0).toLocaleString('en-US')} people · no order transmitted</p>}
+          </div>
+          <p className="review-warning"><ShieldCheck size={13} />Model not calibrated · training tool</p>
+          {approvalError && <p className="review-error" role="alert">{approvalError}</p>}
+          <form className="review-actions" onSubmit={(event) => { event.preventDefault(); confirmPlan(); }}>
+            <button className="secondary-button" type="button" onClick={rejectPlan}>Reject</button>
+            <button className="primary-button commit-button" type="submit" disabled={stagedActionCount === 0}><Check size={15} />{stagedCount > 0 ? `Commit ${stagedCount} units` : 'Commit plan'}</button>
+          </form>
+        </section>
+      </Modal>}
 
       {agentOpen && <aside className="agent-drawer glass-panel" aria-label="WebMCP call log"><ModalHead icon={<Bot size={18} />} eyebrow="AGENT CALLS" title="WebMCP log" onClose={() => setAgentOpen(false)} /><div className="agent-guidance"><span>TRY ASKING YOUR AGENT</span><ol><li>&ldquo;Analyse the situation and give me two strategies to protect Landiras East.&rdquo;</li><li>&ldquo;The wind shifts to north-west at 40 km/h. Recompute and adapt the plan.&rdquo;</li><li>&ldquo;Compare the plan with and without air units, then submit the better one.&rdquo;</li></ol></div><div className="activity-list">{activities.length === 0 && <p className="empty-activity">Real WebMCP calls appear here, with the tool and its result. Open FireNow with an agent, then ask for something.</p>}{activities.map((activity) => <div key={activity.id}><span className={activity.state}><i>{activity.state === 'done' ? <Check size={11} /> : <X size={11} />}</i></span><div><code>{activity.tool}</code><p>{activity.label}</p></div><time>{activity.at}</time></div>)}</div></aside>}
       {undoStack.length > 0 && <button className="undo-banner glass-panel" type="button" onClick={revertPlan}><Undo2 size={14} />Plan applied · Undo</button>}
