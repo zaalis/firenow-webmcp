@@ -24,7 +24,7 @@ type Exposure = {
 type Region = 'gironde' | 'marseille' | 'california-basin' | 'california-chaparral' | 'california-sierra';
 type Terrain = { region?: Region; oceanWestOfLng?: number; water?: { lng: number; lat: number; radiusM: number }[]; urban?: { lng: number; lat: number; radiusM: number }[] };
 type LandscapeAsset = { gridSize: number; bounds: { west: number; east: number; south: number; north: number }; sources: Record<string, string>; fuel: string; infra: string; people10: string; slope: string; aspect: string };
-type Deployment = { id: string; type: string; count: number; autonomy?: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean };
+type Deployment = { id: string; type: string; count: number; autonomy?: number; sector: string; mission: string; lng: number; lat: number; radiusM: number; capacity: number; staged?: boolean; approved?: boolean };
 type Firebreak = { name: string; sector: string; lengthKm: number; coordinates: [number, number][]; widthM?: number; staffed?: boolean; tacticalBurn?: boolean };
 type StrategyResult = { name: string; burnedHa: number; rateOfSpread: number; resources: number; description: string; deployments: Deployment[] };
 type Plan = {
@@ -53,7 +53,7 @@ type SimulationSnapshot = {
   version: 1; activeScenario: string; scenarios: Scenario[]; ignition: Ignition | null;
   additionalIgnitions: Ignition[]; minutes: number; weather: Weather; committed: Deployment[];
   firebreaks: Firebreak[]; domain: Domain; terrain?: Terrain; incident: Incident;
-  burnedHa: number | null; viewMode: ViewMode;
+  burnedHa: number | null; viewMode: ViewMode; stagedPlan?: Plan | null;
 };
 // The header used to show the Landiras date whatever scenario was open.
 type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number; startDate?: string; endDate?: string };
@@ -330,6 +330,12 @@ const WEATHER_PRESETS: { label: string; values: Partial<Weather> }[] = [
 const nextId = () => Math.random().toString(36).slice(2, 9);
 const directDeploymentId = (type: string, count: number, lng: number, lat: number, radiusM: number, index: number) =>
   `proposed-${type}-${count}-${lng.toFixed(5)}-${lat.toFixed(5)}-${radiusM}-${index}`;
+// A proposal may share the same simulation snapshot as live units during a
+// reload. Its generated id alone is not enough to prove approval: only
+// applyPlan marks proposals approved. This guard makes an accidental snapshot
+// write fail closed instead of turning a draft into a live deployment.
+const isCommittedDeployment = (deployment: Deployment) => deployment.staged !== true
+  && (!deployment.id.startsWith('proposed-') || deployment.approved === true);
 const atNow = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const textValue = (value: unknown, field: string, max = 240) => {
@@ -647,7 +653,11 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         setIgnition(snapshot.ignition); ignitionRef.current = snapshot.ignition;
         applyExtraIgnitions(snapshot.additionalIgnitions);
         setMinutes(snapshot.minutes); setWeather(snapshot.weather);
-        setCommitted(snapshot.committed); setCommittedFirebreaks(snapshot.firebreaks);
+        // Never restore an unapproved proposal into the live fleet. Older
+        // snapshots can contain one after a page teardown race, so validate
+        // the boundary here as well as before every save.
+        setCommitted(snapshot.committed.filter(isCommittedDeployment)); setCommittedFirebreaks(snapshot.firebreaks);
+        if (snapshot.stagedPlan) setDraftPlan(snapshot.stagedPlan);
         setDomain(snapshot.domain); setTerrain(snapshot.terrain); setIncident(snapshot.incident);
         setBurnedHa(snapshot.burnedHa); setViewMode(snapshot.viewMode);
       } catch { /* A transient storage error must not stop a usable simulation. */ }
@@ -655,7 +665,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     };
     void restore();
     return () => { cancelled = true; };
-  }, [applyExtraIgnitions]);
+  }, [applyExtraIgnitions, setDraftPlan]);
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 3200);
@@ -696,20 +706,21 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     }
   }, []);
   const stageUnit = useCallback(async (unit: Omit<Deployment, 'id' | 'staged'>) => {
-    const deployment = { ...unit, id: nextId(), staged: true };
+    const deployment = { ...unit, id: nextId(), staged: true, approved: false };
     const plan = stateRef.current.stagedPlan || emptyPlan('Action awaiting approval', 'Review this deployment before it changes the live simulation.');
     ensureFleetAvailability([...plan.deployments, deployment]);
     const nextPlan = { ...plan, deployments: [...plan.deployments, deployment] };
     await saveAndSetDraft(nextPlan);
     return deployment;
   }, [ensureFleetAvailability, saveAndSetDraft]);
+  const persistedCommitted = committed.filter(isCommittedDeployment);
   const persistedScenarios = scenarios.map((item) => item.id === activeScenario
-    ? { ...item, ignition, minutes, weather, committed, firebreaks: committedFirebreaks, domain, terrain, incident, burnedHa }
+    ? { ...item, ignition, minutes, weather, committed: persistedCommitted, firebreaks: committedFirebreaks, domain, terrain, incident, burnedHa }
     : item);
   const simulationSnapshot: SimulationSnapshot = {
     version: 1, activeScenario, scenarios: persistedScenarios, ignition, additionalIgnitions,
-    minutes, weather, committed, firebreaks: committedFirebreaks, domain, terrain,
-    incident, burnedHa, viewMode,
+    minutes, weather, committed: persistedCommitted, firebreaks: committedFirebreaks, domain, terrain,
+    incident, burnedHa, viewMode, stagedPlan,
   };
   const simulationSnapshotJson = JSON.stringify({ simulation: simulationSnapshot });
   useEffect(() => {
@@ -746,7 +757,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       // idempotency key for the live simulation.
       ...new Map([
         ...current.filter((item) => !moved.has(item.id)).map((item) => [item.id, item] as const),
-        ...plan.deployments.map((item) => [item.id, { ...item, staged: false }] as const),
+        ...plan.deployments.map((item) => [item.id, { ...item, staged: false, approved: true }] as const),
       ]).values(),
     ]);
     setCommittedFirebreaks((current) => {
@@ -1370,7 +1381,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             const lng = numberValue(item.lng, 'lng', -180, 180);
             const lat = numberValue(item.lat, 'lat', -90, 90);
             const radiusM = numberValue(item.radiusM, 'radiusM', 100, 5000);
-            return { type, count, sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng, lat, radiusM, capacity: unitSuppressionCapacity(type), id: directDeploymentId(type, count, lng, lat, radiusM, index), staged: true };
+            return { type, count, sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng, lat, radiusM, capacity: unitSuppressionCapacity(type), id: directDeploymentId(type, count, lng, lat, radiusM, index), staged: true, approved: false };
           });
           const plan = stateRef.current.stagedPlan || emptyPlan('Action awaiting approval', 'Review this deployment before it changes the live simulation.');
           const newDeployments = deployments.filter((deployment) => !plan.deployments.some((existing) => existing.id === deployment.id));
