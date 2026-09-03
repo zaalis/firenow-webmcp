@@ -34,7 +34,13 @@ export async function POST(request: Request) {
   }
   const update = await env.DB.prepare('UPDATE operational_drafts SET plan_json = ?, status = ?, revision = revision + 1, updated_at = ? WHERE user_id = ? AND revision = ?')
     .bind(planJson, status, Date.now(), user.id, expectedRevision).run();
-  if (!update.meta.changes) return NextResponse.json({ error: 'Draft changed.', code: 'revision_conflict', revision: existing.revision }, { status: 409 });
+  // The deployed D1 adapter does not consistently populate meta.changes for a
+  // successful UPDATE. Treating an absent value as a conflict made every
+  // second draft operation fail after it had already been written. Read the
+  // authoritative revision instead of relying on optional driver metadata.
+  if (update.success === false) return NextResponse.json({ error: 'Draft could not be saved.' }, { status: 500 });
+  const confirmed = await env.DB.prepare('SELECT revision FROM operational_drafts WHERE user_id = ?').bind(user.id).first<{ revision: number }>();
+  if (!confirmed || confirmed.revision !== expectedRevision + 1) return NextResponse.json({ error: 'Draft changed.', code: 'revision_conflict', revision: confirmed?.revision ?? existing.revision }, { status: 409 });
   return NextResponse.json({ ok: true, revision: expectedRevision + 1 }, { headers: { 'Cache-Control': 'no-store' } });
 }
 

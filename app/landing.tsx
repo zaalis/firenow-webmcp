@@ -31,17 +31,17 @@ const STEPS = [
   {
     number: '02',
     icon: Layers3,
-    title: 'Draft',
-    tools: '6 staging tools',
-    text: 'It builds a complete plan in a ghost layer: staged units, tasks, control lines, tactical burns, evacuation zones. Nothing is committed, and nothing interrupts the officer.',
-    examples: ['propose_plan', 'stage_deploy_units', 'stage_firebreak', 'stage_evacuation_zone'],
+    title: 'Act or draft',
+    tools: 'Direct action + 6 staging tools',
+    text: 'It can deploy units immediately when asked, or build a complete ghost plan: staged units, tasks, control lines, tactical burns and evacuation zones. A plan is not required for direct action.',
+    examples: ['deploy_units', 'propose_plan', 'stage_deploy_units', 'stage_firebreak'],
   },
   {
     number: '03',
     icon: ShieldCheck,
     title: 'Commit',
     tools: '1 stopping point',
-    text: 'commit_plan is the only call that suspends the agent. The review opens, the officer sees the whole plan and decides once. An applied plan stays reversible.',
+    text: 'Direct action can be used when requested. When an agent proposes a plan, commit_plan opens one review so the officer sees the whole plan and decides once. An applied plan stays reversible.',
     examples: ['commit_plan', 'revert_plan'],
   },
 ];

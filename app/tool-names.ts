@@ -16,6 +16,7 @@ export const CONSOLE_TOOL_NAMES = [
   'query_terrain',
   'list_scenarios',
   'propose_plan',
+  'deploy_units',
   'stage_deploy_units',
   'stage_assign_task',
   'stage_firebreak',

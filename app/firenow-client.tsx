@@ -49,6 +49,12 @@ type Scenario = {
   ignition: Ignition | null; minutes: number; weather: Weather; committed: Deployment[]; firebreaks: Firebreak[];
   domain: Domain; terrain?: Terrain; incident: Incident; burnedHa: number | null;
 };
+type SimulationSnapshot = {
+  version: 1; activeScenario: string; scenarios: Scenario[]; ignition: Ignition | null;
+  additionalIgnitions: Ignition[]; minutes: number; weather: Weather; committed: Deployment[];
+  firebreaks: Firebreak[]; domain: Domain; terrain?: Terrain; incident: Incident;
+  burnedHa: number | null; viewMode: ViewMode;
+};
 // The header used to show the Landiras date whatever scenario was open.
 type Incident = { ref: string; dateLabel: string; startHour: number; startMinute: number; startDate?: string; endDate?: string };
 type ToolDefinition = {
@@ -120,7 +126,7 @@ const toolActivityLabel = (tool: string, result: unknown) => {
     get_situation: 'Operational situation read', list_units: 'Fleet and committed units read',
     get_fire_forecast: 'T+1 h, T+3 h and T+6 h projection computed', get_weather: 'Current weather read',
     query_terrain: 'Sector terrain analysed', list_scenarios: 'Available scenarios read',
-    propose_plan: 'Draft plan opened', stage_deploy_units: 'Units staged in the plan',
+    propose_plan: 'Draft plan opened', deploy_units: 'Units deployed directly', stage_deploy_units: 'Units staged in the plan',
     stage_assign_task: 'Task added to the draft plan', stage_firebreak: 'Control line added to the plan',
     stage_tactical_burn: 'Tactical burn prepared, not ignited', stage_evacuation_zone: 'Evacuation zone prepared, no order sent',
     revert_plan: 'Last plan reverted', set_weather: 'Simulation weather updated',
@@ -322,6 +328,8 @@ const WEATHER_PRESETS: { label: string; values: Partial<Weather> }[] = [
   { label: 'Convective plume', values: { windSpeed: 38, gusts: 60, humidity: 18, temperature: 38, droughtIndex: 0.97, plumeDriven: true } },
 ];
 const nextId = () => Math.random().toString(36).slice(2, 9);
+const directDeploymentId = (type: string, count: number, lng: number, lat: number, radiusM: number, index: number) =>
+  `direct-${type}-${count}-${lng.toFixed(5)}-${lat.toFixed(5)}-${radiusM}-${index}`;
 const atNow = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const textValue = (value: unknown, field: string, max = 240) => {
@@ -408,6 +416,16 @@ const writeStoredDraftPlan = (plan: Plan | null) => {
 const emptyPlan = (name = 'Agent plan', intention = 'Reinforce village protection under a shifting wind.'): Plan => ({
   id: nextId(), revision: 0, name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
 });
+const isSimulationSnapshot = (value: unknown): value is SimulationSnapshot => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const snapshot = value as Partial<SimulationSnapshot>;
+  return snapshot.version === 1 && typeof snapshot.activeScenario === 'string'
+    && Array.isArray(snapshot.scenarios) && Array.isArray(snapshot.additionalIgnitions)
+    && Array.isArray(snapshot.committed) && Array.isArray(snapshot.firebreaks)
+    && typeof snapshot.minutes === 'number' && Boolean(snapshot.weather)
+    && Boolean(snapshot.domain) && Boolean(snapshot.incident)
+    && (snapshot.viewMode === '2D' || snapshot.viewMode === '3D' || snapshot.viewMode === 'globe');
+};
 const summarizePlan = (plan: Plan) => ({
   id: plan.id,
   name: plan.name,
@@ -469,6 +487,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const [minutes, setMinutes] = useState(162);
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
   const [activeScenario, setActiveScenario] = useState<string>(() => initialScenarios[0].id);
+  const [simulationHydrated, setSimulationHydrated] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
@@ -532,10 +551,20 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   }, []);
   const saveDurableDraft = useCallback(async (plan: Plan, status: 'draft' | 'review' = 'draft') => {
     const response = await fetch('/api/draft', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan, status, expectedRevision: plan.revision ?? 0 }) });
-    if (!response.ok) throw new Error('The shared operational draft could not be saved.');
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(failure?.error || 'The shared operational draft could not be saved.');
+    }
     const stored = await response.json() as { revision?: number };
     if (Number.isInteger(stored.revision)) plan.revision = stored.revision;
   }, []);
+  const saveAndSetDraft = useCallback(async (plan: Plan, status: 'draft' | 'review' = 'draft') => {
+    // A failed persistence operation must not leave a clickable ghost plan in
+    // the UI. Persist first, then make that exact revision visible.
+    await saveDurableDraft(plan, status);
+    setDraftPlan(plan);
+    return plan;
+  }, [saveDurableDraft, setDraftPlan]);
   const clearDurableDraft = useCallback(async () => {
     await fetch('/api/draft', { method: 'DELETE', credentials: 'same-origin' });
   }, []);
@@ -601,6 +630,32 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     extraIgnitionsRef.current = value;
     setAdditionalIgnitions(value);
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      try {
+        const response = await fetch('/api/simulation', { credentials: 'same-origin', cache: 'no-store' });
+        if (!response.ok) return;
+        const stored = await response.json() as { simulation?: unknown };
+        if (cancelled || !isSimulationSnapshot(stored.simulation)) return;
+        const snapshot = stored.simulation;
+        // Restore one coherent snapshot before allowing the autosave effect to
+        // run. This prevents the startup defaults from overwriting a saved
+        // incident during a page reload.
+        setScenarios(snapshot.scenarios);
+        setActiveScenario(snapshot.activeScenario);
+        setIgnition(snapshot.ignition); ignitionRef.current = snapshot.ignition;
+        applyExtraIgnitions(snapshot.additionalIgnitions);
+        setMinutes(snapshot.minutes); setWeather(snapshot.weather);
+        setCommitted(snapshot.committed); setCommittedFirebreaks(snapshot.firebreaks);
+        setDomain(snapshot.domain); setTerrain(snapshot.terrain); setIncident(snapshot.incident);
+        setBurnedHa(snapshot.burnedHa); setViewMode(snapshot.viewMode);
+      } catch { /* A transient storage error must not stop a usable simulation. */ }
+      finally { if (!cancelled) setSimulationHydrated(true); }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, [applyExtraIgnitions]);
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 3200);
@@ -628,23 +683,58 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     event.preventDefault();
     panel.scrollTo({ top: target, behavior: 'auto' });
   }, []);
-  const makePlan = useCallback((name: string, intention: string) => {
-    const plan = emptyPlan(name, intention);
-    setDraftPlan(plan);
-    return plan;
-  }, [setDraftPlan]);
-  const stageUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged'>) => {
-    const deployment = { ...unit, id: nextId(), staged: true };
-    const plan = stateRef.current.stagedPlan || emptyPlan();
-    setDraftPlan({ ...plan, deployments: [...plan.deployments, deployment] });
-    return deployment;
-  }, [setDraftPlan]);
+  const deployImmediately = useCallback((deployments: Deployment[]) => {
+    const merged = [...new Map([
+      ...stateRef.current.committed.map((item) => [item.id, item] as const),
+      ...deployments.map((item) => [item.id, { ...item, staged: false }] as const),
+    ]).values()];
+    stateRef.current = { ...stateRef.current, committed: merged };
+    setCommitted(merged);
+    return deployments.map((item) => ({ ...item, staged: false }));
+  }, []);
+  const ensureFleetAvailability = useCallback((deployments: Deployment[], committedBase = stateRef.current.committed) => {
+    const requested = new Map<string, number>();
+    const replaced = new Set(deployments.map((item) => item.id));
+    [...committedBase.filter((item) => !replaced.has(item.id)), ...deployments].forEach((item) => {
+      requested.set(item.type, (requested.get(item.type) || 0) + item.count);
+    });
+    for (const [type, count] of requested) {
+      const available = units.find((unit) => unit.code === type)?.count;
+      if (available === undefined) throw new Error(`Unit type "${type}" is not supported.`);
+      if (count > available) throw new Error(`Only ${available} ${type} unit${available === 1 ? '' : 's'} are available; this request would commit or stage ${count}.`);
+    }
+  }, []);
+  const deployUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged'>) => {
+    const deployment = { ...unit, id: nextId(), staged: false };
+    ensureFleetAvailability([deployment]);
+    return deployImmediately([deployment])[0];
+  }, [deployImmediately, ensureFleetAvailability]);
+  const persistedScenarios = scenarios.map((item) => item.id === activeScenario
+    ? { ...item, ignition, minutes, weather, committed, firebreaks: committedFirebreaks, domain, terrain, incident, burnedHa }
+    : item);
+  const simulationSnapshot: SimulationSnapshot = {
+    version: 1, activeScenario, scenarios: persistedScenarios, ignition, additionalIgnitions,
+    minutes, weather, committed, firebreaks: committedFirebreaks, domain, terrain,
+    incident, burnedHa, viewMode,
+  };
+  const simulationSnapshotJson = JSON.stringify({ simulation: simulationSnapshot });
+  useEffect(() => {
+    if (!simulationHydrated) return;
+    const timer = window.setTimeout(() => {
+      void fetch('/api/simulation', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: simulationSnapshotJson,
+      }).catch(() => undefined);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [simulationHydrated, simulationSnapshotJson]);
   const applyPlan = useCallback(() => {
     const plan = reviewPlanRef.current || stagedPlan;
     if (!plan || appliedPlanIdsRef.current.has(plan.id)) return false;
+    const moved = new Set(plan.movedFrom || []);
+    ensureFleetAvailability(plan.deployments, committed.filter((item) => !moved.has(item.id)));
     appliedPlanIdsRef.current.add(plan.id);
     setUndoStack((stack) => [...stack, { planId: plan.id, deployments: committed, firebreaks: committedFirebreaks }]);
-    const moved = new Set(plan.movedFrom || []);
     setCommitted((current) => [
       // A plan may be delivered more than once by an isolated WebMCP context.
       // Unit-group ids are generated when staged, so they are a stable
@@ -666,7 +756,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     reviewResolver.current = null;
     notify('Plan applied. Every action remains reversible.');
     return true;
-  }, [clearDurableDraft, committed, committedFirebreaks, notify, setDraftPlan, stagedPlan]);
+  }, [clearDurableDraft, committed, committedFirebreaks, ensureFleetAvailability, notify, setDraftPlan, stagedPlan]);
   const rejectPlan = useCallback(() => {
     setReviewOpen(false);
     reviewPlanRef.current = null;
@@ -1169,7 +1259,6 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           // Keep a valid supplied snapshot available for the next tool call as
           // well as this one. Previously it was returned without updating the
           // local reference, so a following commit_plan could see no draft.
-          setDraftPlan(plan);
           return plan;
         }
       }
@@ -1251,9 +1340,36 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         description: 'Opens a ghost proposal layer. Never modifies the live simulation.',
         inputSchema: schema({ name: { type: 'string', maxLength: 80 }, intention: { type: 'string', maxLength: 300 } }, ['name', 'intention']), annotations: mutating,
         execute: async (input) => {
-          const plan = makePlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300));
-          await saveDurableDraft(plan);
+          const plan = emptyPlan(textValue(input.name, 'name', 80), textValue(input.intention, 'intention', 300));
+          await saveAndSetDraft(plan);
           return { staged: true, plan, planSummary: summarizePlan(plan), liveSimulationChanged: false };
+        },
+      },
+      {
+        name: 'deploy_units', title: 'Deploy units directly',
+        description: 'Deploys units immediately when the request calls for action rather than a draft plan. Use propose_plan and stage_* only when a review is requested.',
+        inputSchema: schema({ units: { type: 'array', minItems: 1, maxItems: 50, items: schema({
+          type: { type: 'string', enum: UNIT_CODES }, count: { type: 'integer', minimum: 1, maximum: 50 },
+          sector: { type: 'string', maxLength: 80 }, mission: { type: 'string', maxLength: 160 },
+          lng: { type: 'number', minimum: -180, maximum: 180 }, lat: { type: 'number', minimum: -90, maximum: 90 },
+          radiusM: { type: 'number', minimum: 100, maximum: 5000 },
+        }, ['type', 'count', 'sector', 'mission', 'lng', 'lat', 'radiusM']) } }, ['units']), annotations: mutating,
+        execute: (input) => {
+          if (!Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) throw new Error('Field "units" must be an array of 1 to 50 unit groups.');
+          const deployments = input.units.map((raw, index) => {
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Item units[${index}] must be an object describing a unit group.`);
+            const item = raw as Record<string, unknown>;
+            const type = textValue(item.type, 'type', 5);
+            if (!UNIT_CODES.includes(type)) throw new Error(`Unit type "${type}" is not supported. Call list_units and use one of the returned unit codes.`);
+            const count = numberValue(item.count, 'count', 1, 50);
+            const lng = numberValue(item.lng, 'lng', -180, 180);
+            const lat = numberValue(item.lat, 'lat', -90, 90);
+            const radiusM = numberValue(item.radiusM, 'radiusM', 100, 5000);
+            return { type, count, sector: textValue(item.sector, 'sector', 80), mission: textValue(item.mission, 'mission', 160), lng, lat, radiusM, capacity: unitSuppressionCapacity(type), id: directDeploymentId(type, count, lng, lat, radiusM, index), staged: false };
+          });
+          ensureFleetAvailability(deployments);
+          const deployed = deployImmediately(deployments);
+          return { deployed: true, deployments: deployed, totalUnits: deployed.reduce((sum, item) => sum + item.count, 0), liveSimulationChanged: true };
         },
       },
       {
@@ -1278,9 +1394,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const requestedUnits = deployments.reduce((sum, item) => sum + item.count, 0);
           const resultingUnits = summarizePlan(plan).totalUnits + requestedUnits;
           if (resultingUnits > 50) throw new Error(`This batch would take the plan to ${resultingUnits} units; 50 is the maximum. Reduce the "count" values by at least ${resultingUnits - 50}.`);
+          ensureFleetAvailability([...plan.deployments, ...deployments]);
           const nextPlan = { ...plan, deployments: [...plan.deployments, ...deployments] };
-          setDraftPlan(nextPlan);
-          await saveDurableDraft(nextPlan);
+          await saveAndSetDraft(nextPlan);
           return { staged: true, plan: nextPlan, deployments, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1291,8 +1407,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const plan = await requireStagedPlan(input);
           const task = { unitId: textValue(input.unitId, 'unitId', 80), mission: textValue(input.mission, 'mission', 180) };
           const nextPlan = { ...plan, tasks: [...plan.tasks, task] };
-          setDraftPlan(nextPlan);
-          await saveDurableDraft(nextPlan);
+          await saveAndSetDraft(nextPlan);
           return { staged: true, plan: nextPlan, task, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1313,8 +1428,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: input.staffed !== false };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
-          setDraftPlan(nextPlan);
-          await saveDurableDraft(nextPlan);
+          await saveAndSetDraft(nextPlan);
           return { staged: true, plan: nextPlan, firebreak: line, planSummary: summarizePlan(nextPlan), liveSimulationChanged: false };
         },
       },
@@ -1335,8 +1449,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           }, 0);
           const line: Firebreak = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), coordinates, lengthKm: Number(lengthKm.toFixed(2)), widthM: input.widthM === undefined ? 12 : numberValue(input.widthM, 'widthM', 2, 80), staffed: true, tacticalBurn: true };
           const nextPlan = { ...plan, firebreaks: [...plan.firebreaks, line] };
-          setDraftPlan(nextPlan);
-          await saveDurableDraft(nextPlan);
+          await saveAndSetDraft(nextPlan);
           return { staged: true, plan: nextPlan, tacticalBurn: line, planSummary: summarizePlan(nextPlan), ignitionCommitted: false, liveSimulationChanged: false };
         },
       },
@@ -1348,8 +1461,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const plan = await requireStagedPlan(input);
           const zone = { name: textValue(input.name, 'name', 80), sector: textValue(input.sector, 'sector', 80), population: numberValue(input.population, 'population', 0, 100000) };
           const nextPlan = { ...plan, evacuations: [...plan.evacuations, zone] };
-          setDraftPlan(nextPlan);
-          await saveDurableDraft(nextPlan);
+          await saveAndSetDraft(nextPlan);
           return { staged: true, plan: nextPlan, evacuationZone: zone, planSummary: summarizePlan(nextPlan), orderIssued: false, liveSimulationChanged: false };
         },
       },
@@ -1359,8 +1471,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         inputSchema: schema({ plan: { type: 'object' } }), annotations: { readOnlyHint: false },
         execute: async (input, options) => {
           const plan = await requireStagedPlan(input);
-          setDraftPlan(plan);
-          await saveDurableDraft(plan, 'review');
+          await saveAndSetDraft(plan, 'review');
           reviewPlanRef.current = plan;
           const approved = await new Promise<boolean>((resolve) => {
             const finish = (decision: boolean) => {
@@ -1516,7 +1627,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       reviewResolver.current?.(false);
       reviewResolver.current = null;
     };
-  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, loadDurableDraft, logTool, makePlan, modelContextReady, recoverDraftPlan, revertPlan, runWorker, saveDurableDraft, setDraftPlan]);
+  }, [applyEngineResult, applyExtraIgnitions, changeView, comparePlansWithWorker, deployImmediately, ensureFleetAvailability, loadDurableDraft, logTool, modelContextReady, recoverDraftPlan, revertPlan, runWorker, saveAndSetDraft, setDraftPlan]);
 
   const onMapDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1525,8 +1636,8 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     const rect = event.currentTarget.getBoundingClientRect();
     const coordinate = mapRef.current?.unproject([event.clientX - rect.left, event.clientY - rect.top]);
     if (!coordinate) return;
-    stageUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: unitSuppressionCapacity(type) });
-    notify(type + ' added to the draft plan. No resource committed.');
+    deployUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: unitSuppressionCapacity(type) });
+    notify(type + ' deployed directly.');
   };
   const signOut = async () => {
     const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin', cache: 'no-store' });
@@ -1555,7 +1666,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     {
       id: 'resources', target: '#resources-panel',
       title: 'Commit the fleet',
-      body: 'Thirteen unit types, with manufacturer tank and pump figures. Click to stage a unit, or drag it onto the map. Nothing is committed until you approve the plan.',
+          body: 'Thirteen unit types, with manufacturer tank and pump figures. Click or drag to deploy a unit directly. A plan is only needed when you explicitly ask an agent to prepare one for review.',
       before: () => openPanel('resources'),
     },
     {
@@ -1719,7 +1830,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             onClick={() => isNarrowViewport ? setMobilePanel((current) => current === 'resources' ? null : 'resources') : setRailOpen((value) => !value)}><ChevronUp size={13} /></button>
         </div>
         <div className="panel-scroll" tabIndex={0} role="region" aria-label="Available units and sustainable duty at commitment" onKeyDown={scrollPanelByKeyboard}>
-          <p className="drag-hint">Drag a unit onto a road, or click to stage it</p>
+          <p className="drag-hint">Drag a unit onto a road, or click to deploy it</p>
           <div className="autonomy-control">
             <label htmlFor="autonomy">SUSTAINABLE DUTY AT COMMITMENT</label>
             <input id="autonomy" type="range" min={20} max={100} step={5} value={autonomy}
@@ -1732,7 +1843,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             <div className="unit-list">{units.filter((unit) => unit.family === family).map((unit) => {
               const UnitIcon = UNIT_ICONS[unit.code] || Truck;
               const capacityLevel = unitCapacityLevel(unit);
-              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }); notify(unit.code + ' added. No resource committed.'); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
+              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { deployUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }); notify(unit.code + ' deployed.'); }} aria-label={`Deploy ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
                 <span className={'unit-visual fam-' + unitFamilyClass(unit.family)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
                 <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.tank} · duty {autonomy}%</small></span>
                 <b>{String(unit.count).padStart(2,'0')}</b>

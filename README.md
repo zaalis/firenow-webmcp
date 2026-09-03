@@ -6,14 +6,14 @@ FireNow is a wildfire decision-support and training simulator. It combines the i
 
 ## Why WebMCP
 
-FireNow calls no language model. The page registers **21 domain tools** on the browser-provided `document.modelContext`. ChatGPT discovers them as site tools in its built-in desktop browser and uses the session already open in the page:
+FireNow calls no language model. The page registers **22 domain tools** on the browser-provided `document.modelContext`. ChatGPT discovers them as site tools in its built-in desktop browser and uses the session already open in the page:
 
 - read tools marked `readOnlyHint`;
 - staging tools that only ever draw into a ghost plan;
 - commit and revert tools;
 - simulation and navigation tools.
 
-`commit_plan` is the only stopping point in the normal flow: it calls `requestUserInteraction()` when the client provides one, opens the plan review, and waits for the human decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
+`deploy_units` acts directly when an operator asks for immediate action. `commit_plan` is the only stopping point for the optional plan-review flow: it calls `requestUserInteraction()` when the client provides one, opens the plan review, and waits for the human decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
 
 The **WebMCP log** shows the calls the agent actually executed, with the tool, its result and a timestamp. There is no simulated agent or manual tool runner in the page.
 
@@ -30,7 +30,7 @@ On top of the model context the bridge publishes the same implementation on two 
 - `window.__WEBMCP__` — an agent evaluating JavaScript in the main world;
 - `webmcp:call` / `webmcp:result` DOM events and same-origin `postMessage`, described in the `#webmcp-manifest` JSON block — an extension content script, which runs in an isolated world and can see neither the model context nor `window.__WEBMCP__`.
 
-Every transport runs the same tool implementation: same validation, same journal, same human approval on `commit_plan`.
+Every transport runs the same tool implementation: same validation, same journal, and human approval on `commit_plan` only when the optional planning flow is used.
 
 All of this is addressed to agents and none of it to operators. The page carries no tool panel, no MCP catalogue and no manual call form: what a human sees is the map, and the WebMCP log of the calls an agent actually made.
 
@@ -106,7 +106,7 @@ Authentication routes are served by the same local Worker so that cookies stay s
     node scripts/test-simulation.mjs
     node scripts/validate-fires.mjs
 
-For the real integration check, open the signed-in console in the ChatGPT desktop app's built-in browser. The address-bar Site tools menu must list 21 tools. Ask ChatGPT to read the operational situation and verify that the WebMCP log records a `get_situation` call; no map click or form submission should occur.
+For the real integration check, open the signed-in console in the ChatGPT desktop app's built-in browser. The address-bar Site tools menu must list 22 tools. Ask ChatGPT to read the operational situation and verify that the WebMCP log records a `get_situation` call; no map click or form submission should occur.
 
 In a browser without native WebMCP support, the page bridge supplies the context instead. Check it from any console:
 
