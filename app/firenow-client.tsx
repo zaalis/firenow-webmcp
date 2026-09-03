@@ -1493,21 +1493,14 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const plan = await requireStagedPlan(input);
           await saveAndSetDraft(plan, 'review');
           reviewPlanRef.current = plan;
-          const approved = await new Promise<boolean>((resolve) => {
-            const finish = (decision: boolean) => {
-              options?.signal?.removeEventListener('abort', cancel);
-              resolve(decision);
-            };
-            const cancel = () => finish(false);
-            if (options?.signal?.aborted) {
-              resolve(false);
-              return;
-            }
-            reviewResolver.current = finish;
-            options?.signal?.addEventListener('abort', cancel, { once: true });
-            setReviewOpen(true);
-          });
-          return { approved, planApplied: approved };
+          // A WebMCP call has a short-lived execution signal. Waiting for a
+          // human click here lets that signal abort and leaves the visible
+          // dialog without a live approval context. Submitting the review is
+          // the tool's complete action; the dialog's Commit button remains
+          // the only operation that applies the plan.
+          if (options?.signal?.aborted) return { approvalRequired: true, planApplied: false, cancelled: true };
+          setReviewOpen(true);
+          return { approvalRequired: true, planApplied: false, plan };
         },
       },
       {
