@@ -35,6 +35,7 @@ type Plan = {
   movedFrom?: string[];
   comparison?: StrategyResult[];
 };
+type UndoEntry = { planId: string; deployments: Deployment[]; firebreaks: Firebreak[] };
 type Activity = { id: string; tool: string; label: string; state: 'done' | 'error'; at: string };
 type Ignition = { lng: number; lat: number; radiusM: number };
 type Suppression = {
@@ -385,6 +386,7 @@ const unmountLater = (root: Root) => { queueMicrotask(() => root.unmount()); };
 // it and the next stage_* call answered "No draft plan is open". Mirroring it in
 // sessionStorage keeps a draft alive for the tab that opened it, and only that tab.
 const DRAFT_PLAN_STORAGE_KEY = 'firenow.draft-plan';
+const LAST_UNDO_STORAGE_KEY = 'firenow.last-undo';
 // WebMCP calls can arrive from isolated browser worlds. React state and
 // sessionStorage are not guaranteed to be shared between those calls. Keep a
 // localStorage mirror as the durable hand-off channel between propose_plan and
@@ -418,6 +420,22 @@ const writeStoredDraftPlan = (plan: Plan | null) => {
     if (plan) document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY] = JSON.stringify(plan);
     else delete document.documentElement.dataset[DRAFT_PLAN_DOCUMENT_KEY];
   } catch { /* document unavailable during SSR */ }
+};
+const readStoredUndo = (): UndoEntry | null => {
+  try {
+    const raw = window.localStorage.getItem(LAST_UNDO_STORAGE_KEY);
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as Partial<UndoEntry>;
+    return typeof entry.planId === 'string' && Array.isArray(entry.deployments) && Array.isArray(entry.firebreaks)
+      ? entry as UndoEntry
+      : null;
+  } catch { return null; }
+};
+const writeStoredUndo = (entry: UndoEntry | null) => {
+  try {
+    if (entry) window.localStorage.setItem(LAST_UNDO_STORAGE_KEY, JSON.stringify(entry));
+    else window.localStorage.removeItem(LAST_UNDO_STORAGE_KEY);
+  } catch { /* Undo remains available in the visible session. */ }
 };
 const emptyPlan = (name = 'Agent plan', intention = 'Reinforce village protection under a shifting wind.'): Plan => ({
   id: nextId(), revision: 0, name, intention, deployments: [], tasks: [], firebreaks: [], evacuations: [],
@@ -529,7 +547,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
   const [landscapeAsset, setLandscapeAsset] = useState<LandscapeAsset | null>(null);
   const [landscapeStatus, setLandscapeStatus] = useState<'loading' | 'real' | 'procedural'>('loading');
   const landscapeRef = useRef<LandscapeAsset | null>(null);
-  const [undoStack, setUndoStack] = useState<{ planId: string; deployments: Deployment[]; firebreaks: Firebreak[] }[]>([]);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const stateRef = useRef({ weather, minutes, burnedHa, frontRate, stagedPlan, committed, committedFirebreaks, viewMode, domain, terrain, incident, scenarios, activeScenario });
@@ -753,7 +771,9 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     const moved = new Set(plan.movedFrom || []);
     ensureFleetAvailability(plan.deployments, committed.filter((item) => !moved.has(item.id)));
     appliedPlanIdsRef.current.add(plan.id);
-    setUndoStack((stack) => [...stack, { planId: plan.id, deployments: committed, firebreaks: committedFirebreaks }]);
+    const undoEntry: UndoEntry = { planId: plan.id, deployments: committed, firebreaks: committedFirebreaks };
+    writeStoredUndo(undoEntry);
+    setUndoStack((stack) => [...stack, undoEntry]);
     setCommitted((current) => [
       // A plan may be delivered more than once by an isolated WebMCP context.
       // Unit-group ids are generated when staged, so they are a stable
@@ -794,19 +814,19 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     notify('Plan rejected. The live situation was not changed.');
   }, [clearDurableDraft, notify]);
   const revertPlan = useCallback(() => {
-    let reverted = false;
-    setUndoStack((stack) => {
-      const previous = stack.at(-1);
-      if (!previous) return stack;
-      setCommitted(previous.deployments);
-      setCommittedFirebreaks(previous.firebreaks);
-      appliedPlanIdsRef.current.delete(previous.planId);
-      reverted = true;
-      return stack.slice(0, -1);
-    });
+    const previous = undoStack.at(-1) || readStoredUndo();
+    if (!previous) {
+      notify('No applied plan is available to revert.');
+      return false;
+    }
+    setCommitted(previous.deployments);
+    setCommittedFirebreaks(previous.firebreaks);
+    appliedPlanIdsRef.current.delete(previous.planId);
+    writeStoredUndo(null);
+    setUndoStack((stack) => stack.filter((entry) => entry.planId !== previous.planId));
     notify('Last plan reverted.');
-    return reverted;
-  }, [notify]);
+    return true;
+  }, [notify, undoStack]);
 
   useEffect(() => {
     if (!running) return;
@@ -1052,7 +1072,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     setMinutes(target.minutes); setWeather(target.weather); setCommitted(target.committed); setCommittedFirebreaks(target.firebreaks);
     setDomain(target.domain); setTerrain(target.terrain); setIncident(target.incident);
     mapRef.current?.jumpTo({ center: [target.domain.lng, target.domain.lat], zoom: target.domain.boxMetres > 35000 ? 10.1 : 11.2 });
-    setDraftPlan(null); setUndoStack([]); setPickingIgnition(false);
+    setDraftPlan(null); setUndoStack([]); writeStoredUndo(null); setPickingIgnition(false);
   }, [activeScenario, applyExtraIgnitions, burnedHa, committed, committedFirebreaks, domain, terrain, ignition, minutes, scenarios, setDraftPlan, weather]);
 
   const createScenario = useCallback((preset: 'landiras-field' | 'blank' | 'saumos' | 'etoile' | 'bug' = 'blank') => {
@@ -1072,7 +1092,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     setMinutes(created.minutes); setWeather(created.weather); setCommitted(created.committed); setCommittedFirebreaks(created.firebreaks);
     setDomain(created.domain); setTerrain(created.terrain); setIncident(created.incident);
     mapRef.current?.jumpTo({ center: [created.domain.lng, created.domain.lat], zoom: created.domain.boxMetres > 35000 ? 10.1 : 11.2 });
-    setDraftPlan(null); setUndoStack([]); setPickingIgnition(preset === 'blank');
+    setDraftPlan(null); setUndoStack([]); writeStoredUndo(null); setPickingIgnition(preset === 'blank');
     const NOTES: Record<string, string> = {
       'landiras-field': 'Landiras field exercise — pre-positioned crews, DFCI lines and training weather. This is not a live incident.',
       saumos: 'Saumos fire, 22 July 2026 \u2014 47,004 ha burned, 220,000 people evacuated.',
@@ -1998,7 +2018,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Active flame front</span>
         <span><i className="lg-forecast" />Projected position at +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setDraftPlan(null); setUndoStack([]); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setDraftPlan(null); setUndoStack([]); writeStoredUndo(null); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel" data-tour="timeline">
         <div className="time-readout"><span>INCIDENT CLOCK</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} since ignition</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Pause the simulation' : 'Run the simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
