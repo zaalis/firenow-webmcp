@@ -13,9 +13,9 @@ const BrandMark = () => (
 );
 
 const FIGURES = [
-  { value: '21', label: 'WebMCP tools' },
+  { value: '22', label: 'WebMCP tools' },
   { value: '35', label: 'real species' },
-  { value: '13', label: 'unit types' },
+  { value: '16', label: 'unit types' },
   { value: '5', label: 'scenarios' },
 ];
 
@@ -52,7 +52,7 @@ const ENGINE = [
   { title: 'Landscape anchored to coordinates', text: 'A place keeps its vegetation whatever the framing. No historical fire is scripted.' },
   { title: 'Byram fireline intensity', text: 'Operational thresholds at 2,000 and 4,000 kW/m, with the front split into head, flanks and rear.' },
   { title: 'Human landscape of the Landes', text: 'DFCI track grid, roads, buildings and clearing rules. A break delays the front; it is never an absolute barrier.' },
-  { title: 'Suppression sized from real units', text: '13 unit types with manufacturer tank, pump rate and refill time. Sustainable duty bounds the flow actually held.' },
+  { title: 'Suppression sized from real units', text: '16 unit types with manufacturer tank, pump rate and refill time. Sustainable duty bounds the flow actually held.' },
 ];
 
 const EVOLUTION = [
@@ -207,7 +207,7 @@ export default function Landing() {
                 alt="An air tanker dropping retardant over forested terrain."
                 loading="lazy"
               />
-              <figcaption>13 unit types, each with manufacturer tank, pump rate and refill time.</figcaption>
+              <figcaption>16 unit types, each with manufacturer tank, pump rate and refill time.</figcaption>
             </figure>
             <div>
               <p className="landing-eyebrow"><Radar size={13} aria-hidden="true" />THE ENGINE</p>

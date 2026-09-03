@@ -57,7 +57,7 @@ A 128 × 128 cellular automaton, priority-queue spread, fifteen-minute sub-steps
 - **Spotting** driven by flame length and wind, with a plume-dominated regime.
 - **The human landscape of the Landes**: DFCI track grid, roads, buildings and statutory clearing. A break delays the front while the flame is shorter than the break is wide; it is never an absolute barrier.
 - **Human exposure**: residents threatened and reached, built area burned, routes cut. Outside a described massif, no figure is produced.
-- **Suppression**: 13 unit types with manufacturer tank, pump rate and refill time; sustainable duty bounds the flow actually held; control lines built during a run are cumulative and persistent.
+- **Suppression**: 16 unit types with manufacturer tank, pump rate and refill time; sustainable duty bounds the flow actually held; control lines built during a run are cumulative and persistent.
 - **A diurnal cycle** and a real hourly weather series (Open-Meteo archive) for multi-day runs.
 
 ## Scenarios
@@ -111,7 +111,7 @@ For the real integration check, open the signed-in console in the ChatGPT deskto
 In a browser without native WebMCP support, the page bridge supplies the context instead. Check it from any console:
 
     window.__WEBMCP__.mode                        // 'native' or 'polyfill'
-    window.__WEBMCP__.listTools().length          // 21 once signed in
+    window.__WEBMCP__.listTools().length          // 22 once signed in
     await window.__WEBMCP__.callTool('get_situation', {})
 
 A staging call is the check that matters, because it proves the agent path end to end: `await window.__WEBMCP__.callTool('propose_plan', { name: 'West flank', intention: 'Hold the DFCI track' })` must raise the draft plan bar and appear in the WebMCP log.

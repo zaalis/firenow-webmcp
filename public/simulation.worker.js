@@ -639,6 +639,9 @@ const APPLIANCES = {
   CCFS:  { label: 'Camion-citerne super',        family: 'ground', tankL: 8000,  flowLpm: 2000, refillMin: 25, offRoad: true,  heavy: true },
   FPT:   { label: 'Fourgon pompe-tonne',         family: 'ground', tankL: 3000,  flowLpm: 2000, refillMin: 25, offRoad: false, heavy: false },
   CCGC:  { label: 'Large water tender', family: 'ground', tankL: 13000, flowLpm: 2000, refillMin: 35, offRoad: false, heavy: true },
+  ENG3:  { label: 'California Type 3 wildland engine', family: 'ground', tankL: 1900, flowLpm: 950, refillMin: 20, offRoad: true, heavy: false },
+  ENG6:  { label: 'California Type 6 patrol engine', family: 'ground', tankL: 1135, flowLpm: 500, refillMin: 18, offRoad: true, heavy: false },
+  WT:    { label: 'California water tender', family: 'ground', tankL: 9500, flowLpm: 1800, refillMin: 35, offRoad: false, heavy: true },
   // --- Air units ----------------------------------------------------------
   HBE:   { label: 'Water-bombing helicopter', family: 'air',   tankL: 1000,  flowLpm: 1000, refillMin: 8,  offRoad: true,  heavy: true },
   HELIT: { label: 'Heavy helicopter S-64',      family: 'air',   tankL: 9500,  flowLpm: 9500, refillMin: 14, offRoad: true,  heavy: true },

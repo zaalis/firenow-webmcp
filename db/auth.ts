@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { cookies } from 'next/headers';
 import { argon2idAsync } from '@noble/hashes/argon2.js';
-import { authSchema } from './schema';
+import { authSchema, operationalDraftSchema, operationalSimulationSchema } from './schema';
 
 const SESSION_COOKIE = 'firenow_session';
 const CSRF_COOKIE = 'firenow_csrf';
@@ -11,7 +11,12 @@ type UserRow = { id: string; email: string; password_hash: string };
 type SessionUser = { id: string; email: string };
 
 export async function ensureAuthSchema() {
-  await env.DB.batch(authSchema.map((statement) => env.DB.prepare(statement)));
+  // A signed-in console immediately loads both the shared draft and the
+  // operator's simulation. Initialise the complete small operational schema
+  // together, so a fresh D1 binding cannot authenticate successfully and then
+  // fail on its first map-state request.
+  await env.DB.batch([...authSchema, ...operationalDraftSchema, ...operationalSimulationSchema]
+    .map((statement) => env.DB.prepare(statement)));
 }
 
 export async function hashPassword(password: string) {

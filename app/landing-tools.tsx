@@ -3,7 +3,7 @@
 /**
  * Public tools for the front door.
  *
- * The console registers its 21 tools only once a session exists, so an agent
+ * The console registers its 22 tools only once a session exists, so an agent
  * that opens the site before sign-in can still discover what the application
  * offers and why the operational tools are not available yet.
  */

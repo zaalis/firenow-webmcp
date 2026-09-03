@@ -82,6 +82,9 @@ const units: UnitCatalogue[] = [
   { code: 'CCFS', count: 6,  label: 'Heavy wildland engines', family: 'ground', tank: '8,000 L', capacityLitres: 8000 },
   { code: 'FPT',  count: 6,  label: 'Structure pumpers', family: 'ground', tank: '3,000 L', capacityLitres: 3000 },
   { code: 'CCGC', count: 4,  label: 'Large water tenders', family: 'ground', tank: '13,000 L', capacityLitres: 13000 },
+  { code: 'ENG3', count: 18, label: 'California Type 3 wildland engines', family: 'ground', tank: '1,900 L · 500 gal', capacityLitres: 1900 },
+  { code: 'ENG6', count: 16, label: 'California Type 6 patrol engines', family: 'ground', tank: '1,135 L · 300 gal', capacityLitres: 1135 },
+  { code: 'WT',   count: 8,  label: 'California water tenders', family: 'ground', tank: '9,500 L · 2,500 gal', capacityLitres: 9500 },
   { code: 'HBE',  count: 2,  label: 'Water-dropping helicopters', family: 'air', tank: '1,000 L', capacityLitres: 1000 },
   { code: 'HELIT', count: 1, label: 'Heavy helicopter S-64', family: 'air', tank: '9,500 L', capacityLitres: 9500 },
   { code: 'AT8',  count: 4,  label: 'Air Tractor AT-802F', family: 'air', tank: '3,100 L', capacityLitres: 3100 },
@@ -94,12 +97,13 @@ const units: UnitCatalogue[] = [
 const UNIT_CODES = units.map((unit) => unit.code);
 const UNIT_ICONS: Record<string, LucideIcon> = {
   VLHR: CarFront, CCF: Truck, CCFS: Truck, FPT: FireExtinguisher, CCGC: ContainerIcon,
+  ENG3: Truck, ENG6: CarFront, WT: ContainerIcon,
   HBE: Helicopter, HELIT: Helicopter, AT8: PlaneTakeoff, CL4: Plane, DASH: Plane,
   A400: Plane, DOZ: Tractor, CREW: Users,
 };
 const unitSuppressionCapacity = (type: string) => {
   const family = units.find((unit) => unit.code === type)?.family;
-  if (type === 'CCF' || type === 'CCFS') return 0.09;
+  if (type === 'CCF' || type === 'CCFS' || type === 'ENG3') return 0.09;
   if (family === 'air') return 0.08;
   if (family === 'engineering') return 0.05;
   return 0.06;
@@ -223,8 +227,10 @@ const bugWeather = (): Weather => ({
   temperature: 38, humidity: 12, droughtIndex: 0.92,
 });
 const bugUnits = (): Deployment[] => [
-  { id: 'bccf1', type: 'CCF', count: 12, sector: 'South flank', mission: 'Hold the flank', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
-  { id: 'bdoz1', type: 'DOZ', count: 4, sector: 'East', mission: 'Control line', lng: -119.9700, lat: 39.7420, radiusM: 4000, capacity: 0.05, autonomy: 70 },
+  { id: 'beng31', type: 'ENG3', count: 10, sector: 'South flank', mission: 'Hold the flank from road access', lng: -120.0366, lat: 39.6870, radiusM: 4000, capacity: 0.09, autonomy: 70 },
+  { id: 'beng61', type: 'ENG6', count: 6, sector: 'West flank', mission: 'Mobile initial attack and patrol', lng: -120.0850, lat: 39.7229, radiusM: 3500, capacity: 0.06, autonomy: 70 },
+  { id: 'bwt1', type: 'WT', count: 2, sector: 'South access', mission: 'Water shuttle for the engine groups', lng: -120.0300, lat: 39.6750, radiusM: 4000, capacity: 0.06, autonomy: 70 },
+  { id: 'bdoz1', type: 'DOZ', count: 2, sector: 'East', mission: 'Control line', lng: -119.9700, lat: 39.7420, radiusM: 4000, capacity: 0.05, autonomy: 70 },
   { id: 'bhbe1', type: 'HBE', count: 2, sector: 'Head', mission: 'Helicopter support', lng: -119.9800, lat: 39.7229, radiusM: 4000, capacity: 0.08, autonomy: 60 },
 ];
 const saumosWeather = (): Weather => ({
@@ -716,14 +722,18 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       if (count > available) throw new Error(`Only ${available} ${type} unit${available === 1 ? '' : 's'} are available; this request would commit or stage ${count}.`);
     }
   }, []);
-  const stageUnit = useCallback(async (unit: Omit<Deployment, 'id' | 'staged'>) => {
-    const deployment = { ...unit, id: nextId(), staged: true, approved: false };
-    const plan = stateRef.current.stagedPlan || emptyPlan('Action awaiting approval', 'Review this deployment before it changes the live simulation.');
-    ensureFleetAvailability([...plan.deployments, deployment]);
-    const nextPlan = { ...plan, deployments: [...plan.deployments, deployment] };
-    await saveAndSetDraft(nextPlan);
+  // The resource rail is a manual control, not a WebMCP plan action. Its
+  // changes must be live immediately so the map never leaves a ghost marker
+  // waiting for a review dialog that is not shown to the operator.
+  const deployManualUnit = useCallback((unit: Omit<Deployment, 'id' | 'staged' | 'approved'>) => {
+    const deployment: Deployment = { ...unit, id: nextId(), staged: false, approved: true };
+    const nextCommitted = [...stateRef.current.committed, deployment];
+    ensureFleetAvailability(nextCommitted);
+    stateRef.current = { ...stateRef.current, committed: nextCommitted };
+    setCommitted(nextCommitted);
+    notify(`${deployment.type} deployed directly to the live simulation.`);
     return deployment;
-  }, [ensureFleetAvailability, saveAndSetDraft]);
+  }, [ensureFleetAvailability, notify]);
   const persistedCommitted = committed.filter(isCommittedDeployment);
   const persistedScenarios = scenarios.map((item) => item.id === activeScenario
     ? { ...item, ignition, minutes, weather, committed: persistedCommitted, firebreaks: committedFirebreaks, domain, terrain, incident, burnedHa }
@@ -798,6 +808,32 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     notify('Last plan reverted.');
     return true;
   }, [notify, undoStack]);
+  const moveManualUnit = useCallback((unit: Deployment, lng: number, lat: number) => {
+    const moved: Deployment = { ...unit, lng, lat, staged: false, approved: true };
+    const present = stateRef.current.committed.some((item) => item.id === unit.id);
+    const nextCommitted = present
+      ? stateRef.current.committed.map((item) => item.id === unit.id ? moved : item)
+      : [...stateRef.current.committed, moved];
+    stateRef.current = { ...stateRef.current, committed: nextCommitted, stagedPlan: null };
+    setCommitted(nextCommitted);
+    setDraftPlan(null);
+    void clearDurableDraft();
+    notify(`${unit.type} repositioned directly in the live simulation.`);
+  }, [clearDurableDraft, notify, setDraftPlan]);
+  const clearSimulation = useCallback(() => {
+    // Remove marker DOM synchronously as well as clearing React state. This
+    // handles legacy staged markers that could otherwise remain until MapLibre
+    // receives its next render cycle.
+    markersRef.current.forEach((entry) => { entry.marker.remove(); unmountLater(entry.root); });
+    markersRef.current.clear();
+    appliedPlanIdsRef.current.clear();
+    stateRef.current = { ...stateRef.current, committed: [], committedFirebreaks: [], stagedPlan: null };
+    setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]);
+    setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setDraftPlan(null);
+    setUndoStack([]); writeStoredUndo(null); setRunning(false); setPickingIgnition(true);
+    void clearDurableDraft();
+    notify('Simulation cleared: no fire, unit, draft, or control line remains on the map.');
+  }, [applyExtraIgnitions, clearDurableDraft, notify, setDraftPlan]);
 
   useEffect(() => {
     if (!running) return;
@@ -1150,22 +1186,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
           const marker = new maplibre.Marker({ element, draggable: zoom >= UNIT_CLUSTER_ZOOM }).setLngLat([unit.lng, unit.lat]).addTo(map);
           marker.on('dragend', () => {
             const { lng, lat } = marker.getLngLat();
-            // Moving an already-committed unit goes through the draft plan: the
-            // "one approval per batch" rule covers manual gestures too.
-            if (unit.staged) {
-              setDraftPlan((plan) => plan
-                ? { ...plan, deployments: plan.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
-                : plan);
-            } else {
-              setDraftPlan((plan) => {
-                const base = plan || emptyPlan('Manual redeployment', 'Move a unit that is already committed.');
-                const already = base.deployments.some((item) => item.id === unit.id);
-                return already
-                  ? { ...base, deployments: base.deployments.map((item) => item.id === unit.id ? { ...item, lng, lat } : item) }
-                  : { ...base, deployments: [...base.deployments, { ...unit, lng, lat, staged: true }], movedFrom: [...(base.movedFrom || []), unit.id] };
-              });
-              notify(unit.type + ' moved inside the draft plan. Commit to make it real.');
-            }
+            moveManualUnit(unit, lng, lat);
           });
           markersRef.current.set(key, { marker, root });
         });
@@ -1183,7 +1204,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
       dispose = () => map.off('moveend', renderMarkers);
     }).catch(() => undefined);
     return () => { cancelled = true; dispose?.(); };
-  }, [committed, mapReady, notify, setDraftPlan, stagedPlan?.deployments, viewMode]);
+  }, [committed, mapReady, moveManualUnit, stagedPlan?.deployments, viewMode]);
 
   // Markers outlive renders: only tearing the component down removes them for
   // good.
@@ -1646,9 +1667,11 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     const rect = event.currentTarget.getBoundingClientRect();
     const coordinate = mapRef.current?.unproject([event.clientX - rect.left, event.clientY - rect.top]);
     if (!coordinate) return;
-    void stageUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: unitSuppressionCapacity(type) })
-      .then(() => notify(type + ' staged. Submit it with commit_plan to engage it automatically.'))
-      .catch((error) => notify(error instanceof Error ? error.message : 'Unable to stage this unit.'));
+    try {
+      deployManualUnit({ type, count: 1, sector: 'Map point', mission: 'Task to be defined', lng: coordinate.lng, lat: coordinate.lat, radiusM: 700, capacity: unitSuppressionCapacity(type), autonomy });
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to deploy this unit.');
+    }
   };
   const signOut = async () => {
     const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin', cache: 'no-store' });
@@ -1677,7 +1700,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
     {
       id: 'resources', target: '#resources-panel',
       title: 'Commit the fleet',
-      body: 'Thirteen unit types, with manufacturer tank and pump figures. Click or drag to stage a unit. The agent commits its prepared operational batch automatically.',
+      body: 'Sixteen unit types, with manufacturer tank and pump figures. Click or drag to deploy a unit directly. The agent commits its prepared operational batch automatically.',
       before: () => openPanel('resources'),
     },
     {
@@ -1830,7 +1853,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             onClick={() => isNarrowViewport ? setMobilePanel((current) => current === 'resources' ? null : 'resources') : setRailOpen((value) => !value)}><ChevronUp size={13} /></button>
         </div>
         <div className="panel-scroll" tabIndex={0} role="region" aria-label="Available units and sustainable duty at commitment" onKeyDown={scrollPanelByKeyboard}>
-          <p className="drag-hint">Drag a unit onto a road, or click to stage it</p>
+          <p className="drag-hint">Drag a unit onto a road, or click to deploy it immediately</p>
           <div className="autonomy-control">
             <label htmlFor="autonomy">SUSTAINABLE DUTY AT COMMITMENT</label>
             <input id="autonomy" type="range" min={20} max={100} step={5} value={autonomy}
@@ -1843,7 +1866,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
             <div className="unit-list">{units.filter((unit) => unit.family === family).map((unit) => {
               const UnitIcon = UNIT_ICONS[unit.code] || Truck;
               const capacityLevel = unitCapacityLevel(unit);
-              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { void stageUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }).then(() => notify(unit.code + ' staged. Submit it with commit_plan to engage it automatically.')).catch((error) => notify(error instanceof Error ? error.message : 'Unable to stage this unit.')); }} aria-label={`Stage ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
+              return <button className="unit-card" type="button" draggable onDragStart={(event) => event.dataTransfer.setData('firenow/unit', unit.code)} onClick={() => { try { deployManualUnit({ type: unit.code, count: 1, sector: 'Anchor point', mission: 'Task to be defined', lng: domain.lng, lat: domain.lat, radiusM: 900, capacity: unitSuppressionCapacity(unit.code), autonomy }); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to deploy this unit.'); } }} aria-label={`Deploy ${unit.label} (${unit.code}), ${unit.tank}`} key={unit.code}>
                 <span className={'unit-visual fam-' + unitFamilyClass(unit.family)}><UnitIcon size={18} strokeWidth={1.8} aria-hidden="true" /><span className="capacity-gauge" aria-hidden="true">{[1, 2, 3].map((level) => <i className={level <= capacityLevel ? 'filled' : ''} key={level} />)}</span></span>
                 <span className="unit-copy"><strong>{unit.label}</strong><small><code>{unit.code}</code> · {unit.tank} · duty {autonomy}%</small></span>
                 <b>{String(unit.count).padStart(2,'0')}</b>
@@ -1964,7 +1987,7 @@ export default function FireNowClient({ userEmail }: { userEmail: string }) {
         <span><i className="lg-active" />Active flame front</span>
         <span><i className="lg-forecast" />Projected position at +3 h</span>
       </aside>
-      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={() => { setIgnition(null); ignitionRef.current = null; applyExtraIgnitions([]); setMinutes(0); setCommitted([]); setCommittedFirebreaks([]); setDraftPlan(null); setUndoStack([]); writeStoredUndo(null); setRunning(false); setPickingIgnition(true); notify('Simulation cleared.'); }} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
+      <nav className="map-controls glass-panel" data-tour="map" aria-label="Map: ignition and projection"><button className={pickingIgnition ? 'active' : ''} onClick={() => setPickingIgnition((value) => !value)} title="Add an ignition"><Flame size={13} />Ignition</button><button onClick={clearSimulation} title="Clear this simulation"><RotateCcw size={13} />Clear</button><button className={viewMode === '2D' ? 'active' : ''} onClick={() => changeView('2D')}><MapIcon size={13} />2D</button><button className={viewMode === '3D' ? 'active' : ''} onClick={() => changeView('3D')}><Layers3 size={13} />3D</button><button className={viewMode === 'globe' ? 'active' : ''} onClick={() => changeView('globe')}><Globe2 size={13} />Globe</button></nav>
       <section className="timeline glass-panel" data-tour="timeline">
         <div className="time-readout"><span>INCIDENT CLOCK</span><strong>{clockAt(minutes)}</strong><small>{timeLabel} since ignition</small></div>
         <button className="play-button" type="button" onClick={() => setRunning((value) => !value)} aria-label={running ? 'Pause the simulation' : 'Run the simulation'}>{running ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
