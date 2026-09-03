@@ -13,7 +13,7 @@ FireNow calls no language model. The page registers **22 domain tools** on the b
 - commit and revert tools;
 - simulation and navigation tools.
 
-`deploy_units` acts directly when an operator asks for immediate action. `commit_plan` is the only stopping point for the optional plan-review flow: it calls `requestUserInteraction()` when the client provides one, opens the plan review, and waits for the human decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
+`deploy_units` opens an approval-ready action draft. Every operational deployment remains a proposal until the operator selects Apply and then Commit; `commit_plan` calls `requestUserInteraction()` when the client provides one, opens the review, and waits for that decision. Tools are retired when the page unmounts, and therefore at sign-out. Parameters received from the agent are validated as untrusted input.
 
 The **WebMCP log** shows the calls the agent actually executed, with the tool, its result and a timestamp. There is no simulated agent or manual tool runner in the page.
 
@@ -30,7 +30,7 @@ On top of the model context the bridge publishes the same implementation on two 
 - `window.__WEBMCP__` — an agent evaluating JavaScript in the main world;
 - `webmcp:call` / `webmcp:result` DOM events and same-origin `postMessage`, described in the `#webmcp-manifest` JSON block — an extension content script, which runs in an isolated world and can see neither the model context nor `window.__WEBMCP__`.
 
-Every transport runs the same tool implementation: same validation, same journal, and human approval on `commit_plan` only when the optional planning flow is used.
+Every transport runs the same tool implementation: same validation, same journal, and human approval before any unit deployment changes the live simulation.
 
 All of this is addressed to agents and none of it to operators. The page carries no tool panel, no MCP catalogue and no manual call form: what a human sees is the map, and the WebMCP log of the calls an agent actually made.
 

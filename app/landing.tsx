@@ -31,9 +31,9 @@ const STEPS = [
   {
     number: '02',
     icon: Layers3,
-    title: 'Act or draft',
-    tools: 'Direct action + 6 staging tools',
-    text: 'It can deploy units immediately when asked, or build a complete ghost plan: staged units, tasks, control lines, tactical burns and evacuation zones. A plan is not required for direct action.',
+    title: 'Propose',
+    tools: '7 approval-ready tools',
+    text: 'It can open an action draft automatically, or build a complete ghost plan: staged units, tasks, control lines, tactical burns and evacuation zones. Nothing changes until Apply then Commit.',
     examples: ['deploy_units', 'propose_plan', 'stage_deploy_units', 'stage_firebreak'],
   },
   {
@@ -41,7 +41,7 @@ const STEPS = [
     icon: ShieldCheck,
     title: 'Commit',
     tools: '1 stopping point',
-    text: 'Direct action can be used when requested. When an agent proposes a plan, commit_plan opens one review so the officer sees the whole plan and decides once. An applied plan stays reversible.',
+    text: 'Apply opens the review. Commit is the single human decision that engages the whole proposal. An applied plan stays reversible.',
     examples: ['commit_plan', 'revert_plan'],
   },
 ];
